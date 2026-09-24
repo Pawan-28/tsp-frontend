@@ -9,6 +9,9 @@ export function formatAdminDisplayName(user) {
       .replace(/[-_]+/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
+
+//okk
+
   const email = String(user.email || "").split("@")[0];
   if (email) {
     return email
