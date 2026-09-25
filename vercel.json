@@ -1,18 +1,14 @@
-
-
-
-
 {
   "framework": "tanstack-start",
   "build": {
     "env": {
-      "VITE_API_URL": ""
+      "VITE_API_URL": "https://lavenderblush-butterfly-422992.hostingersite.com"
     }
   },
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://mediumturquoise-capybara-737767.hostingersite.com/api/:path*"
+      "destination": "https://lavenderblush-butterfly-422992.hostingersite.com/api/:path*"
     }
   ]
 }
