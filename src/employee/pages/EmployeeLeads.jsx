@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useDeferredValue, memo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone } from "lucide-react";
+import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff } from "lucide-react";
 import toast from "react-hot-toast";
 import { GlassCard, Badge, StatCard } from "../../components/Primitives.jsx";
 import AddLeadDrawer from "../../components/AddLeadDrawer.jsx";
@@ -24,6 +24,28 @@ import useIsMobile from "../../lib/useIsMobile.js";
 import EmployeeLeadDrawer from "../components/EmployeeLeadDrawer.jsx";
 import { LeadStatusBadge } from "../components/EmpUI.jsx";
 
+
+const SUMMARY_VISIBLE_KEY = "tsp_employee_summary_visible";
+
+function readSummaryVisiblePref() {
+  if (typeof window === "undefined" || !window.localStorage) return true;
+  try {
+    const raw = window.localStorage.getItem(SUMMARY_VISIBLE_KEY);
+    if (raw === null) return true;
+    return raw !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function writeSummaryVisiblePref(value) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(SUMMARY_VISIBLE_KEY, value ? "true" : "false");
+  } catch {
+    // ignore storage errors (private mode, quota, etc.)
+  }
+}
 
 function startLeadCardDrag(e, leadId, onDragStart) {
   e.dataTransfer.setData("text/plain", String(leadId));
@@ -164,6 +186,7 @@ export default function EmployeeLeads() {
   const [dragLeadId, setDragLeadId] = useState(null);
   const [dropStageId, setDropStageId] = useState(null);
   const [cashCollections, setCashCollections] = useState([]);
+  const [summaryVisible, setSummaryVisible] = useState(true);
   const columnRefs = useRef({});
   const dropDepthRef = useRef(0);
   const period = String(searchParams.get("period") || "month").toLowerCase();
@@ -172,6 +195,18 @@ export default function EmployeeLeads() {
   const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : "This Month";
   const [groupRev, setGroupRev] = useState(0);
   const [expandedColumns, setExpandedColumns] = useState({});
+
+  useEffect(() => {
+    setSummaryVisible(readSummaryVisiblePref());
+  }, []);
+
+  const toggleSummaryVisible = () => {
+    setSummaryVisible((prev) => {
+      const next = !prev;
+      writeSummaryVisiblePref(next);
+      return next;
+    });
+  };
 
   const {
     meetings: boardMeetings,
@@ -465,70 +500,83 @@ export default function EmployeeLeads() {
   return (
     <div className="space-y-3 sm:space-y-4 page-shell min-w-0 animate-fade-in">
       <GlassCard className="p-3 sm:p-4 space-y-3 sm:space-y-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-2.5">
-          <div className="min-w-0 col-span-1">
-          <StatCard
-            label="Pipeline Value"
-            value={formatEmpPipelineValue(summary.value)}
-            icon={TrendingUp}
-            iconBg="bg-emerald-50"
-            iconColor="text-emerald-600"
-            change={periodLabel}
-            sub=""
-          />
-          </div>
-          <div className="min-w-0 col-span-1">
-          <StatCard
-            label="Total Leads"
-            value={String(summary.total)}
-            icon={Kanban}
-            iconBg="bg-rose-50"
-            iconColor="text-rose-600"
-            change={`${summary.active} active`}
-            sub=""
-            corner={
-              summary.hot > 0 ? (
-                <span className="sm:hidden inline-flex items-center gap-0.5 text-[9px] font-black text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full shadow-sm">
-                  🔥 {summary.hot}
-                </span>
-              ) : null
-            }
-          />
-          </div>
-          <div className="min-w-0 hidden sm:block col-span-1">
-          <StatCard
-            label="Hot Leads"
-            value={String(summary.hot)}
-            icon={Flame}
-            iconBg="bg-red-50"
-            iconColor="text-red-600"
-            change={summary.hot ? "High intent" : "None"}
-            sub=""
-          />
-          </div>
-          <div className="min-w-0 col-span-1">
-          <StatCard
-            label="Not Interested"
-            value={String(summary.notInterested)}
-            icon={ThumbsDown}
-            iconBg="bg-slate-50"
-            iconColor="text-slate-500"
-            change="Closed lost"
-            sub=""
-          />
-          </div>
-          <div className="min-w-0 col-span-1">
-          <StatCard
-            label="Total Cash Collected"
-            value={formatCashCard(totalCash)}
-            icon={Wallet}
-            iconBg="bg-green-50"
-            iconColor="text-green-600"
-            change={period === "today" ? "Today" : period === "week" ? "This week" : "This month"}
-            sub=""
-          />
-          </div>
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={toggleSummaryVisible}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 transition"
+          >
+            {summaryVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {summaryVisible ? "Hide summary" : "Show summary"}
+          </button>
         </div>
+
+        {summaryVisible && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-2.5">
+            <div className="min-w-0 col-span-1">
+            <StatCard
+              label="Pipeline Value"
+              value={formatEmpPipelineValue(summary.value)}
+              icon={TrendingUp}
+              iconBg="bg-emerald-50"
+              iconColor="text-emerald-600"
+              change={periodLabel}
+              sub=""
+            />
+            </div>
+            <div className="min-w-0 col-span-1">
+            <StatCard
+              label="Total Leads"
+              value={String(summary.total)}
+              icon={Kanban}
+              iconBg="bg-rose-50"
+              iconColor="text-rose-600"
+              change={`${summary.active} active`}
+              sub=""
+              corner={
+                summary.hot > 0 ? (
+                  <span className="sm:hidden inline-flex items-center gap-0.5 text-[9px] font-black text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full shadow-sm">
+                    🔥 {summary.hot}
+                  </span>
+                ) : null
+              }
+            />
+            </div>
+            <div className="min-w-0 hidden sm:block col-span-1">
+            <StatCard
+              label="Hot Leads"
+              value={String(summary.hot)}
+              icon={Flame}
+              iconBg="bg-red-50"
+              iconColor="text-red-600"
+              change={summary.hot ? "High intent" : "None"}
+              sub=""
+            />
+            </div>
+            <div className="min-w-0 col-span-1">
+            <StatCard
+              label="Not Interested"
+              value={String(summary.notInterested)}
+              icon={ThumbsDown}
+              iconBg="bg-slate-50"
+              iconColor="text-slate-500"
+              change="Closed lost"
+              sub=""
+            />
+            </div>
+            <div className="min-w-0 col-span-1">
+            <StatCard
+              label="Total Cash Collected"
+              value={formatCashCard(totalCash)}
+              icon={Wallet}
+              iconBg="bg-green-50"
+              iconColor="text-green-600"
+              change={period === "today" ? "Today" : period === "week" ? "This week" : "This month"}
+              sub=""
+            />
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col sm:flex-row gap-2.5 pt-1 border-t border-rose-50">
           <div className="relative flex-1 min-w-0">

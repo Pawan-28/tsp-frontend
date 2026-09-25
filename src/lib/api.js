@@ -516,6 +516,12 @@ export function readStaleCachedJson(path) {
   return readStaleCache(key);
 }
 
+/** Trigger backend AI processing (transcript-first, falls back to recording) for a call. */
+export async function processCallWithAi(callId, options = {}) {
+  if (!callId) throw new Error("callId is required to process AI MoM");
+  return apiPost(`/api/v1/ai/process-call/${callId}`, { callId }, options);
+}
+
 export async function fetchPrivateContacts(employeeId) {
   return apiGet(`/api/v1/employee/${employeeId}/private-contacts`);
 }

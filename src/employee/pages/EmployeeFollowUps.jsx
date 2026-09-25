@@ -346,16 +346,28 @@ const EMPTY_SCHEDULE = {
   time: "14:00",
   type: "Call",
   note: "",
+  meetLink: "",
 };
 
+function isValidMeetingUrl(value) {
+  if (!value) return true;
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export default function EmployeeFollowUps() {
-  const { leads, followUps, scheduleFollowUp, refreshLeads, calls, employee } = useEmployee();
+  const { leads, followUps, scheduleFollowUp, createMeeting, refreshLeads, calls, employee } = useEmployee();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(searchParams.get("action") === "add");
   const [form, setForm] = useState(EMPTY_SCHEDULE);
+  const [scheduling, setScheduling] = useState(false);
   const [waPicker, setWaPicker] = useState({ open: false, lead: null, phone: "" });
 
   useEffect(() => {
@@ -526,7 +538,7 @@ export default function EmployeeFollowUps() {
     }
   };
 
-  const handleSchedule = () => {
+  const handleSchedule = async () => {
     if (!form.leadId) {
       toast.error("Select a lead");
       return;
@@ -540,6 +552,39 @@ export default function EmployeeFollowUps() {
       toast.error("Selected lead not found");
       return;
     }
+
+    if (form.type === "Meeting") {
+      if (!isValidMeetingUrl(form.meetLink)) {
+        toast.error("Enter a valid meeting URL (http:// or https://)");
+        return;
+      }
+      setScheduling(true);
+      try {
+        const created = await createMeeting({
+          leadId: lead.id,
+          title: `Meeting with ${lead.name}`,
+          date: form.date,
+          time: form.time,
+          platform: "Meeting",
+          meetLink: form.meetLink,
+          agenda: form.note,
+        });
+        if (!created) {
+          toast.error("Failed to schedule meeting");
+          return;
+        }
+        await refreshLeads();
+        closeModal();
+        setForm(EMPTY_SCHEDULE);
+        toast.success("Meeting booked — added to My Tasks");
+      } catch (err) {
+        toast.error(err?.message || "Failed to schedule meeting");
+      } finally {
+        setScheduling(false);
+      }
+      return;
+    }
+
     scheduleFollowUp({
       leadName: lead.name,
       company: lead.company,
@@ -850,7 +895,9 @@ export default function EmployeeFollowUps() {
         footer={
           <>
             <BtnGhost onClick={closeModal}>Cancel</BtnGhost>
-            <BtnPrimary onClick={handleSchedule}>Schedule</BtnPrimary>
+            <BtnPrimary onClick={handleSchedule} disabled={scheduling}>
+              {scheduling ? "Scheduling…" : "Schedule"}
+            </BtnPrimary>
           </>
         }
       >
@@ -895,6 +942,16 @@ export default function EmployeeFollowUps() {
             <option>Meeting</option>
           </FormSelect>
         </FormGroup>
+        {form.type === "Meeting" && (
+          <FormGroup>
+            <FormLabel>Meeting URL</FormLabel>
+            <FormInput
+              placeholder="https://meet.google.com/…"
+              value={form.meetLink}
+              onChange={(e) => setForm((p) => ({ ...p, meetLink: e.target.value }))}
+            />
+          </FormGroup>
+        )}
         <FormGroup>
           <FormLabel>Note</FormLabel>
           <FormInput

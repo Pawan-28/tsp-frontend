@@ -6,6 +6,10 @@ import {
 import { GlassCard } from "../Primitives.jsx";
 import { BtnPrimary, BtnGhost, FormTextarea } from "../../employee/components/EmpUI.jsx";
 import { LOCAL_SOPS } from "../../data/employeeMock.js";
+import { processCallWithAi } from "../../lib/api.js";
+import { getCrmHeaders } from "../../lib/crmContext.js";
+import { getMomSections, getMomPlainText } from "../../lib/momFormat.js";
+import MomSections from "./MomSections.jsx";
 import toast from "react-hot-toast";
 
 function formatTime(seconds) {
@@ -15,33 +19,11 @@ function formatTime(seconds) {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
-function formatAiSummaryText(val) {
-  if (!val) return "";
-  if (typeof val === "string") return val;
-  if (typeof val === "object") {
-    try {
-      if (val.summary && typeof val.summary === "string") return val.summary;
-      return Object.entries(val)
-        .map(([k, v]) => {
-          if (typeof v === "object" && v !== null) {
-            const inner = Object.entries(v).map(([ik, iv]) => `  • ${ik}: ${iv}`).join("\n");
-            return `[${k}]\n${inner}`;
-          }
-          return `[${k}]\n${v}`;
-        })
-        .join("\n\n");
-    } catch {
-      return JSON.stringify(val, null, 2);
-    }
-  }
-  return String(val);
-}
-
 export default function CallMomModal({ open, onClose, call, lead }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
-  const [aiNote, setAiNote] = useState("");
+  const [momCall, setMomCall] = useState(call || null);
   const [newNoteText, setNewNoteText] = useState("");
   const [notesList, setNotesList] = useState([]);
   const [savingNote, setSavingNote] = useState(false);
@@ -69,9 +51,8 @@ export default function CallMomModal({ open, onClose, call, lead }) {
       return;
     }
     if (call) {
-      const summaryText = call.aiSummary || call.ai_summary || call.note || call.notes || call.outcome || "";
-      setAiNote(summaryText);
-      
+      setMomCall(call);
+
       const initialNotes = [];
       if (call.note) initialNotes.push({ id: 1, text: call.note, author: "System", date: call.date || "Today" });
       if (call.notes && call.notes !== call.note) initialNotes.push({ id: 2, text: call.notes, author: "System", date: call.date || "Today" });
@@ -109,14 +90,22 @@ export default function CallMomModal({ open, onClose, call, lead }) {
   const askedCount = Math.min(allQuestions.length, Math.max(3, Math.floor(allQuestions.length * 0.75)));
   const adherencePct = allQuestions.length > 0 ? Math.round((askedCount / allQuestions.length) * 100) : 100;
 
-  const handleProcessAiMoM = () => {
+  const handleProcessAiMoM = async () => {
+    if (isAiProcessing) return;
     setIsAiProcessing(true);
-    setTimeout(() => {
+    try {
+      const res = await processCallWithAi(call.id, { headers: getCrmHeaders() });
+      const updated = res?.data || res;
+      if (!updated || typeof updated !== "object") {
+        throw new Error("AI processing returned no data");
+      }
+      setMomCall((prev) => ({ ...prev, ...updated }));
+      toast.success("AI MoM & Call Summary generated!");
+    } catch (err) {
+      toast.error(err?.message || "Failed to generate AI MoM.");
+    } finally {
       setIsAiProcessing(false);
-      const generatedMoM = `• Key Discussion: Discussed ${lead?.name || call.name || "client"}'s requirement for ${lead?.requirements || "services package"}.\n• Decision Parameter: Client confirmed budget of ${lead?.budget || "standard pricing"} and requested next follow-up.\n• SOP Compliance: Checked ${askedCount}/${allQuestions.length} script items (${adherencePct}% adherence).\n• Recommended Next Action: Schedule follow-up meeting and send formal SOP deck.`;
-      setAiNote(generatedMoM);
-      toast.success("AI MoM & Call Summary generated with OpenAI!");
-    }, 1500);
+    }
   };
 
   const handleAddNote = (e) => {
@@ -255,27 +244,20 @@ export default function CallMomModal({ open, onClose, call, lead }) {
               >
                 {isAiProcessing ? (
                   <>
-                    <RefreshCw className="w-3 h-3 animate-spin" /> Processing OpenAI...
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Processing…
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-3 h-3 text-amber-300 fill-amber-300" />
-                    {aiNote ? "Re-process with OpenAI" : "Generate AI MoM"}
+                    {(getMomSections(momCall) || getMomPlainText(momCall)) ? "Re-process AI MoM" : "Generate AI MoM"}
                   </>
                 )}
               </button>
             </div>
 
-            {aiNote ? (
-              <div className="text-xs text-slate-800 leading-relaxed font-medium bg-white/80 border border-rose-100 p-4 rounded-xl space-y-2 whitespace-pre-line shadow-xs">
-                {formatAiSummaryText(aiNote)}
-              </div>
-            ) : (
-              <div className="border border-dashed border-rose-200 rounded-xl p-5 text-center bg-rose-50/20 space-y-2">
-                <p className="text-xs font-bold text-slate-700">No AI MoM generated yet for this call</p>
-                <p className="text-[11px] text-slate-500">Click the button above to analyze recording audio & extract discussion points.</p>
-              </div>
-            )}
+            <div className="bg-white/80 border border-rose-100 p-4 rounded-xl shadow-xs">
+              <MomSections call={momCall} emptyText="No AI MoM generated yet for this call. Click the button above to analyze the call and extract discussion points." />
+            </div>
 
             {call.rating > 0 && (
               <div className="flex items-center justify-between border-t border-rose-100 pt-2.5 mt-1">

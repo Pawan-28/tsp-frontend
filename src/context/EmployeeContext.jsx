@@ -1578,6 +1578,28 @@ export function EmployeeProvider({ children }) {
     }
   }, [meetingsUpcoming, usingApi]);
 
+  const rescheduleMeeting = useCallback(async (meetingId, updates) => {
+    if (!meetingId || !updates || Object.keys(updates).length === 0) return null;
+
+    if (!shouldPersistToApi(usingApi)) return null;
+
+    try {
+      const res = await apiPatch(`/api/v1/employee/meetings/${meetingId}`, updates, {
+        headers: getCrmHeaders(),
+      });
+      const saved = unwrapApiData(res) || res?.data || res;
+      if (!saved) throw new Error("Meeting was not updated — server returned no data");
+
+      const mapped = meetingFromApi(saved, leads);
+      setMeetingsUpcoming((prev) => prev.map((m) => (m.id === meetingId ? mapped : m)));
+      invalidateCache("/api/v1");
+      return mapped;
+    } catch (err) {
+      toast.error(err.message || "Could not reschedule meeting");
+      return null;
+    }
+  }, [leads, usingApi]);
+
   const reloadWorkspace = useCallback(async () => {
     const authId = getAuthenticatedEmployeeId();
     const profile = authId
@@ -1715,6 +1737,7 @@ export function EmployeeProvider({ children }) {
     meetingsHistory,
     createMeeting,
     cancelMeeting,
+    rescheduleMeeting,
     refreshMeetings,
     loading,
     linkError,
@@ -1729,7 +1752,7 @@ export function EmployeeProvider({ children }) {
     syncTaskWithFollowUp, leads, addLead, updateLeadStage, updateLeadTemperature, editLeadDetails, updateEmployeeAvatar, refreshLeads, refreshCalls, syncCallyzerData,
     reassignLead, teamEmployees, refreshTeamEmployees,
     usingApi, calls, setCalls, addCallRecord, startCallyzerCall, activities, addActivityRecord, sops, refreshSops,
-    meetingsUpcoming, meetingsHistory, createMeeting, cancelMeeting, refreshMeetings, loading, linkError,
+    meetingsUpcoming, meetingsHistory, createMeeting, cancelMeeting, rescheduleMeeting, refreshMeetings, loading, linkError,
     workspaceError, reloadWorkspace, selectedService,
   ]);
 

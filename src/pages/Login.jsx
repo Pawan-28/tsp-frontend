@@ -8,7 +8,7 @@ const LOGIN_TOAST_ID = "login-feedback";
 
 function resolvePostLoginPath(authUser) {
   if (Boolean(authUser?.mustChangePassword)) return "/change-password";
-  if (authUser?.role === "employee") return "/employee";
+  if (authUser?.role === "employee") return "/employee/pipeline";
   return "/";
 }
 

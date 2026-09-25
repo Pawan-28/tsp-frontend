@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Calendar, CalendarClock, Check, CheckCircle2, Copy, ExternalLink, History, Link2, MessageCircle, Plus,
+  Calendar, CalendarClock, Check, CheckCircle2, Copy, ExternalLink, History, Link2, MessageCircle, Pencil, Plus,
   Search, Sparkles, Trash2, Video, X,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -12,12 +12,14 @@ import { formatIndianPhone } from "../../lib/indianFormat.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import { apiGet, apiPost } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
+import { localDateKey } from "../../lib/periodFilter.js";
 import {
   MEETING_PLATFORMS,
   getEmpAppToday,
 } from "../../data/employeeMock.js";
 import {
   BtnPrimary, BtnSecondary, EmpEmptyState, AvatarCircle, EmpModal,
+  FormGroup, FormLabel, FormInput,
 } from "../components/EmpUI.jsx";
 import { TimeOfDaySelects } from "../components/TimeOfDaySelects.jsx";
 
@@ -366,11 +368,31 @@ function leadInitials(name) {
   return name.split(" ").filter(Boolean).slice(0, 2).map((n) => n[0]).join("").toUpperCase();
 }
 
+function splitScheduledAt(scheduledAt) {
+  if (!scheduledAt) return { date: getEmpAppToday(), time: "14:00" };
+  const d = new Date(scheduledAt);
+  if (Number.isNaN(d.getTime())) return { date: getEmpAppToday(), time: "14:00" };
+  const date = localDateKey(d);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return { date, time: `${hh}:${mm}` };
+}
+
+function isValidMeetingUrl(value) {
+  if (!value) return true;
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function PlatformBadge({ platform }) {
   return <Badge tone={PLATFORM_TONE[platform] || "muted"}>{platform}</Badge>;
 }
 
-function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete }) {
+function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onReschedule }) {
   const isLeadMeeting = meeting.source === "lead" || Boolean(meeting.leadId) || (meeting.lead && meeting.lead !== "—");
   return (
     <div className="px-3 py-3 hover:bg-rose-50/50 transition group">
@@ -386,6 +408,16 @@ function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete }) {
                 </span>
               )}
               <PlatformBadge platform={meeting.platform} />
+              {onReschedule && (
+                <button
+                  type="button"
+                  onClick={() => onReschedule(meeting)}
+                  className="p-1 rounded-lg text-slate-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:text-rose-600 hover:bg-rose-50 transition-all"
+                  aria-label="Reschedule meeting"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+              )}
               {onDelete && (
                 <button
                   type="button"
@@ -440,7 +472,7 @@ function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete }) {
   );
 }
 
-function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, onDelete }) {
+function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, onDelete, onReschedule }) {
   return (
     <GlassCard className={`p-0 overflow-hidden flex flex-col ${PANEL_HEIGHT}`}>
       <div className="px-4 py-3 border-b border-rose-50 bg-rose-50/40 shrink-0">
@@ -457,7 +489,7 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
           </div>
         ) : (
           upcoming.map((m) => (
-            <ScheduleItem key={m.id} meeting={m} onJoin={onJoin} onCopyLink={onCopyLink} onShare={onShare} onDelete={onDelete} />
+            <ScheduleItem key={m.id} meeting={m} onJoin={onJoin} onCopyLink={onCopyLink} onShare={onShare} onDelete={onDelete} onReschedule={onReschedule} />
           ))
         )}
 
@@ -482,7 +514,7 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
   );
 }
 
-function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete }) {
+function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onReschedule }) {
   const isLeadMeeting = meeting.source === "lead" || Boolean(meeting.leadId) || (meeting.lead && meeting.lead !== "—");
   return (
     <article className="group rounded-2xl border border-rose-100/80 bg-white p-4 hover:border-rose-200 hover:shadow-[0_8px_24px_rgba(244,63,94,0.06)] transition-all">
@@ -504,6 +536,16 @@ function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete }) {
                 </span>
               )}
               <PlatformBadge platform={meeting.platform} />
+              {onReschedule && (
+                <button
+                  type="button"
+                  onClick={() => onReschedule(meeting)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                  aria-label="Reschedule meeting"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              )}
               {onDelete && (
                 <button
                   type="button"
@@ -559,6 +601,11 @@ function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete }) {
             </BtnSecondary>
           </>
         )}
+        {onReschedule && (
+          <BtnSecondary className="!py-1.5 !px-3 !text-[11px] !rounded-xl" onClick={() => onReschedule(meeting)}>
+            <Pencil className="w-3.5 h-3.5" /> Reschedule
+          </BtnSecondary>
+        )}
       </div>
     </article>
   );
@@ -572,6 +619,7 @@ export default function EmployeeMeetings() {
     meetingsHistory,
     createMeeting,
     cancelMeeting,
+    rescheduleMeeting,
     addLead,
     refreshLeads,
     refreshMeetings,
@@ -599,6 +647,15 @@ export default function EmployeeMeetings() {
     time: "",
     leadName: "",
     leadPhone: "",
+  });
+
+  const [rescheduleModal, setRescheduleModal] = useState({
+    open: false,
+    meeting: null,
+    date: "",
+    time: "",
+    meetLink: "",
+    saving: false,
   });
 
   const loadGoogleStatus = async () => {
@@ -763,6 +820,63 @@ export default function EmployeeMeetings() {
     toast.success("Meeting deleted");
   };
 
+  const openReschedule = (meeting) => {
+    const { date, time } = splitScheduledAt(meeting.scheduledAt);
+    setRescheduleModal({
+      open: true,
+      meeting,
+      date,
+      time,
+      meetLink: meeting.meetLink || "",
+      saving: false,
+    });
+  };
+
+  const closeRescheduleModal = () => {
+    setRescheduleModal({ open: false, meeting: null, date: "", time: "", meetLink: "", saving: false });
+  };
+
+  const handleReschedule = async () => {
+    const { meeting, date, time, meetLink } = rescheduleModal;
+    if (!meeting) return;
+    if (!date || !time) {
+      toast.error("Pick date and time");
+      return;
+    }
+    if (!isValidMeetingUrl(meetLink)) {
+      toast.error("Enter a valid meeting URL (http:// or https://)");
+      return;
+    }
+
+    const { date: origDate, time: origTime } = splitScheduledAt(meeting.scheduledAt);
+    const updates = {};
+    if (date !== origDate || time !== origTime) {
+      updates.scheduledAt = `${date}T${time}:00`;
+    }
+    if ((meetLink || "") !== (meeting.meetLink || "")) {
+      updates.meetLink = meetLink || "";
+    }
+
+    if (Object.keys(updates).length === 0) {
+      closeRescheduleModal();
+      return;
+    }
+
+    setRescheduleModal((s) => ({ ...s, saving: true }));
+    try {
+      const updated = await rescheduleMeeting(meeting.id, updates);
+      if (!updated) return;
+      await refreshMeetings();
+      await refreshLeads();
+      closeRescheduleModal();
+      toast.success("Meeting rescheduled");
+    } catch (err) {
+      toast.error(err?.message || "Could not reschedule meeting");
+    } finally {
+      setRescheduleModal((s) => ({ ...s, saving: false }));
+    }
+  };
+
   const handleCreate = async () => {
     if (submitting) return;
     if (!form.title.trim()) {
@@ -892,6 +1006,7 @@ export default function EmployeeMeetings() {
                         onCopyLink={handleCopyLink}
                         onShare={handleOpenShareModal}
                         onDelete={handleDelete}
+                        onReschedule={openReschedule}
                       />
                     ))}
                   </div>
@@ -938,6 +1053,7 @@ export default function EmployeeMeetings() {
             onCopyLink={handleCopyLink}
             onShare={handleOpenShareModal}
             onDelete={handleDelete}
+            onReschedule={openReschedule}
           />
         </div>
       </div>
@@ -966,6 +1082,47 @@ export default function EmployeeMeetings() {
         onClose={() => setShareModalData((s) => ({ ...s, open: false }))}
         data={shareModalData}
       />
+
+      <EmpModal
+        open={rescheduleModal.open}
+        onClose={closeRescheduleModal}
+        title="Reschedule Meeting"
+        subtitle={rescheduleModal.meeting?.title || ""}
+        footer={
+          <>
+            <BtnSecondary onClick={closeRescheduleModal}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={handleReschedule} disabled={rescheduleModal.saving}>
+              {rescheduleModal.saving ? "Saving…" : "Save changes"}
+            </BtnPrimary>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <FormGroup>
+            <FormLabel>Date</FormLabel>
+            <FormInput
+              type="date"
+              value={rescheduleModal.date}
+              onChange={(e) => setRescheduleModal((s) => ({ ...s, date: e.target.value }))}
+            />
+          </FormGroup>
+          <FormGroup>
+            <FormLabel>Time</FormLabel>
+            <TimeOfDaySelects
+              value={rescheduleModal.time}
+              onChange={(time) => setRescheduleModal((s) => ({ ...s, time }))}
+            />
+          </FormGroup>
+        </div>
+        <FormGroup>
+          <FormLabel>Meeting URL</FormLabel>
+          <FormInput
+            placeholder="https://meet.google.com/…"
+            value={rescheduleModal.meetLink}
+            onChange={(e) => setRescheduleModal((s) => ({ ...s, meetLink: e.target.value }))}
+          />
+        </FormGroup>
+      </EmpModal>
     </div>
   );
 }

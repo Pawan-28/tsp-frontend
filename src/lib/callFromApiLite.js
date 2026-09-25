@@ -75,6 +75,7 @@ export function callFromApiLite(apiCall, leads = [], resolvedLead = null) {
     note: apiCall.notes || apiCall.note || apiCall.aiSummary || apiCall.ai_summary || null,
     notes: apiCall.notes || apiCall.note || null,
     aiSummary: apiCall.aiSummary || apiCall.ai_summary || null,
+    structuredSummary: apiCall.structuredSummary || null,
     recordingUrl: apiCall.recordingUrl || apiCall.recording_url || null,
     checklistProgress: apiCall.checklistProgress || apiCall.checklist_progress || null,
     checkedQuestions: apiCall.checkedQuestions || apiCall.checked_questions || null,

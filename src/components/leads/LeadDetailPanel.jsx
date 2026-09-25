@@ -19,9 +19,10 @@ import { CANONICAL_STAGE_LABELS, buildDetailDraft, unwrapApiList, filterAssignab
 import { callFromApiLite } from "../../lib/callFromApiLite.js";
 import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../../lib/callDisplay.js";
 import { formatTelUrl } from "../../lib/phoneUtils.js";
-import { apiGet, apiPost } from "../../lib/api.js";
+import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
-import CallMomModal from "./CallMomModal.jsx";
+import { getMomSections, getMomPlainText } from "../../lib/momFormat.js";
+import MomSections from "./MomSections.jsx";
 
 const TEMPERATURE_BTN_ACTIVE = {
   hot: "bg-rose-100 border-rose-200 text-rose-800 shadow-sm",
@@ -235,40 +236,23 @@ export default function LeadDetailPanel({
   const [serviceOptions, setServiceOptions] = useState(CANONICAL_SERVICES);
 
   const handleGenerateOpenAiMom = async (callToProcess) => {
-    if (!callToProcess) return;
-    const recUrl = callToProcess.recordingUrl || callToProcess.recording_url || callToProcess.audioUrl || callToProcess.callRecordingUrl;
-    if (!recUrl) {
-      toast.error("No call recording audio available to generate OpenAI MoM.");
-      return;
-    }
+    if (!callToProcess || isProcessingAi) return;
     try {
       setIsProcessingAi(true);
-      const toastId = toast.loading("Processing recording with OpenAI Whisper & GPT-4o...");
-      const res = await apiPost(`/api/v1/ai/process-call/${callToProcess.id || ""}`, { callId: callToProcess.id }, { headers: crmHeaders });
-      
-      const updatedCallData = res?.call || res?.data;
-      if (updatedCallData) {
-        const newMom = updatedCallData.ai_summary || updatedCallData.aiSummary || updatedCallData.notes || updatedCallData.note;
-        setActiveViewCallMom((prev) => ({
-          ...prev,
-          ...updatedCallData,
-          aiSummary: newMom,
-          note: newMom,
-          checklistProgress: updatedCallData.checklist_progress || updatedCallData.checklistProgress,
-        }));
-        toast.success("AI MoM generated successfully with OpenAI!", { id: toastId });
-      } else {
-        // Fallback generation if backend offline
-        const generatedDemoMom = `• Lead Discussion: Detailed discussion conducted regarding ${liveLead?.service || "services"}.\n• Key Takeaways: Verified timeline, scope of work, and budget alignment.\n• Next Step: Scheduled follow-up session and sent proposal documents over WhatsApp/Email.`;
-        setActiveViewCallMom((prev) => ({
-          ...prev,
-          aiSummary: generatedDemoMom,
-          note: generatedDemoMom,
-        }));
-        toast.success("AI MoM generated successfully with OpenAI!", { id: toastId });
+      const toastId = toast.loading("Generating AI MoM…");
+      const res = await processCallWithAi(callToProcess.id, { headers: crmHeaders });
+      const updatedCallData = res?.call || res?.data || res;
+      if (!updatedCallData || typeof updatedCallData !== "object") {
+        throw new Error("AI processing returned no data");
       }
+      setActiveViewCallMom((prev) => ({
+        ...prev,
+        ...updatedCallData,
+        checklistProgress: updatedCallData.checklist_progress || updatedCallData.checklistProgress || prev?.checklistProgress,
+      }));
+      toast.success("AI MoM generated successfully!", { id: toastId });
     } catch (err) {
-      toast.error(err.message || "Failed to generate OpenAI MoM.");
+      toast.error(err.message || "Failed to generate AI MoM.");
     } finally {
       setIsProcessingAi(false);
     }
@@ -563,7 +547,6 @@ export default function LeadDetailPanel({
     const allQs = activeSop.steps ? activeSop.steps.reduce((acc, step) => [...acc, ...step.questions], []) : [];
     const askedCount = allQs.filter((q) => !!checkedQs[`${activeSop.id}-${q.id}`]).length;
     const adherencePct = allQs.length > 0 ? Math.round((askedCount / allQs.length) * 100) : 100;
-    const momText = c.note || c.aiSummary || c.ai_summary || c.notes || c.outcome || "Connected";
 
     // Filter steps to ONLY include questions completed by the employee
     const stepsWithEmployeeTicks = (activeSop.steps || []).map((step) => {
@@ -635,27 +618,26 @@ export default function LeadDetailPanel({
             <h4 className="text-xs font-extrabold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-rose-600 animate-pulse" /> AI Call Summary & MoM
             </h4>
-            {(c.recordingUrl || c.recording_url || c.audioUrl || c.callRecordingUrl) && (
-              <button
-                type="button"
-                disabled={isProcessingAi}
-                onClick={() => handleGenerateOpenAiMom(c)}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10.5px] transition shadow-2xs disabled:opacity-50 cursor-pointer"
-              >
-                {isProcessingAi ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Processing Audio...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5 text-rose-200" /> Generate MoM with OpenAI
-                  </>
-                )}
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={isProcessingAi}
+              onClick={() => handleGenerateOpenAiMom(c)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10.5px] transition shadow-2xs disabled:opacity-50 cursor-pointer"
+            >
+              {isProcessingAi ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-rose-200" />
+                  {(getMomSections(c) || getMomPlainText(c)) ? "Re-process AI MoM" : "Generate AI MoM"}
+                </>
+              )}
+            </button>
           </div>
-          <div className="text-xs text-slate-800 leading-relaxed font-medium bg-white/90 border border-rose-100 p-3.5 rounded-xl whitespace-pre-line shadow-2xs">
-            {c.note || c.aiSummary || c.ai_summary || c.notes || c.outcome || "Connected"}
+          <div className="bg-white/90 border border-rose-100 p-3.5 rounded-xl shadow-2xs">
+            <MomSections call={c} emptyText="No AI MoM generated yet for this call." />
           </div>
         </div>
 
