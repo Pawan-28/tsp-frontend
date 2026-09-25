@@ -39,6 +39,7 @@ const EMPTY_FORM = {
   leadId: "",
   platform: "google_meet",
   meetLink: "",
+  service: "",
   agenda: "",
 };
 
@@ -180,6 +181,7 @@ function BookMeetingDrawer({
   setForm,
   leads,
   leadOptions,
+  serviceOptions,
   employee,
   selectedPlatform,
   googleConnected,
@@ -260,6 +262,18 @@ function BookMeetingDrawer({
             </select>
           </Field>
         </div>
+
+        <Field label="Service">
+          <select
+            className={INPUT}
+            value={form.service || "—"}
+            onChange={(e) => setForm((f) => ({ ...f, service: e.target.value }))}
+          >
+            {(serviceOptions || ["—"]).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </Field>
 
         {form.leadId === "__custom__" && (
           <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-rose-50/60 border border-rose-200 animate-fade-in">
@@ -638,6 +652,8 @@ export default function EmployeeMeetings() {
     connected: false,
     googleEmail: null,
   });
+  const [serviceOptions, setServiceOptions] = useState(["—"]);
+  const [prefilledLeadId, setPrefilledLeadId] = useState(null);
 
   const [shareModalData, setShareModalData] = useState({
     open: false,
@@ -682,6 +698,39 @@ export default function EmployeeMeetings() {
   useEffect(() => {
     if (searchParams.get("action") === "add") setDrawerOpen(true);
   }, [searchParams]);
+
+  // Real service catalog (same source as the Lead Detail panel) for the Book Meeting form.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiGet("/api/services", { headers: getCrmHeaders(), cacheTtl: 30_000 });
+        const names = (data?.services || data?.data || [])
+          .map((s) => s.name || s.title)
+          .filter(Boolean);
+        if (!cancelled && names.length) {
+          setServiceOptions(["—", ...names]);
+        }
+      } catch {
+        // keep default
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // "Book Meeting" opened from a specific lead (LeadDetailPanel) — prefill lead + service.
+  useEffect(() => {
+    const leadIdParam = searchParams.get("leadId");
+    if (!leadIdParam || leadIdParam === prefilledLeadId) return;
+    const lead = leads.find((l) => String(l.id) === String(leadIdParam));
+    if (!lead) return;
+    setPrefilledLeadId(leadIdParam);
+    setForm((f) => ({
+      ...f,
+      leadId: String(lead.id),
+      service: lead.service || lead.requirements || lead.serviceName || lead.service_name || f.service,
+    }));
+  }, [searchParams, leads, prefilledLeadId]);
 
   const selectedPlatform = MEETING_PLATFORMS.find((p) => p.id === form.platform) || MEETING_PLATFORMS[0];
 
@@ -737,6 +786,7 @@ export default function EmployeeMeetings() {
 
   const closeDrawer = () => {
     setDrawerOpen(false);
+    setPrefilledLeadId(null);
     if (searchParams.get("action") === "add") setSearchParams({}, { replace: true });
   };
 
@@ -890,6 +940,15 @@ export default function EmployeeMeetings() {
     setSubmitting(true);
     try {
       let activeForm = { ...form };
+      const chosenService = String(form.service || "").trim();
+      if (chosenService && chosenService !== "—") {
+        const agendaText = String(activeForm.agenda || "").trim();
+        if (!agendaText.startsWith("Service:")) {
+          activeForm.agenda = agendaText
+            ? `Service: ${chosenService}\n\n${agendaText}`
+            : `Service: ${chosenService}`;
+        }
+      }
       if (form.leadId === "__custom__") {
         if (!form.customName?.trim() && !form.customPhone?.trim()) {
           toast.error("Enter a custom lead name or phone number");
@@ -915,7 +974,10 @@ export default function EmployeeMeetings() {
       const saved = await createMeeting(activeForm);
       if (!saved) return;
 
-      const currentMeetLink = activeForm.meetLink;
+      // Prefer the backend's saved link (covers the case where the backend auto-generated
+      // a real Google Meet URL server-side because the employee submitted with platform
+      // "Google Meet" and no manually-typed/pre-generated meetLink).
+      const currentMeetLink = saved.meetLink || activeForm.meetLink;
       const currentTitle = activeForm.title.trim();
       const currentDate = activeForm.date;
       const currentTime = activeForm.time;
@@ -1064,6 +1126,7 @@ export default function EmployeeMeetings() {
         setForm={setForm}
         leads={leads}
         leadOptions={leadOptions}
+        serviceOptions={serviceOptions}
         employee={employee}
         selectedPlatform={selectedPlatform}
         googleConnected={googleStatus.connected}

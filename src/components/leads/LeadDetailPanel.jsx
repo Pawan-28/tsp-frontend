@@ -3,7 +3,7 @@ import {
   Phone, MessageCircle, Mail, Sparkles, Clock,
   Users, RefreshCw, Shuffle, ChevronDown, ChevronUp, Zap,
   CheckCircle, Circle, ShieldCheck, Play, Pause, Volume2, ArrowLeft, Calendar, RotateCcw,
-  Megaphone, Target,
+  Megaphone, Target, Video,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -753,6 +753,14 @@ export default function LeadDetailPanel({
             className="flex-1 h-10 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold transition shadow-[0_4px_12px_rgba(220,38,38,0.2)] flex items-center justify-center gap-1.5"
           >
             <Zap className="w-4 h-4 fill-white" /> Live Call
+          </button>
+
+          <button
+            type="button"
+            onClick={() => navigate(`/employee/meetings?action=add&leadId=${liveLead.id}`)}
+            className="flex-1 h-10 rounded-xl border border-sky-200 bg-sky-50/60 text-sky-800 hover:bg-sky-100/60 text-xs font-bold transition flex items-center justify-center gap-1.5"
+          >
+            <Video className="w-4 h-4 text-sky-600" /> Book Meeting
           </button>
         </div>
       )}
