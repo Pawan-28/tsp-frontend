@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useDeferredValue, memo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff } from "lucide-react";
+import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff, Video } from "lucide-react";
 import toast from "react-hot-toast";
 import { GlassCard, Badge, StatCard } from "../../components/Primitives.jsx";
 import AddLeadDrawer from "../../components/AddLeadDrawer.jsx";
@@ -12,6 +12,7 @@ import {
   formatEmpPipelineValue,
   getEmpPipelineSummary,
   getEmpStageMeta,
+  getEmpAppToday,
 } from "../../data/employeeMock.js";
 import { leadHasOutboundCalls, resolveLeadKanbanColumn, getPipelineStagePillCount, isAdminPanelAssignedLead, isLeadAssignedInPeriod } from "../../lib/leadKanban.js";
 import { buildLeadActivityLabelMap } from "../../lib/callDisplay.js";
@@ -22,7 +23,12 @@ import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } f
 import { filterLeadsByActivityPeriod } from "../../lib/periodFilter.js";
 import useIsMobile from "../../lib/useIsMobile.js";
 import EmployeeLeadDrawer from "../components/EmployeeLeadDrawer.jsx";
-import { LeadStatusBadge } from "../components/EmpUI.jsx";
+import {
+  LeadStatusBadge, EmpModal, BtnPrimary, BtnSecondary, FormGroup, FormLabel, FormInput, FormSelect, AvatarCircle,
+} from "../components/EmpUI.jsx";
+import { TimeOfDaySelects } from "../components/TimeOfDaySelects.jsx";
+import { apiGet } from "../../lib/api.js";
+import { getCrmHeaders } from "../../lib/crmContext.js";
 
 
 const SUMMARY_VISIBLE_KEY = "tsp_employee_summary_visible";
@@ -57,6 +63,112 @@ function startLeadCardDrag(e, leadId, onDragStart) {
 function isDraggablePipelineLead(lead) {
   if (!lead || lead._fromCall || lead._fromMeeting) return false;
   return /^\d+$/.test(String(lead.id));
+}
+
+// Sensible default "Book Meeting" title for the Pipeline drag/drop → Meeting Booked flow:
+// lead name + service, editable by the employee before they submit.
+function defaultMeetingTitle(lead, service) {
+  const name = lead?.name || "Lead";
+  if (service && service !== "—") return `${name} — ${service}`;
+  return `${name} — Discovery Call`;
+}
+
+const BOOKING_READONLY_FIELD =
+  "h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700 font-semibold flex items-center gap-2";
+
+/**
+ * Reuses the existing Book Meeting flow (EmployeeContext.createMeeting -> the real backend
+ * Google Calendar/Meet + Meeting-Booked stage + n8n webhook pipeline already used by
+ * EmployeeMeetings.jsx), triggered from dropping a lead card onto the "Meeting Booked"
+ * pipeline column instead of a free-form drawer. Lead + employee are locked; meeting type
+ * is always Google Meet (no manual link entry) per spec.
+ */
+function PipelineBookMeetingModal({
+  open, lead, employee, form, setForm, serviceOptions, submitting, onSubmit, onClose,
+}) {
+  return (
+    <EmpModal
+      open={open}
+      onClose={onClose}
+      title="Book Meeting"
+      subtitle="Dropped into Meeting Booked — confirm the details to generate a real Google Meet link."
+      footer={(
+        <>
+          <BtnSecondary onClick={onClose} disabled={submitting}>
+            Cancel
+          </BtnSecondary>
+          <BtnPrimary onClick={onSubmit} disabled={submitting}>
+            <Video className="w-4 h-4" /> {submitting ? "Booking…" : "Book Meeting"}
+          </BtnPrimary>
+        </>
+      )}
+    >
+      <FormGroup>
+        <FormLabel>Lead</FormLabel>
+        <div className={BOOKING_READONLY_FIELD}>
+          <AvatarCircle
+            initials={(lead?.name || "?").split(" ").filter(Boolean).slice(0, 2).map((n) => n[0]).join("").toUpperCase()}
+            color="#be123c"
+            size={24}
+          />
+          <span className="truncate">{lead?.name || "—"}</span>
+        </div>
+      </FormGroup>
+
+      <FormGroup>
+        <FormLabel>Employee</FormLabel>
+        <div className={BOOKING_READONLY_FIELD}>{employee?.name || "You"}</div>
+      </FormGroup>
+
+      <div className="grid grid-cols-2 gap-3 mb-3 sm:mb-4">
+        <div>
+          <FormLabel>Date</FormLabel>
+          <FormInput
+            type="date"
+            value={form.date}
+            onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+          />
+        </div>
+        <div>
+          <FormLabel>Time</FormLabel>
+          <TimeOfDaySelects value={form.time} onChange={(time) => setForm((f) => ({ ...f, time }))} />
+        </div>
+      </div>
+
+      <FormGroup>
+        <FormLabel>Service</FormLabel>
+        <FormSelect
+          value={form.service || "—"}
+          onChange={(e) => {
+            const nextService = e.target.value;
+            setForm((f) => ({
+              ...f,
+              service: nextService,
+              title: f.titleDirty ? f.title : defaultMeetingTitle(lead, nextService),
+            }));
+          }}
+        >
+          {(serviceOptions || ["—"]).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </FormSelect>
+      </FormGroup>
+
+      <FormGroup>
+        <FormLabel>Meeting Title</FormLabel>
+        <FormInput
+          value={form.title}
+          placeholder="Discovery Call"
+          onChange={(e) => setForm((f) => ({ ...f, title: e.target.value, titleDirty: true }))}
+        />
+      </FormGroup>
+
+      <p className="text-[10px] text-slate-400 mt-1">
+        Meeting type is fixed to Google Meet — a real Meet link is generated automatically by the
+        server when you click Book Meeting. The lead only moves to Meeting Booked once that succeeds.
+      </p>
+    </EmpModal>
+  );
 }
 
 const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage }) {
@@ -171,6 +283,8 @@ export default function EmployeeLeads() {
     loading: leadsLoading,
     addLead,
     updateLeadStage,
+    createMeeting,
+    refreshLeads,
     employee,
     selectedService,
     meetingsUpcoming = [],
@@ -196,8 +310,39 @@ export default function EmployeeLeads() {
   const [groupRev, setGroupRev] = useState(0);
   const [expandedColumns, setExpandedColumns] = useState({});
 
+  // Pipeline drag/drop → Meeting Booked interception: dropping a lead onto the
+  // Meeting Booked column opens this Book Meeting modal instead of moving the stage
+  // immediately. The stage only changes after a real meeting is successfully booked
+  // (see moveLeadToStage below and handleBookingSubmit).
+  const [bookingModal, setBookingModal] = useState({ open: false, lead: null });
+  const [bookingForm, setBookingForm] = useState({
+    title: "", date: getEmpAppToday(), time: "14:00", service: "—", titleDirty: false,
+  });
+  const [bookingServiceOptions, setBookingServiceOptions] = useState(["—"]);
+  const [bookingSubmitting, setBookingSubmitting] = useState(false);
+
   useEffect(() => {
     setSummaryVisible(readSummaryVisiblePref());
+  }, []);
+
+  // Real service catalog (same source as Lead Detail / Employee Meetings) for the
+  // Pipeline-triggered Book Meeting modal's Service field.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiGet("/api/services", { headers: getCrmHeaders(), cacheTtl: 30_000 });
+        const names = (data?.services || data?.data || [])
+          .map((s) => s.name || s.title)
+          .filter(Boolean);
+        if (!cancelled && names.length) {
+          setBookingServiceOptions(["—", ...names]);
+        }
+      } catch {
+        // keep default
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const toggleSummaryVisible = () => {
@@ -457,6 +602,16 @@ export default function EmployeeLeads() {
       if (scroll) scrollToStage(stageId);
       return;
     }
+
+    // Meeting Booked is never applied immediately: open the Book Meeting modal with this
+    // lead pre-selected and wait for a real meeting to be booked (or cancelled). The stage
+    // is only changed server-side, inside handleBookingSubmit, after createMeeting() succeeds
+    // — so the card visually/actually stays in its current column until then.
+    if (stageId === "meeting_booked") {
+      openBookingModal(lead);
+      return;
+    }
+
     updateLeadStage(lead.id, target.label, { fromNewAssigned: isPipelineNewAssigned(lead) });
     if (moveLeadLocally) {
       moveLeadLocally(lead.id, stageId);
@@ -468,6 +623,66 @@ export default function EmployeeLeads() {
         : `Moved to ${target.label}`,
       { id: `lead-move-${lead.id}-${stageId}` },
     );
+  };
+
+  const openBookingModal = (lead) => {
+    const presetServiceRaw = lead.service || lead.requirements || lead.serviceName || lead.service_name || "";
+    const presetService = bookingServiceOptions.includes(presetServiceRaw) ? presetServiceRaw : "—";
+    setBookingForm({
+      title: defaultMeetingTitle(lead, presetService),
+      date: getEmpAppToday(),
+      time: "14:00",
+      service: presetService,
+      titleDirty: false,
+    });
+    setBookingModal({ open: true, lead });
+  };
+
+  const closeBookingModal = () => {
+    if (bookingSubmitting) return;
+    // No stage change or local move ever happened for this drop, so closing/cancelling
+    // here is already an implicit "restore to previous stage" — there is nothing to undo.
+    setBookingModal({ open: false, lead: null });
+  };
+
+  const handleBookingSubmit = async () => {
+    const bookingLead = bookingModal.lead;
+    if (!bookingLead) return;
+    if (!bookingForm.date || !bookingForm.time) {
+      toast.error("Pick a date and time");
+      return;
+    }
+    if (!bookingForm.title.trim()) {
+      toast.error("Meeting title is required");
+      return;
+    }
+    setBookingSubmitting(true);
+    try {
+      const chosenService = String(bookingForm.service || "").trim();
+      const agenda = chosenService && chosenService !== "—" ? `Service: ${chosenService}` : "";
+      // platform: "google_meet" + no meetLink → backend (operationalServices.createMeeting)
+      // generates a real Google Calendar/Meet link server-side. If that fails, createMeeting()
+      // returns null and has already shown an error toast — the lead stays in its stage and no
+      // stage-update / n8n webhook ever fires, since the backend never reaches those steps.
+      const saved = await createMeeting({
+        title: bookingForm.title.trim(),
+        date: bookingForm.date,
+        time: bookingForm.time,
+        leadId: String(bookingLead.id),
+        platform: "google_meet",
+        meetLink: "",
+        agenda,
+      });
+      if (!saved) return;
+
+      // Meeting saved → backend already moved the lead to Meeting Booked and fired the n8n
+      // webhook. Pull real server state so the pipeline board reflects the new stage.
+      await refreshLeads();
+      toast.success(`Google Meet booked — ${bookingLead.name} moved to Meeting Booked`);
+      setBookingModal({ open: false, lead: null });
+    } finally {
+      setBookingSubmitting(false);
+    }
   };
 
   const closeModal = () => {
@@ -855,6 +1070,18 @@ export default function EmployeeLeads() {
       />
 
       <EmployeeLeadDrawer lead={selected} periodCalls={periodCalls} onClose={() => setSelected(null)} onMoveStage={moveLeadToStage} />
+
+      <PipelineBookMeetingModal
+        open={bookingModal.open}
+        lead={bookingModal.lead}
+        employee={employee}
+        form={bookingForm}
+        setForm={setBookingForm}
+        serviceOptions={bookingServiceOptions}
+        submitting={bookingSubmitting}
+        onSubmit={handleBookingSubmit}
+        onClose={closeBookingModal}
+      />
     </div>
   );
 }
