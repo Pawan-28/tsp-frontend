@@ -1009,10 +1009,7 @@ function ServiceDropdown({ value, onChange, options }) {
   }, [open, isMobile]);
 
   const handleOpen = () => { if (!open && !isMobile) calcPos(); setOpen(o => !o); setSearch(""); };
-  const filtered = options.filter(
-  o => o !== "All Services" &&
-       o.toLowerCase().includes(search.toLowerCase())
-);
+  const filtered = options.filter(o => o.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div className="relative">

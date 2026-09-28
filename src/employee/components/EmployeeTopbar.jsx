@@ -189,7 +189,7 @@ export default function EmployeeTopbar({ onMenu }) {
           <div className="hidden md:block flex-grow min-w-0" />
 
           <div className="flex items-center gap-1 sm:gap-1.5 justify-end shrink-0">
-            {(isPipelinePage) && (
+            {/* {(isPipelinePage) && (
               <div className="relative hidden md:inline-flex w-auto shrink-0 mr-1">
                 <select
                   value={selectedService}
@@ -204,7 +204,7 @@ export default function EmployeeTopbar({ onMenu }) {
                   ))}
                 </select>
               </div>
-            )}
+            )} */}
 
             {/* Quick Actions — tablet+ (mobile uses FAB) */}
             <div ref={quickRef} className="relative hidden md:inline-flex w-auto mr-1">
@@ -301,7 +301,7 @@ export default function EmployeeTopbar({ onMenu }) {
                   </button>
                 ))}
               </div>
-              {isPipelinePage && (
+              {/* {isPipelinePage && (
                 <select
                   value={selectedService}
                   onChange={(e) => setSelectedService(e.target.value)}
@@ -314,7 +314,7 @@ export default function EmployeeTopbar({ onMenu }) {
                     <option key={s} value={s}>{s.length > 28 ? s.slice(0, 26) + "..." : s}</option>
                   ))}
                 </select>
-              )}
+              )} */}
             </div>
           </div>
         )}
