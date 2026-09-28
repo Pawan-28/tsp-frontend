@@ -21,11 +21,11 @@ const INDIAN_STATES = [
 const LEAD_SOURCE_OPTIONS = SOURCE_CATALOG.filter((s) => !["n8n", "api", "form", "other"].includes(s.key)).map((s) => s.label);
 
 const DEFAULT_SERVICES = [
-  "AI Automation Suite",
-  "CRM Setup & Onboarding",
-  "Lead Gen Engine",
-  "Custom Software Dev",
-  "Strategic Consulting",
+  // "AI Automation Suite",
+  // "CRM Setup & Onboarding",
+  // "Lead Gen Engine",
+  // "Custom Software Dev",
+  // "Strategic Consulting",
 ];
 
 export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Lead" }) {
