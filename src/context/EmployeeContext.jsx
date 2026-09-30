@@ -1057,7 +1057,14 @@ export function EmployeeProvider({ children }) {
   }, [leads, usingApi]);
 
   const updateLeadTemperature = useCallback(async (leadId, nextStatus) => {
-    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, status: nextStatus } : l)));
+    setLeads((prev) => prev.map((l) => (l.id === leadId
+      ? {
+        ...l,
+        status: nextStatus,
+        // Keep the card's temperature badge in sync with the Hot/Warm/Cold toggle.
+        ...(["hot", "warm", "cold"].includes(nextStatus) ? { temperature: nextStatus } : {}),
+      }
+      : l)));
 
     if (shouldPersistToApi(usingApi)) {
       try {

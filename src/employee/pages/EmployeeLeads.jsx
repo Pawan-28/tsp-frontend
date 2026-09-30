@@ -173,6 +173,18 @@ function PipelineBookMeetingModal({
   );
 }
 
+// Top-right card badge = the lead's real temperature from the API (hot/warm/cold, or
+// DB labels like "Hot Lead"). Anything else → no badge (never a "NEW" fallback).
+const CARD_TEMPERATURE_LABELS = { hot: "Hot", warm: "Warm", cold: "Cold" };
+function cardTemperatureKey(temperature) {
+  const t = String(temperature ?? "").trim().toLowerCase();
+  if (!t) return null;
+  if (t === "hot" || t.startsWith("hot ")) return "hot";
+  if (t === "warm" || t.startsWith("warm ")) return "warm";
+  if (t === "cold" || t.startsWith("cold ")) return "cold";
+  return null;
+}
+
 const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage }) {
   const canDrag = isDraggablePipelineLead(lead);
 
@@ -242,7 +254,12 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
                 <Phone className="w-3 h-3 fill-rose-600 text-rose-600" />
               </button>
             ) : null}
-            <LeadStatusBadge status={lead.status} label={LEAD_STATUS_LABELS[lead.status] || lead.stage || "Lead"} />
+            {cardTemperatureKey(lead.temperature) && (
+              <LeadStatusBadge
+                status={cardTemperatureKey(lead.temperature)}
+                label={CARD_TEMPERATURE_LABELS[cardTemperatureKey(lead.temperature)]}
+              />
+            )}
           </div>
         </div>
 
