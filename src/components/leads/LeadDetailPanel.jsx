@@ -612,7 +612,7 @@ export default function LeadDetailPanel({
           )}
         </div>
 
-        {/* AI Call Summary & MoM Card (OpenAI Integration)
+        {/* AI Call Summary & MoM Card (OpenAI Integration) */}
         <div className="bg-gradient-to-br from-rose-50/60 via-white to-rose-100/20 border border-rose-200/80 shadow-2xs rounded-2xl p-4 space-y-2.5">
           <div className="flex items-center justify-between border-b border-rose-100 pb-2 flex-wrap gap-2">
             <h4 className="text-xs font-extrabold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -639,7 +639,7 @@ export default function LeadDetailPanel({
           <div className="bg-white/90 border border-rose-100 p-3.5 rounded-xl shadow-2xs">
             <MomSections call={c} emptyText="No AI MoM generated yet for this call." />
           </div>
-        </div> */}
+        </div>
 
         {/* SOP Compliance Audit (ONLY showing checklist items done by employee!) */}
         <div className="bg-white border border-rose-100 rounded-2xl p-4 space-y-3 shadow-2xs">
@@ -820,36 +820,6 @@ export default function LeadDetailPanel({
           </div>
         </div>
       </div>
-
-  {/* AI Call Summary & MoM Card (OpenAI Integration) */}
-        <div className="bg-gradient-to-br from-rose-50/60 via-white to-rose-100/20 border border-rose-200/80 shadow-2xs rounded-2xl p-4 space-y-2.5">
-          <div className="flex items-center justify-between border-b border-rose-100 pb-2 flex-wrap gap-2">
-            <h4 className="text-xs font-extrabold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-rose-600 animate-pulse" /> AI Call Summary & MoM
-            </h4>
-            <button
-              type="button"
-              disabled={isProcessingAi}
-              onClick={() => handleGenerateOpenAiMom(c)}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10.5px] transition shadow-2xs disabled:opacity-50 cursor-pointer"
-            >
-              {isProcessingAi ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Generating…
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5 text-rose-200" />
-                  {(getMomSections(c) || getMomPlainText(c)) ? "Re-process AI MoM" : "Generate AI MoM"}
-                </>
-              )}
-            </button>
-          </div>
-          <div className="bg-white/90 border border-rose-100 p-3.5 rounded-xl shadow-2xs">
-            <MomSections call={c} emptyText="No AI MoM generated yet for this call." />
-          </div>
-        </div>
-
 
       <div className="grid grid-cols-2 gap-3">
         <DetailField label="Phone" value={draft.phone} onChange={patchDraft("phone")} readOnly={readOnly} />
