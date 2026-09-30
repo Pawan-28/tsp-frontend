@@ -18,11 +18,13 @@ import CashCollectedPanel from "../CashCollectedPanel.jsx";
 import { CANONICAL_STAGE_LABELS, buildDetailDraft, unwrapApiList, filterAssignableEmployees, isDummyEmployee } from "../../lib/leadSync.js";
 import { callFromApiLite } from "../../lib/callFromApiLite.js";
 import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../../lib/callDisplay.js";
-import { formatTelUrl } from "../../lib/phoneUtils.js";
+import { formatTelUrl, formatWhatsAppPhone } from "../../lib/phoneUtils.js";
 import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
 import { getMomSections, getMomPlainText } from "../../lib/momFormat.js";
 import MomSections from "./MomSections.jsx";
+import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal.jsx";
+import { cleanServiceName } from "../../lib/meetingTitle.js";
 
 const TEMPERATURE_BTN_ACTIVE = {
   hot: "bg-rose-100 border-rose-200 text-rose-800 shadow-sm",
@@ -215,6 +217,8 @@ export default function LeadDetailPanel({
   updateLeadTemperature,
   addActivityRecord,
   startCallyzerCall,
+  createMeeting,
+  onMeetingBooked,
   onTemperatureChange,
   onStageChange,
   pipelineView = false,
@@ -234,8 +238,9 @@ export default function LeadDetailPanel({
   const [fetchedCalls, setFetchedCalls] = useState([]);
   const [callsLoading, setCallsLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState(CANONICAL_SERVICES);
+  const [bookMeetingOpen, setBookMeetingOpen] = useState(false);
 
-  const handleGenerateOpenAiMom = async (callToProcess) => {
+  const handleGenerateAiMom = async (callToProcess) => {
     if (!callToProcess || isProcessingAi) return;
     try {
       setIsProcessingAi(true);
@@ -612,7 +617,7 @@ export default function LeadDetailPanel({
           )}
         </div>
 
-        {/* AI Call Summary & MoM Card (OpenAI Integration) */}
+        {/* AI Call Summary & MoM Card (Gemini — backend /api/v1/ai/process-call) */}
         <div className="bg-gradient-to-br from-rose-50/60 via-white to-rose-100/20 border border-rose-200/80 shadow-2xs rounded-2xl p-4 space-y-2.5">
           <div className="flex items-center justify-between border-b border-rose-100 pb-2 flex-wrap gap-2">
             <h4 className="text-xs font-extrabold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
@@ -621,7 +626,7 @@ export default function LeadDetailPanel({
             <button
               type="button"
               disabled={isProcessingAi}
-              onClick={() => handleGenerateOpenAiMom(c)}
+              onClick={() => handleGenerateAiMom(c)}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10.5px] transition shadow-2xs disabled:opacity-50 cursor-pointer"
             >
               {isProcessingAi ? (
@@ -733,8 +738,11 @@ export default function LeadDetailPanel({
                 toast.error("Phone number not found for this lead");
                 return;
               }
-              const cleanPhone = liveLead.phone.replace(/\D/g, "");
-              const formatted = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+              const formatted = formatWhatsAppPhone(liveLead.phone);
+              if (!formatted) {
+                toast.error("Phone number not found for this lead");
+                return;
+              }
               window.open(`https://wa.me/${formatted}`, "_blank", "noopener,noreferrer");
             }}
             className="flex-1 h-10 rounded-xl border border-emerald-250 bg-emerald-50/10 text-emerald-800 hover:bg-emerald-50/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
@@ -757,7 +765,11 @@ export default function LeadDetailPanel({
 
           <button
             type="button"
-            onClick={() => navigate(`/employee/meetings?action=add&leadId=${liveLead.id}`)}
+            onClick={() => {
+              // Date + time only — lead/customer/phone/service/employee come from this lead.
+              if (typeof createMeeting === "function") setBookMeetingOpen(true);
+              else navigate(`/employee/meetings?action=add&leadId=${liveLead.id}`);
+            }}
             className="flex-1 h-10 rounded-xl border border-sky-200 bg-sky-50/60 text-sky-800 hover:bg-sky-100/60 text-xs font-bold transition flex items-center justify-center gap-1.5"
           >
             <Video className="w-4 h-4 text-sky-600" /> Book Meeting
@@ -819,6 +831,72 @@ export default function LeadDetailPanel({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Lead Notes & Call Summaries (AI MoM) — shown right below the lead header card. */}
+      <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3.5 shadow-sm">
+        <div className="flex items-center justify-between border-b border-rose-50 pb-2">
+          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <MessageCircle className="w-3.5 h-3.5 text-rose-500" /> Lead Notes & Call Summaries ({allNotesAndSummaries.length})
+          </label>
+        </div>
+
+        {!readOnly && (
+          <form onSubmit={handleAddNote} className="space-y-2">
+            <FormTextarea
+              rows={2}
+              placeholder="Type a note or call details..."
+              className="!rounded-xl border-rose-100/60 focus:border-rose-400 text-xs"
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              required
+            />
+            <div className="flex justify-end">
+              <BtnPrimary type="submit" className="!py-1.5 !px-3 !text-[10.5px]" disabled={noteSaving}>
+                {noteSaving ? "Saving..." : "Add Note"}
+              </BtnPrimary>
+            </div>
+          </form>
+        )}
+
+        {noteLoading ? (
+          <div className="text-center py-2 text-[11px] text-slate-450">Loading notes & summaries...</div>
+        ) : allNotesAndSummaries.length === 0 ? (
+          <p className="text-[10.5px] text-slate-400 italic pl-1">No notes or call summaries saved for this lead.</p>
+        ) : (
+          <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
+            {allNotesAndSummaries.map((item) => (
+              <div
+                key={item.id}
+                className={`rounded-xl p-3 space-y-1.5 text-xs transition-all ${
+                  item.isAiCallSummary
+                    ? "bg-gradient-to-r from-rose-50/90 via-white to-rose-50/40 border border-rose-200/80 shadow-2xs"
+                    : "bg-white border border-rose-100 shadow-2xs"
+                }`}
+              >
+                <div className="flex items-center justify-between text-[9.5px] font-extrabold">
+                  <span className={`flex items-center gap-1 uppercase tracking-wider ${
+                    item.isAiCallSummary ? "text-rose-700 font-black" : "text-slate-600 font-bold"
+                  }`}>
+                    {item.isAiCallSummary ? (
+                      <>
+                        <Sparkles className="w-3 h-3 text-rose-600 animate-pulse" /> {item.authorName}
+                      </>
+                    ) : (
+                      <>
+                        <MessageCircle className="w-3 h-3 text-slate-400" /> {item.authorName}
+                      </>
+                    )}
+                  </span>
+                  <span className="text-slate-400 font-medium">{item.dateStr}</span>
+                </div>
+                <p className="text-slate-800 leading-relaxed font-medium whitespace-pre-line text-[11px]">
+                  {formatAiSummaryText(item.body)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -970,70 +1048,7 @@ export default function LeadDetailPanel({
 
 
 
-      <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3.5 shadow-sm">
-        <div className="flex items-center justify-between border-b border-rose-50 pb-2">
-          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-            <MessageCircle className="w-3.5 h-3.5 text-rose-500" /> Lead Notes & Call Summaries ({allNotesAndSummaries.length})
-          </label>
-        </div>
 
-        {!readOnly && (
-          <form onSubmit={handleAddNote} className="space-y-2">
-            <FormTextarea
-              rows={2}
-              placeholder="Type a note or call details..."
-              className="!rounded-xl border-rose-100/60 focus:border-rose-400 text-xs"
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              required
-            />
-            <div className="flex justify-end">
-              <BtnPrimary type="submit" className="!py-1.5 !px-3 !text-[10.5px]" disabled={noteSaving}>
-                {noteSaving ? "Saving..." : "Add Note"}
-              </BtnPrimary>
-            </div>
-          </form>
-        )}
-
-        {noteLoading ? (
-          <div className="text-center py-2 text-[11px] text-slate-450">Loading notes & summaries...</div>
-        ) : allNotesAndSummaries.length === 0 ? (
-          <p className="text-[10.5px] text-slate-400 italic pl-1">No notes or call summaries saved for this lead.</p>
-        ) : (
-          <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
-            {allNotesAndSummaries.map((item) => (
-              <div
-                key={item.id}
-                className={`rounded-xl p-3 space-y-1.5 text-xs transition-all ${
-                  item.isAiCallSummary
-                    ? "bg-gradient-to-r from-rose-50/90 via-white to-rose-50/40 border border-rose-200/80 shadow-2xs"
-                    : "bg-white border border-rose-100 shadow-2xs"
-                }`}
-              >
-                <div className="flex items-center justify-between text-[9.5px] font-extrabold">
-                  <span className={`flex items-center gap-1 uppercase tracking-wider ${
-                    item.isAiCallSummary ? "text-rose-700 font-black" : "text-slate-600 font-bold"
-                  }`}>
-                    {item.isAiCallSummary ? (
-                      <>
-                        <Sparkles className="w-3 h-3 text-rose-600 animate-pulse" /> {item.authorName}
-                      </>
-                    ) : (
-                      <>
-                        <MessageCircle className="w-3 h-3 text-slate-400" /> {item.authorName}
-                      </>
-                    )}
-                  </span>
-                  <span className="text-slate-400 font-medium">{item.dateStr}</span>
-                </div>
-                <p className="text-slate-800 leading-relaxed font-medium whitespace-pre-line text-[11px]">
-                  {formatAiSummaryText(item.body)}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4.5 space-y-3 shadow-sm">
         <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-rose-50 pb-2">
@@ -1111,6 +1126,18 @@ export default function LeadDetailPanel({
             )}
           </div>
         </>
+      )}
+
+      {variant === "employee" && bookMeetingOpen && (
+        <LeadBookMeetingModal
+          open={bookMeetingOpen}
+          lead={liveLead}
+          serviceName={cleanServiceName(draft.service) || cleanServiceName(liveLead?.service)}
+          employee={employee}
+          createMeeting={createMeeting}
+          onBooked={onMeetingBooked}
+          onClose={() => setBookMeetingOpen(false)}
+        />
       )}
     </div>
   );
