@@ -5,7 +5,8 @@ import { CalendarDays, X } from "lucide-react";
 import { useDateRange } from "../context/DateRangeContext.jsx";
 import { RANGE_TABS, PERIOD_PILL_BTN, PERIOD_PILL_ACTIVE, PERIOD_PILL_INACTIVE } from "../lib/dateRange.js";
 
-function CustomDatePopover({ fromDate, setFromDate, toDate, setToDate, onApply, onClose, anchorRef }) {
+// Exported so the Employee Pipeline page reuses the exact Admin custom-range popover.
+export function CustomDatePopover({ fromDate, setFromDate, toDate, setToDate, onApply, onClose, anchorRef }) {
   const popoverRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 

@@ -2,13 +2,16 @@ import { useState, useEffect, useRef, startTransition } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, Bell, Menu, Plus, ChevronDown, X,
-  CheckSquare, MessageSquare, Phone, Calendar, User, LogOut, Shield,
+  CheckSquare, MessageSquare, Phone, Calendar, User, LogOut, Shield, CalendarDays,
 } from "lucide-react";
 import EmployeeDoodleAvatar from "./EmployeeDoodleAvatar.jsx";
 import PrivateContactsModal from "./PrivateContactsModal.jsx";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
+import { AnimatePresence } from "framer-motion";
+import { CustomDatePopover } from "../../components/DateRangeFilter.jsx";
+import { RANGE_TABS, PERIOD_PILL_BTN, PERIOD_PILL_ACTIVE, PERIOD_PILL_INACTIVE } from "../../lib/dateRange.js";
 
 const QUICK_ACTIONS = [
   { label: "Add Lead",            icon: Plus,          to: "/employee/leads",        search: "?action=add" },
@@ -48,6 +51,81 @@ const CALL_PERIODS = [
   { id: "month", label: "This Month" },
 ];
 
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Employee Pipeline date filter — same Today | Week | Month | Custom tabs, pill
+ * styling and custom From/To popover as the Admin Dashboard (DateRangeFilter).
+ * State lives in the URL (?period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD) so it
+ * survives refresh; EmployeeLeads turns it into the board API query.
+ */
+function PipelineDateFilter({ currentPeriod, fromDate, toDate, onSelect, onApplyCustom, compact = false }) {
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [draftFrom, setDraftFrom] = useState(fromDate || "");
+  const [draftTo, setDraftTo] = useState(toDate || "");
+  const customBtnRef = useRef(null);
+
+  useEffect(() => {
+    setDraftFrom(fromDate || "");
+    setDraftTo(toDate || "");
+  }, [fromDate, toDate]);
+
+  const hasCustom = currentPeriod === "custom" && fromDate && toDate;
+
+  return (
+    <div className={compact ? "grid grid-cols-4 gap-1 w-full min-w-0" : "flex items-center gap-0.5 sm:gap-1 flex-shrink-0 min-w-0"}>
+      {RANGE_TABS.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          ref={t.id === "custom" ? customBtnRef : undefined}
+          onClick={() => {
+            if (t.id === "custom") {
+              setShowCalendar(true);
+            } else {
+              setShowCalendar(false);
+              onSelect(t.id);
+            }
+          }}
+          className={`${PERIOD_PILL_BTN} ${compact ? "w-full inline-flex items-center justify-center px-1 text-[9px] sm:text-[10px]" : ""} ${currentPeriod === t.id ? PERIOD_PILL_ACTIVE : PERIOD_PILL_INACTIVE}`}
+        >
+          {t.id === "custom" && hasCustom ? (
+            <span className="inline-flex items-center gap-0.5">
+              <CalendarDays className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+              {fromDate.slice(5)} → {toDate.slice(5)}
+            </span>
+          ) : (
+            <>
+              <span className="sm:hidden">{t.shortLabel ?? t.label}</span>
+              <span className="hidden sm:inline">{t.label}</span>
+            </>
+          )}
+        </button>
+      ))}
+      <AnimatePresence>
+        {showCalendar && (
+          <CustomDatePopover
+            fromDate={draftFrom}
+            setFromDate={setDraftFrom}
+            toDate={draftTo}
+            setToDate={setDraftTo}
+            onApply={() => {
+              // Both dates are required; keep the popover open until they're set.
+              if (!DATE_KEY_RE.test(draftFrom) || !DATE_KEY_RE.test(draftTo)) return;
+              // Keep From <= To (To date is inclusive on the server).
+              const [from, to] = draftFrom <= draftTo ? [draftFrom, draftTo] : [draftTo, draftFrom];
+              onApplyCustom(from, to);
+              setShowCalendar(false);
+            }}
+            onClose={() => setShowCalendar(false)}
+            anchorRef={customBtnRef}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function EmployeeTopbar({ onMenu }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -70,10 +148,26 @@ export default function EmployeeTopbar({ onMenu }) {
   const showPeriodFilter = isCallsPage || isPipelinePage || isDashboardPage;
   const defaultPeriod = isCallsPage || isDashboardPage ? "today" : "month";
   const currentPeriod = String(searchParams.get("period") || defaultPeriod).toLowerCase();
+  // Today | Week | Month | Custom (Admin Dashboard style) on the Pipeline board.
+  const isLeadBoardPage = pathname === "/employee/leads" || pathname === "/employee/pipeline";
 
   const setPeriod = (nextPeriod) => {
     const newParams = new URLSearchParams(searchParams);
     newParams.set("period", String(nextPeriod).toLowerCase());
+    if (String(nextPeriod).toLowerCase() !== "custom") {
+      newParams.delete("from");
+      newParams.delete("to");
+    }
+    startTransition(() => {
+      setSearchParams(newParams, { replace: true });
+    });
+  };
+
+  const setCustomRange = (from, to) => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set("period", "custom");
+    newParams.set("from", from);
+    newParams.set("to", to);
     startTransition(() => {
       setSearchParams(newParams, { replace: true });
     });
@@ -167,7 +261,18 @@ export default function EmployeeTopbar({ onMenu }) {
           </div>
 
           {/* Web Period Filter — in top navbar for desktop/tablet */}
-          {showPeriodFilter && (
+          {showPeriodFilter && isLeadBoardPage && (
+            <div className="hidden md:inline-flex items-center mx-2 shrink-0">
+              <PipelineDateFilter
+                currentPeriod={currentPeriod}
+                fromDate={searchParams.get("from") || ""}
+                toDate={searchParams.get("to") || ""}
+                onSelect={setPeriod}
+                onApplyCustom={setCustomRange}
+              />
+            </div>
+          )}
+          {showPeriodFilter && !isLeadBoardPage && (
             <div className="hidden md:inline-flex items-center mx-2 shrink-0">
               <div className={SEGMENT_WRAP}>
                 {CALL_PERIODS.map(({ id, label }) => (
@@ -287,6 +392,16 @@ export default function EmployeeTopbar({ onMenu }) {
         {showPeriodFilter && (
           <div className="md:hidden px-2.5 pb-2 pt-1 border-t border-[#F3F4F6] bg-[#FAFAFA]/80">
             <div className="flex items-center gap-2 min-w-0">
+              {isLeadBoardPage ? (
+                <PipelineDateFilter
+                  compact
+                  currentPeriod={currentPeriod}
+                  fromDate={searchParams.get("from") || ""}
+                  toDate={searchParams.get("to") || ""}
+                  onSelect={setPeriod}
+                  onApplyCustom={setCustomRange}
+                />
+              ) : (
               <div className={`${SEGMENT_WRAP} flex-1 min-w-0`}>
                 {CALL_PERIODS.map(({ id, label }) => (
                   <button
@@ -301,6 +416,7 @@ export default function EmployeeTopbar({ onMenu }) {
                   </button>
                 ))}
               </div>
+              )}
               {/* {isPipelinePage && (
                 <select
                   value={selectedService}

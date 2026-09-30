@@ -7,6 +7,7 @@ import {
   getPipelineStageDisplayCounts,
 } from "./leadKanban.js";
 import { dedupePeriodCalls } from "./callMetrics.js";
+import { isCustomPeriod, localDateKey } from "./periodFilter.js";
 
 export const MAX_KANBAN_COLUMN_CARDS = 40;
 
@@ -69,9 +70,16 @@ export function usePipelineBoard({
   employeeId = null,
   scopeCallsByAssignee = false,
   groupRev = 0,
+  notPickAttemptOrdering = false,
 }) {
   const callScopedOnly = true;
-  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : "This Month";
+  const periodLabel = period === "today"
+    ? "Today"
+    : period === "week"
+      ? "This Week"
+      : isCustomPeriod(period) ? "Custom" : "This Month";
+  // NOT PICK ordering depends on "today" — include it so the board re-sorts after midnight.
+  const orderingDayKey = notPickAttemptOrdering ? (localDateKey(new Date()) || "") : "";
 
   const uniqueCalls = useMemo(
     () => dedupePeriodCalls(periodCalls),
@@ -80,8 +88,8 @@ export function usePipelineBoard({
 
   const visibleLen = visibleLeads?.length ?? null;
   const cacheKey = useMemo(
-    () => groupedCacheKey(period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev),
-    [period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev],
+    () => `${groupedCacheKey(period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev)}:${orderingDayKey}`,
+    [period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev, orderingDayKey],
   );
 
   const computedBoardState = useMemo(() => {
@@ -98,6 +106,7 @@ export function usePipelineBoard({
       includeUncontactedAssignments,
       employeeId,
       scopeCallsByAssignee,
+      notPickAttemptOrdering,
     });
     const baseLeads = filterPipelineLeadsForPeriod(leads, uniqueCalls, period, meetings, null, {
       adminScope,
@@ -137,6 +146,7 @@ export function usePipelineBoard({
     employeeId,
     scopeCallsByAssignee,
     callyzerStats,
+    notPickAttemptOrdering,
   ]);
 
   const [localOverrides, setLocalOverrides] = useState({});

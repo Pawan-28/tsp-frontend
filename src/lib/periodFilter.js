@@ -24,11 +24,38 @@ export function todayStartLocal(now = new Date()) {
 }
 
 /**
+ * Custom From–To ranges travel through the pipeline board as a single period key
+ * "custom:YYYY-MM-DD:YYYY-MM-DD" so every existing period-aware helper (cache keys,
+ * meeting/assignment filters) handles them without new parameters.
+ */
+const CUSTOM_PERIOD_RE = /^custom:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/;
+
+export function encodeCustomPeriod(fromDate, toDate) {
+  if (!fromDate || !toDate) return "custom";
+  return `custom:${fromDate}:${toDate}`;
+}
+
+/** @returns {{ startDate: string, endDate: string } | null} */
+export function parseCustomPeriod(period) {
+  const m = CUSTOM_PERIOD_RE.exec(String(period || ""));
+  return m ? { startDate: m[1], endDate: m[2] } : null;
+}
+
+export function isCustomPeriod(period) {
+  return String(period || "").toLowerCase().startsWith("custom");
+}
+
+/**
  * @param {string|null} dateKey YYYY-MM-DD
- * @param {"today"|"week"|"month"|string} period
+ * @param {"today"|"week"|"month"|"custom:YYYY-MM-DD:YYYY-MM-DD"|string} period
  */
 export function isDateKeyInPeriod(dateKey, period, now = new Date()) {
   if (!dateKey) return false;
+  const custom = parseCustomPeriod(period);
+  if (custom) {
+    // Inclusive on both ends.
+    return dateKey >= custom.startDate && dateKey <= custom.endDate;
+  }
   const p = String(period || "month").toLowerCase();
   const todayKey = localDateKey(now);
   if (!todayKey) return false;

@@ -4,7 +4,7 @@ import { getAdminCrmHeaders, getCrmHeaders } from "./crmContext.js";
 import { mapCallsFromApiLite } from "./callFromApiLite.js";
 import { apiLeadToPipeline } from "./leadSync.js";
 import { getAssignmentState, getLeadEmployeeName } from "./leadAssignment.js";
-import { filterCallsForPeriod } from "./periodFilter.js";
+import { filterCallsForPeriod, parseCustomPeriod } from "./periodFilter.js";
 import { countPipelineCallMetrics } from "./leadKanban.js";
 
 const masterCache = new Map();
@@ -24,6 +24,19 @@ const emptyBoard = () => ({
 
 function scopeKey(scope, employeeId) {
   return scope === "employee" ? `emp:${employeeId}` : "admin";
+}
+
+/**
+ * Query string for the board API — same contract as the Admin Dashboard
+ * (lib/periodQuery.js): period=today|week|month|custom [&startDate&endDate].
+ */
+export function boardPeriodQuery(period) {
+  const custom = parseCustomPeriod(period);
+  if (custom) {
+    return `period=custom&startDate=${encodeURIComponent(custom.startDate)}&endDate=${encodeURIComponent(custom.endDate)}`;
+  }
+  const p = String(period || "month").toLowerCase();
+  return `period=${p === "today" || p === "week" || p === "month" ? p : "month"}`;
 }
 
 function mapAdminLead(lead) {
@@ -123,7 +136,12 @@ export function usePipelineSync({
   attachLeads = [],
 }) {
   const sk = scopeKey(scope, employeeId);
-  const cached = masterCache.get(sk);
+  // Employee board: the selected Today/Week/Month/Custom period is sent to the
+  // backend so the API returns only that period's calls/meetings/stats.
+  // Admin board keeps the original single month fetch + client-side slicing.
+  const fetchPeriodQuery = scope === "employee" ? boardPeriodQuery(period) : `period=${MASTER_PERIOD}`;
+  const cacheKey = scope === "employee" ? `${sk}|${fetchPeriodQuery}` : sk;
+  const cached = masterCache.get(cacheKey);
   const attachRef = useRef(attachLeads);
   attachRef.current = attachLeads;
 
@@ -142,7 +160,7 @@ export function usePipelineSync({
       return;
     }
 
-    const hit = masterCache.get(sk);
+    const hit = masterCache.get(cacheKey);
     if (!silent && !hit) setLoading(true);
     if (sync) setSyncing(true);
 
@@ -150,8 +168,8 @@ export function usePipelineSync({
     const syncFlag = sync ? 1 : 0;
     try {
       const path = scope === "employee"
-        ? `/api/v1/employee/${employeeId}/pipeline/board?period=${MASTER_PERIOD}&limit=5000&sync=${syncFlag}`
-        : `/api/v1/pipeline/board?period=${MASTER_PERIOD}&limit=5000&sync=${syncFlag}`;
+        ? `/api/v1/employee/${employeeId}/pipeline/board?${fetchPeriodQuery}&limit=5000&sync=${syncFlag}`
+        : `/api/v1/pipeline/board?${fetchPeriodQuery}&limit=5000&sync=${syncFlag}`;
       const headers = scope === "employee"
         ? getCrmHeaders("employee")
         : getAdminCrmHeaders();
@@ -167,10 +185,10 @@ export function usePipelineSync({
         mapLeads,
         attachLeads: attachRef.current,
       });
-      const prevBoard = masterCache.get(sk)?.board;
+      const prevBoard = masterCache.get(cacheKey)?.board;
       const unchanged = silent && boardSignature(prevBoard) === boardSignature(normalized);
       if (!unchanged) {
-        masterCache.set(sk, { board: normalized, ts: Date.now() });
+        masterCache.set(cacheKey, { board: normalized, ts: Date.now() });
         setMaster(normalized);
       }
       if (sync) lastFullSyncAt.set(sk, Date.now());
@@ -183,14 +201,14 @@ export function usePipelineSync({
         if (sync) setSyncing(false);
       }
     }
-  }, [enabled, scope, employeeId, sk, mapLeads]);
+  }, [enabled, scope, employeeId, sk, cacheKey, fetchPeriodQuery, mapLeads]);
 
   // Load month from DB once per scope; background Callyzer sync never blocks toggles.
   useEffect(() => {
     if (!enabled) return undefined;
     if (scope === "employee" && !employeeId) return undefined;
 
-    const hit = masterCache.get(sk);
+    const hit = masterCache.get(cacheKey);
     if (hit) {
       setMaster(hit.board);
       setLoading(false);
@@ -219,7 +237,7 @@ export function usePipelineSync({
     }
 
     return undefined;
-  }, [enabled, scope, employeeId, sk, loadMaster]);
+  }, [enabled, scope, employeeId, sk, cacheKey, loadMaster]);
 
   const board = useMemo(
     () => sliceBoardForPeriod(master, period),
@@ -233,10 +251,10 @@ export function usePipelineSync({
         calls: mapCallsFromApiLite(prev.callsRaw || [], leads),
       };
       remapped.stats = statsFromCalls(remapped.calls);
-      masterCache.set(sk, { board: remapped, ts: Date.now() });
+      masterCache.set(cacheKey, { board: remapped, ts: Date.now() });
       return remapped;
     });
-  }, [sk]);
+  }, [cacheKey]);
 
   return {
     ...board,
@@ -258,6 +276,9 @@ export function invalidatePipelineBoardCache(scope = null) {
     return;
   }
   masterCache.delete(scope);
+  for (const key of [...masterCache.keys()]) {
+    if (key.startsWith(`${scope}|`)) masterCache.delete(key);
+  }
   lastFullSyncAt.delete(scope);
   backgroundSyncStarted.delete(scope);
 }

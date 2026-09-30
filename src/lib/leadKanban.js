@@ -8,7 +8,7 @@ import {
   parseCallDurationSeconds,
 } from "./callMetrics.js";
 import { mapStageToId, PIPELINE_STAGE_DEFINITIONS } from "./pipelineStages.js";
-import { isDateKeyInPeriod, localDateKey } from "./periodFilter.js";
+import { isDateKeyInPeriod, localDateKey, parseCustomPeriod, resolveCallDateKey } from "./periodFilter.js";
 import { parseAppDateTime } from "./timezone.js";
 import { formatCallDisplayDate } from "./callDisplay.js";
 
@@ -375,7 +375,7 @@ export function filterPipelineLeadsForPeriod(leads = [], periodCalls = [], perio
           sinceAssignment: true,
         });
         if (!contacted) {
-          if (periodKey === "today" || periodKey === "week" || periodKey === "month") {
+          if (periodKey === "today" || periodKey === "week" || periodKey === "month" || parseCustomPeriod(periodKey)) {
             if (isLeadAssignedInPeriod(lead, periodKey, undefined, { assignedOnly: true })) return true;
           } else {
             return true;
@@ -541,6 +541,68 @@ export function getLeadTimestampMs(lead) {
   return numId || 0;
 }
 
+function callTimestampMs(call) {
+  const raw = call?.callAt || call?.startedAt || call?.createdAt || call?.date;
+  if (!raw) return NaN;
+  const parsed = parseAppDateTime(raw) || new Date(String(raw).replace(" ", "T"));
+  return parsed ? parsed.getTime() : NaN;
+}
+
+/** Latest outbound dial made TODAY (app timezone) from a list of a lead's calls. */
+function latestOutboundCallToday(calls = [], todayKey) {
+  let best = null;
+  let bestMs = -Infinity;
+  for (const call of calls) {
+    if (!call || !isOutboundCall(call)) continue;
+    if (resolveCallDateKey(call) !== todayKey) continue;
+    const ms = callTimestampMs(call);
+    if (Number.isNaN(ms)) continue;
+    if (ms > bestMs) {
+      best = call;
+      bestMs = ms;
+    }
+  }
+  return best ? { call: best, ms: bestMs } : null;
+}
+
+/**
+ * NOT PICK column order.
+ *
+ * A card drops to the bottom of NOT PICK only when the employee actually dialled
+ * the lead TODAY and that latest dial was not picked up (Callyzer/DB call record:
+ * outbound + 0 sec / "Not connected" / "Rejected" / "No answer" …).
+ *  - Leads not dialled today keep the existing order (getLeadTimestampMs, newest first).
+ *  - Dialled-and-unanswered-today leads follow, oldest attempt first, so the most
+ *    recently attempted lead is always last.
+ *  - If the latest dial today connected, the lead's column is decided by the
+ *    existing routing (Short Call / 2 min+ …) and it isn't treated as an attempt here.
+ *
+ * The order is derived from persisted employee_calls rows (not client state), so it
+ * survives refresh / logout / API reload. "Today" is recomputed on every render,
+ * so on the next day nothing counts as attempted and the column falls back to the
+ * existing timestamp ordering.
+ */
+export function orderNotPickColumn(columnLeads = [], getCallsForLead, now = new Date()) {
+  const list = Array.isArray(columnLeads) ? columnLeads : [];
+  if (list.length < 2 || typeof getCallsForLead !== "function") return list;
+  const todayKey = localDateKey(now);
+  if (!todayKey) return list;
+
+  const untouched = [];
+  const attempted = [];
+  for (const lead of list) {
+    const last = latestOutboundCallToday(getCallsForLead(lead) || [], todayKey);
+    if (last && isNotPickupByClientCall(last.call)) {
+      attempted.push({ lead, ms: last.ms });
+    } else {
+      untouched.push(lead);
+    }
+  }
+  if (!attempted.length) return list;
+  attempted.sort((a, b) => a.ms - b.ms);
+  return [...untouched, ...attempted.map((a) => a.lead)];
+}
+
 /**
  * Build kanban from Callyzer period calls + meetings.
  * Lead-centric: each lead's best early-funnel column from all their outbound calls in the period.
@@ -659,7 +721,7 @@ export function groupKanbanSyncedWithCallyzer(
         scopeByAssignee: scopeCallsByAssignee,
         sinceAssignment: true,
       });
-    const inAssignPeriod = !["today", "week", "month"].includes(periodKey)
+    const inAssignPeriod = (!["today", "week", "month"].includes(periodKey) && !parseCustomPeriod(periodKey))
       || isLeadAssignedInPeriod(lead, periodKey, undefined, { assignedOnly: true });
     if (!allowUncontacted || !uncontactedNew || !inAssignPeriod) {
       if (!(options.adminScope && isNewPipelineLead(lead) && !outboundLeadIds.has(id))) continue;
@@ -672,6 +734,18 @@ export function groupKanbanSyncedWithCallyzer(
     if (Array.isArray(map[colKey])) {
       map[colKey].sort((a, b) => getLeadTimestampMs(b) - getLeadTimestampMs(a));
     }
+  }
+
+  // Employee board: an unanswered dial today sends the card to the bottom of NOT PICK.
+  if (options.notPickAttemptOrdering && map.not_pick?.length > 1) {
+    const callsById = new Map(periodCalls.map((c) => [String(c?.id), c]));
+    map.not_pick = orderNotPickColumn(map.not_pick, (lead) => {
+      if (lead?._fromCall) {
+        const own = callsById.get(String(lead._callId));
+        return own ? [own] : [];
+      }
+      return getLeadCalls(lead);
+    });
   }
 
   return map;

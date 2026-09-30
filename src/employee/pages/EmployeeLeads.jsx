@@ -20,7 +20,7 @@ import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL } from "../../lib/callMetrics
 import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount } from "../../lib/usePipelineBoard.js";
 import { usePipelineSync } from "../../lib/usePipelineSync.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
-import { filterLeadsByActivityPeriod } from "../../lib/periodFilter.js";
+import { filterLeadsByActivityPeriod, encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../../lib/periodFilter.js";
 import useIsMobile from "../../lib/useIsMobile.js";
 import EmployeeLeadDrawer from "../components/EmployeeLeadDrawer.jsx";
 import {
@@ -303,10 +303,22 @@ export default function EmployeeLeads() {
   const [summaryVisible, setSummaryVisible] = useState(true);
   const columnRefs = useRef({});
   const dropDepthRef = useRef(0);
-  const period = String(searchParams.get("period") || "month").toLowerCase();
+  // Today | Week | Month | Custom — Custom is carried as "custom:FROM:TO" so the
+  // board API (usePipelineSync) and all period helpers get the exact range.
+  const rawPeriod = String(searchParams.get("period") || "month").toLowerCase();
+  const customFrom = searchParams.get("from") || "";
+  const customTo = searchParams.get("to") || "";
+  const period = rawPeriod === "custom"
+    ? (parseCustomPeriod(encodeCustomPeriod(customFrom, customTo)) ? encodeCustomPeriod(customFrom, customTo) : "month")
+    : (["today", "week", "month"].includes(rawPeriod) ? rawPeriod : "month");
+  const customRange = parseCustomPeriod(period);
   const deferredPeriod = useDeferredValue(period);
   const isBoardStale = deferredPeriod !== period;
-  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : "This Month";
+  const periodLabel = period === "today"
+    ? "Today"
+    : period === "week"
+      ? "This Week"
+      : customRange ? `${customRange.startDate} → ${customRange.endDate}` : "This Month";
   const [groupRev, setGroupRev] = useState(0);
   const [expandedColumns, setExpandedColumns] = useState({});
 
@@ -358,6 +370,8 @@ export default function EmployeeLeads() {
     calls: boardCalls,
     syncing: boardSyncing,
     remapCallsForLeads,
+    refresh: refreshBoard,
+    refreshLeadsOnly: refreshBoardFromDb,
   } = usePipelineSync({
     scope: "employee",
     employeeId: employee?.id,
@@ -384,6 +398,36 @@ export default function EmployeeLeads() {
 
   const periodCalls = boardCalls || [];
 
+  // Keep the board current after a dial: calls land in employee_calls via the
+  // Callyzer webhook / sync, so re-read the board when the employee comes back
+  // from the phone dialer (throttled Callyzer sync) and poll the DB lightly.
+  const lastBoardSyncRef = useRef(0);
+  useEffect(() => {
+    if (!employee?.id) return undefined;
+    const BOARD_SYNC_MIN_GAP_MS = 20_000;
+    const onVisible = () => {
+      if (document.hidden) return;
+      const now = Date.now();
+      if (now - lastBoardSyncRef.current < BOARD_SYNC_MIN_GAP_MS) {
+        refreshBoardFromDb?.();
+        return;
+      }
+      lastBoardSyncRef.current = now;
+      refreshBoard?.();
+    };
+    const intervalId = window.setInterval(() => {
+      if (!document.hidden) refreshBoardFromDb?.();
+    }, 30_000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee?.id, deferredPeriod]);
+
   useEffect(() => {
     setExpandedColumns({});
   }, [period]);
@@ -396,7 +440,7 @@ export default function EmployeeLeads() {
       sinceAssignment: true,
     })) return false;
     const periodKey = String(period).toLowerCase();
-    if (periodKey === "today" || periodKey === "week" || periodKey === "month") {
+    if (periodKey === "today" || periodKey === "week" || periodKey === "month" || parseCustomPeriod(periodKey)) {
       return isLeadAssignedInPeriod(lead, periodKey, undefined, { assignedOnly: true });
     }
     return isLeadAssignedInPeriod(lead, "today", undefined, { assignedOnly: true });
@@ -451,6 +495,10 @@ export default function EmployeeLeads() {
       if (period === "month") {
         const startOfMonth = new Date(nowClone.getFullYear(), nowClone.getMonth(), 1);
         return payDate >= startOfMonth;
+      }
+      if (customRange) {
+        const key = localDateKey(payDate);
+        return Boolean(key && key >= customRange.startDate && key <= customRange.endDate);
       }
       return true;
     });
@@ -532,6 +580,8 @@ export default function EmployeeLeads() {
     employeeId: employee?.id ?? null,
     scopeCallsByAssignee: true,
     groupRev,
+    // Unanswered dial today → card moves to the bottom of NOT PICK.
+    notPickAttemptOrdering: true,
   });
 
   const activityLabelMap = useMemo(
@@ -786,7 +836,7 @@ export default function EmployeeLeads() {
               icon={Wallet}
               iconBg="bg-green-50"
               iconColor="text-green-600"
-              change={period === "today" ? "Today" : period === "week" ? "This week" : "This month"}
+              change={period === "today" ? "Today" : period === "week" ? "This week" : customRange ? "Custom range" : "This month"}
               sub=""
             />
             </div>
