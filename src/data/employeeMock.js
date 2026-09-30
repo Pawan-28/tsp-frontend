@@ -613,6 +613,9 @@ export function meetingToApiPayload(form, employeeId) {
   if (meetLink) payload.meetLink = meetLink;
   const agenda = String(form.agenda || "").trim();
   if (agenda) payload.agenda = agenda;
+  // Selected service — backend uses it for the "{Customer} {Service} - Clarity Call" title.
+  const service = String(form.service || "").trim();
+  if (service && service !== "—") payload.service = service;
   return payload;
 }
 

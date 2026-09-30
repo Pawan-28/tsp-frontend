@@ -1,3 +1,4 @@
+import { toIndianMobile10 } from "./phoneUtils.js";
 /** Indian currency and number formatting helpers. */
 
 export function formatINR(amount) {
@@ -43,12 +44,9 @@ export function formatServicePriceLabel(price, priceNum) {
 
 export function formatIndianPhone(phone) {
   if (!phone) return "—";
-  const digits = String(phone).replace(/\D/g, "");
-  if (digits.length === 10) {
+  const digits = toIndianMobile10(phone);
+  if (digits) {
     return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
-  }
-  if (digits.length === 12 && digits.startsWith("91")) {
-    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
   }
   return phone;
 }

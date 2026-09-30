@@ -371,13 +371,13 @@ export default function EmployeeCallDetail() {
 2. Schedule a follow-up reminder for the next available slot.`;
         } else {
           newRating = 5;
-          generatedMoM = `[AI MINUTES OF MEETING - OPENAI PROCESSED]
+          generatedMoM = `[AI MINUTES OF MEETING - GEMINI PROCESSED]
 • Client: ${clientName} (${companyName})
 • Call Ref: #${call.id} | Date: ${dateStr} | Duration: ${callDuration} (${callType})
 • Status: ${call.outcome || "Connected"}
 
 [KEY DISCUSSION HIGHLIGHTS]
-• Transcribed and analyzed audio recording using OpenAI Whisper & GPT-4o models.
+• Transcribed and analyzed audio recording using Google Gemini.
 • Reviewed client requirements, integration readiness, and decision parameters.
 • Verified compliance against target SOP script and key qualification questions.
 
@@ -424,7 +424,7 @@ export default function EmployeeCallDetail() {
       }
 
       setCalls((prev) => prev.map((c) => (String(c.id) === String(call.id) ? updatedCall : c)));
-      toast.success(isNotConnected ? "Logged Not Connected call status." : "AI MoM & SOP Checklist generated with OpenAI!");
+      toast.success(isNotConnected ? "Logged Not Connected call status." : "AI MoM & SOP Checklist generated with Gemini!");
     } catch (err) {
       toast.error("Failed to process AI MoM: " + (err.message || "Unknown error"));
     } finally {
@@ -1052,12 +1052,12 @@ export default function EmployeeCallDetail() {
               >
                 {isAiProcessing ? (
                   <>
-                    <RefreshCw className="w-3 h-3 animate-spin" /> Processing OpenAI...
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Processing with Gemini...
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-3 h-3 text-amber-300 fill-amber-300" />
-                    {(call.note || call.aiSummary || call.ai_summary || call.notes) ? "Re-process with OpenAI" : "Process Audio with OpenAI"}
+                    {(call.note || call.aiSummary || call.ai_summary || call.notes) ? "Re-process with Gemini" : "Process Audio with Gemini"}
                   </>
                 )}
               </button>
@@ -1075,7 +1075,7 @@ export default function EmployeeCallDetail() {
                 <div className="space-y-1">
                   <p className="font-bold text-slate-800 text-xs">No AI MoM generated yet for this call</p>
                   <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
-                    Process the audio recording of this call using OpenAI Whisper & GPT to extract key discussion points, decision parameters, and checklist compliance.
+                    Process the audio recording of this call using Google Gemini to extract key discussion points, decision parameters, and checklist compliance.
                   </p>
                 </div>
                 <button

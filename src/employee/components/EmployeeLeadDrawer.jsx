@@ -24,6 +24,8 @@ export default function EmployeeLeadDrawer({ lead, periodCalls = [], onClose, on
     addActivityRecord,
     startCallyzerCall,
     editLeadDetails,
+    createMeeting,
+    refreshLeads,
   } = useEmployee();
 
   const [resolvedLead, setResolvedLead] = useState(null);
@@ -125,6 +127,8 @@ export default function EmployeeLeadDrawer({ lead, periodCalls = [], onClose, on
           updateLeadTemperature={updateLeadTemperature}
           addActivityRecord={addActivityRecord}
           startCallyzerCall={startCallyzerCall}
+          createMeeting={createMeeting}
+          onMeetingBooked={() => refreshLeads?.()}
         />
       ) : (
         <p className="text-sm text-slate-400 text-center py-8">No CRM lead found for this number.</p>

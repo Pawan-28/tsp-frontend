@@ -29,6 +29,7 @@ import {
 import { TimeOfDaySelects } from "../components/TimeOfDaySelects.jsx";
 import { apiGet } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
+import { buildClarityCallTitle, resolveCustomerName, resolveLeadServiceName } from "../../lib/meetingTitle.js";
 
 
 const SUMMARY_VISIBLE_KEY = "tsp_employee_summary_visible";
@@ -65,12 +66,11 @@ function isDraggablePipelineLead(lead) {
   return /^\d+$/.test(String(lead.id));
 }
 
-// Sensible default "Book Meeting" title for the Pipeline drag/drop → Meeting Booked flow:
-// lead name + service, editable by the employee before they submit.
+// Automatic "Book Meeting" title for the Pipeline drag/drop → Meeting Booked flow:
+// "{Customer Name} {Service Name} - Clarity Call" (regenerated whenever the service
+// changes; the backend generates the same title when it saves the meeting).
 function defaultMeetingTitle(lead, service) {
-  const name = lead?.name || "Lead";
-  if (service && service !== "—") return `${name} — ${service}`;
-  return `${name} — Discovery Call`;
+  return buildClarityCallTitle(resolveCustomerName(lead), service);
 }
 
 const BOOKING_READONLY_FIELD =
@@ -144,11 +144,14 @@ function PipelineBookMeetingModal({
             setForm((f) => ({
               ...f,
               service: nextService,
-              title: f.titleDirty ? f.title : defaultMeetingTitle(lead, nextService),
+              title: defaultMeetingTitle(lead, nextService),
             }));
           }}
         >
-          {(serviceOptions || ["—"]).map((s) => (
+          {[
+            ...(serviceOptions || ["—"]),
+            ...(form.service && form.service !== "—" && !(serviceOptions || []).includes(form.service) ? [form.service] : []),
+          ].map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </FormSelect>
@@ -156,11 +159,10 @@ function PipelineBookMeetingModal({
 
       <FormGroup>
         <FormLabel>Meeting Title</FormLabel>
-        <FormInput
-          value={form.title}
-          placeholder="Discovery Call"
-          onChange={(e) => setForm((f) => ({ ...f, title: e.target.value, titleDirty: true }))}
-        />
+        {/* Auto-generated — not typed by the employee. */}
+        <div className={BOOKING_READONLY_FIELD} title="Generated automatically from lead + service">
+          <span className="truncate">{defaultMeetingTitle(lead, form.service)}</span>
+        </div>
       </FormGroup>
 
       <p className="text-[10px] text-slate-400 mt-1">
@@ -676,8 +678,8 @@ export default function EmployeeLeads() {
   };
 
   const openBookingModal = (lead) => {
-    const presetServiceRaw = lead.service || lead.requirements || lead.serviceName || lead.service_name || "";
-    const presetService = bookingServiceOptions.includes(presetServiceRaw) ? presetServiceRaw : "—";
+    // Lead's own service (kept even if it isn't in the catalog list, so the title has it).
+    const presetService = resolveLeadServiceName(lead) || "—";
     setBookingForm({
       title: defaultMeetingTitle(lead, presetService),
       date: getEmpAppToday(),
@@ -702,25 +704,23 @@ export default function EmployeeLeads() {
       toast.error("Pick a date and time");
       return;
     }
-    if (!bookingForm.title.trim()) {
-      toast.error("Meeting title is required");
-      return;
-    }
     setBookingSubmitting(true);
     try {
       const chosenService = String(bookingForm.service || "").trim();
       const agenda = chosenService && chosenService !== "—" ? `Service: ${chosenService}` : "";
+      const autoTitle = defaultMeetingTitle(bookingLead, chosenService);
       // platform: "google_meet" + no meetLink → backend (operationalServices.createMeeting)
       // generates a real Google Calendar/Meet link server-side. If that fails, createMeeting()
       // returns null and has already shown an error toast — the lead stays in its stage and no
       // stage-update / n8n webhook ever fires, since the backend never reaches those steps.
       const saved = await createMeeting({
-        title: bookingForm.title.trim(),
+        title: autoTitle,
         date: bookingForm.date,
         time: bookingForm.time,
         leadId: String(bookingLead.id),
         platform: "google_meet",
         meetLink: "",
+        service: chosenService,
         agenda,
       });
       if (!saved) return;

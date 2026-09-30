@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPatch, apiDelete, invalidateCache } from "./api.js";
 import { getCrmHeaders } from "./crmContext.js";
+import { formatWhatsAppPhone as formatWhatsAppPhoneCentral } from "./phoneUtils.js";
 
 export const WA_SCRIPT_PLACEHOLDERS = [
   { key: "{name}", label: "Lead name" },
@@ -23,12 +24,10 @@ export function resolveWhatsAppScriptBody(template, { lead, employee } = {}) {
     .replace(/\{employeeName\}/gi, repName);
 }
 
+// Delegates to the central normalizer (lib/phoneUtils.js): "91" + last 10 digits for
+// Indian numbers, so "+91919876543210" no longer becomes wa.me/91919876543210.
 export function formatWhatsAppPhone(phone) {
-  if (!phone) return "";
-  const clean = String(phone).replace(/\D/g, "");
-  if (!clean) return "";
-  if (clean.length === 10) return `91${clean}`;
-  return clean;
+  return formatWhatsAppPhoneCentral(phone);
 }
 
 export function buildWhatsAppUrl(phone, message = "") {

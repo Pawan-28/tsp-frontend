@@ -9,6 +9,8 @@ import { GlassCard, StatCard, Badge, Drawer } from "../../components/Primitives.
 import { CustomSelect } from "../../components/CustomSelect.jsx";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
+import { formatWhatsAppPhone } from "../../lib/phoneUtils.js";
+import { buildClarityCallTitle, resolveCustomerName, resolveLeadServiceName } from "../../lib/meetingTitle.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import { apiGet, apiPost } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
@@ -74,11 +76,7 @@ function GoogleMeetShareModal({ open, onClose, data }) {
 
   const handleShareWhatsApp = () => {
     const rawPhone = targetPhone || data.leadPhone || "";
-    const digits = rawPhone.replace(/\D/g, "");
-    let cleanPhone = digits;
-    if (digits.length === 10) {
-      cleanPhone = `91${digits}`;
-    }
+    const cleanPhone = formatWhatsAppPhone(rawPhone);
 
     const leadGreeting = data.leadName ? `Hi ${data.leadName},` : "Hi,";
     const titleText = data.title ? `📌 *${data.title}*` : "📌 *Google Meet Meeting*";
@@ -179,6 +177,7 @@ function BookMeetingDrawer({
   open,
   form,
   setForm,
+  autoTitle,
   leads,
   leadOptions,
   serviceOptions,
@@ -211,12 +210,13 @@ function BookMeetingDrawer({
 
       <div className="space-y-4">
         <Field label="Meeting Title">
-          <input
-            className={INPUT}
-            placeholder="Discovery Call — Rajesh Mehta"
-            value={form.title}
-            onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-          />
+          {/* Auto-generated from the selected lead + service — not typed manually. */}
+          <div
+            className={`${INPUT} flex items-center bg-slate-50 text-slate-700 font-semibold`}
+            title="Generated automatically: {Customer Name} {Service Name} - Clarity Call"
+          >
+            <span className="truncate">{autoTitle || "Select a lead to generate the title"}</span>
+          </div>
         </Field>
 
         <div className="grid grid-cols-2 gap-3">
@@ -239,7 +239,12 @@ function BookMeetingDrawer({
           <Field label="Lead">
             <CustomSelect
               value={form.leadId}
-              onChange={(val) => setForm((f) => ({ ...f, leadId: val }))}
+              onChange={(val) => setForm((f) => {
+                // New lead → take that lead's service (title regenerates from it).
+                const picked = leads.find((l) => String(l.id) === String(val));
+                const leadService = resolveLeadServiceName(picked);
+                return { ...f, leadId: val, service: leadService || f.service };
+              })}
               options={leadOptions}
               searchable
               searchPlaceholder="Search by name or phone number…"
@@ -269,7 +274,10 @@ function BookMeetingDrawer({
             value={form.service || "—"}
             onChange={(e) => setForm((f) => ({ ...f, service: e.target.value }))}
           >
-            {(serviceOptions || ["—"]).map((s) => (
+            {[
+              ...(serviceOptions || ["—"]),
+              ...(form.service && form.service !== "—" && !(serviceOptions || []).includes(form.service) ? [form.service] : []),
+            ].map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
@@ -728,11 +736,23 @@ export default function EmployeeMeetings() {
     setForm((f) => ({
       ...f,
       leadId: String(lead.id),
-      service: lead.service || lead.requirements || lead.serviceName || lead.service_name || f.service,
+      service: resolveLeadServiceName(lead) || f.service,
     }));
   }, [searchParams, leads, prefilledLeadId]);
 
   const selectedPlatform = MEETING_PLATFORMS.find((p) => p.id === form.platform) || MEETING_PLATFORMS[0];
+
+  // "{Customer Name} {Service Name} - Clarity Call" — regenerated whenever the selected
+  // lead (or custom lead name) or the service changes. Sent to the backend as the title.
+  const autoTitle = useMemo(() => {
+    if (!form.leadId) return "";
+    if (form.leadId === "__custom__") {
+      const name = form.customName?.trim() || form.customPhone?.trim();
+      return name ? buildClarityCallTitle(resolveCustomerName({ name: form.customName, phone: form.customPhone }), form.service) : "";
+    }
+    const lead = leads.find((l) => String(l.id) === String(form.leadId));
+    return lead ? buildClarityCallTitle(resolveCustomerName(lead), form.service) : "";
+  }, [form.leadId, form.customName, form.customPhone, form.service, leads]);
 
   const leadOptions = useMemo(() => {
     const customOpt = {
@@ -795,7 +815,7 @@ export default function EmployeeMeetings() {
       const selectedLead = leads.find((l) => String(l.id) === String(form.leadId));
       setShareModalData({
         open: true,
-        title: form.title.trim() || "Discovery Call",
+        title: autoTitle || "Clarity Call",
         date: form.date,
         time: form.time,
         meetLink: linkOrMeeting,
@@ -817,8 +837,8 @@ export default function EmployeeMeetings() {
   };
 
   const handleGenerateMeetLink = async () => {
-    if (!form.title.trim()) {
-      toast.error("Enter a meeting title first");
+    if (!autoTitle) {
+      toast.error("Select a lead first");
       return;
     }
     if (!googleStatus.connected) {
@@ -830,7 +850,7 @@ export default function EmployeeMeetings() {
       const res = await apiPost(
         "/api/v1/employee/meetings/generate-meet-link",
         {
-          title: form.title.trim(),
+          title: autoTitle,
           date: form.date,
           time: form.time,
           durationMin: 30,
@@ -929,17 +949,13 @@ export default function EmployeeMeetings() {
 
   const handleCreate = async () => {
     if (submitting) return;
-    if (!form.title.trim()) {
-      toast.error("Meeting title is required");
-      return;
-    }
     if (!form.leadId) {
       toast.error("Select a lead for this meeting");
       return;
     }
     setSubmitting(true);
     try {
-      let activeForm = { ...form };
+      let activeForm = { ...form, title: autoTitle || "Clarity Call" };
       const chosenService = String(form.service || "").trim();
       if (chosenService && chosenService !== "—") {
         const agendaText = String(activeForm.agenda || "").trim();
@@ -978,7 +994,7 @@ export default function EmployeeMeetings() {
       // a real Google Meet URL server-side because the employee submitted with platform
       // "Google Meet" and no manually-typed/pre-generated meetLink).
       const currentMeetLink = saved.meetLink || activeForm.meetLink;
-      const currentTitle = activeForm.title.trim();
+      const currentTitle = saved.title || activeForm.title.trim();
       const currentDate = activeForm.date;
       const currentTime = activeForm.time;
       const selectedLead = leads.find((l) => String(l.id) === String(activeForm.leadId));
@@ -1124,6 +1140,7 @@ export default function EmployeeMeetings() {
         open={drawerOpen}
         form={form}
         setForm={setForm}
+        autoTitle={autoTitle}
         leads={leads}
         leadOptions={leadOptions}
         serviceOptions={serviceOptions}
