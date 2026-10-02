@@ -4,8 +4,8 @@ import {
 import BottomNavShell, { BottomNavItem } from "../../components/BottomNavShell.jsx";
 
 const items = [
-  { to: "/employee", label: "Home", icon: LayoutDashboard, end: true },
   { to: "/employee/leads", label: "Leads", icon: Users },
+  { to: "/employee", label: "Home", icon: LayoutDashboard, end: true },
   { to: "/employee/calls", label: "Calls", icon: Phone },
   { to: "/employee/follow-ups", label: "Follow", icon: MessageSquare },
   { to: "/employee/tasks", label: "Tasks", icon: CheckSquare },

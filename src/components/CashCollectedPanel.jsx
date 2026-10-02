@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Banknote, Calendar, CreditCard, FileText, Loader2, Paperclip, Plus, Receipt, Upload } from "lucide-react";
 import { apiGet, apiPostForm, invalidateCache } from "../lib/api.js";
@@ -11,6 +11,21 @@ const PAYMENT_MODES = [
   { value: "Cheque", label: "Cheque" },
   { value: "Other", label: "Other" },
 ];
+
+export const PAYMENT_TYPES = [
+  { value: "Advance Payment", label: "Advance Payment" },
+  { value: "Full Payment", label: "Full Payment (Payment Complete)" },
+  { value: "Partial Payment", label: "Partial Payment" },
+  { value: "Other", label: "Other" },
+];
+
+/** Payment type that matches a pipeline stage label (Advance Paid / Payment Complete). */
+export function paymentTypeForStage(stage) {
+  const s = String(stage || "").toLowerCase();
+  if (s.includes("advance")) return "Advance Payment";
+  if (s.includes("payment complete") || s.includes("converted") || s.includes("won")) return "Full Payment";
+  return "";
+}
 
 function formatINR(amount) {
   const n = Number(amount) || 0;
@@ -56,7 +71,8 @@ function resolveSlipUrl(url) {
   return base ? `${base}${url}` : url;
 }
 
-const emptyForm = () => ({
+const emptyForm = (paymentType = "") => ({
+  paymentType: paymentType || "Advance Payment",
   amount: "",
   paymentMode: "UPI",
   paymentAt: toLocalDateTimeInput(),
@@ -71,13 +87,30 @@ export default function CashCollectedPanel({
   employeeId,
   compact = false,
   onTotalChange,
+  defaultPaymentType = "",
+  openSignal = 0,
 }) {
+  const rootRef = useRef(null);
+  const amountRef = useRef(null);
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => emptyForm(defaultPaymentType));
+
+  // Stage moved to Advance Paid / Payment Complete → open the form preset with that
+  // payment type, scroll this panel into view and focus the amount.
+  useEffect(() => {
+    if (!openSignal) return;
+    setShowForm(true);
+    setForm((prev) => ({ ...prev, paymentType: defaultPaymentType || prev.paymentType }));
+    const t = setTimeout(() => {
+      rootRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      amountRef.current?.focus({ preventScroll: true });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [openSignal, defaultPaymentType]);
 
   const numericLeadId = useMemo(() => {
     const raw = leadId;
@@ -129,6 +162,10 @@ export default function CashCollectedPanel({
       toast.error("Enter a valid amount");
       return;
     }
+    if (!form.paymentType) {
+      toast.error("Select a payment type");
+      return;
+    }
     if (!form.paymentMode) {
       toast.error("Select a payment mode");
       return;
@@ -143,6 +180,7 @@ export default function CashCollectedPanel({
       const payload = new FormData();
       payload.append("amount", String(amount));
       payload.append("paymentMode", form.paymentMode);
+      payload.append("paymentType", form.paymentType);
       payload.append("paymentAt", new Date(form.paymentAt).toISOString());
       if (form.transactionId.trim()) payload.append("transactionId", form.transactionId.trim());
       if (form.notes.trim()) payload.append("notes", form.notes.trim());
@@ -153,7 +191,7 @@ export default function CashCollectedPanel({
       if (!res?.success) throw new Error(res?.message || "Failed to save payment");
 
       toast.success("Cash collection recorded");
-      setForm(emptyForm());
+      setForm(emptyForm(defaultPaymentType));
       setShowForm(false);
       invalidateCache("/api/v1/");
       await loadRecords();
@@ -173,7 +211,7 @@ export default function CashCollectedPanel({
   }
 
   return (
-    <div className={`rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/40 via-white to-white ${compact ? "p-3" : "p-4"} space-y-3 shadow-sm`}>
+    <div ref={rootRef} className={`scroll-mt-24 rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/40 via-white to-white ${compact ? "p-3" : "p-4"} space-y-3 shadow-sm`}>
       <div className="flex items-start justify-between gap-3 border-b border-emerald-100/80 pb-2">
         <div>
           <h4 className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
@@ -202,7 +240,9 @@ export default function CashCollectedPanel({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-black text-slate-800 tabular-nums">{formatINR(record.amount)}</p>
-                  <p className="text-[10px] font-bold text-emerald-700 mt-0.5">{record.paymentMode}</p>
+                  <p className="text-[10px] font-bold text-emerald-700 mt-0.5">
+                    {record.paymentType ? `${record.paymentType} · ` : ""}{record.paymentMode}
+                  </p>
                 </div>
                 <p className="text-[10px] text-slate-400 shrink-0">{formatDateTime(record.paymentAt)}</p>
               </div>
@@ -248,8 +288,22 @@ export default function CashCollectedPanel({
         <form onSubmit={handleSubmit} className="space-y-3 border-t border-emerald-100 pt-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Payment Type</span>
+              <select
+                value={form.paymentType}
+                onChange={(e) => setForm((prev) => ({ ...prev, paymentType: e.target.value }))}
+                className="mt-1 w-full h-9 px-3 rounded-xl border border-emerald-100 bg-white text-xs font-bold text-slate-800 outline-none focus:border-emerald-400"
+              >
+                {PAYMENT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
               <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Amount (₹)</span>
               <input
+                ref={amountRef}
                 type="number"
                 min="1"
                 step="0.01"
@@ -274,7 +328,7 @@ export default function CashCollectedPanel({
               </select>
             </label>
 
-            <label className="block sm:col-span-2">
+            <label className="block">
               <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                 <Calendar className="w-3 h-3" /> Date & Time
               </span>
@@ -338,7 +392,7 @@ export default function CashCollectedPanel({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => { setShowForm(false); setForm(emptyForm()); }}
+              onClick={() => { setShowForm(false); setForm(emptyForm(defaultPaymentType)); }}
               className="flex-1 py-2 rounded-xl border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50"
             >
               Cancel

@@ -22,12 +22,12 @@ import {
 } from "../../components/LightSidebar.jsx";
 
 const NAV = [
+  { to: "/employee/leads", label: "Leads", icon: Users },
   { to: "/employee", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/employee/tasks", label: "My Tasks", icon: CheckSquare },
   { to: "/employee/follow-ups", label: "Follow-Up", icon: MessageSquare },
   { to: "/employee/whatsapp-scripts", label: "WhatsApp Scripts", icon: MessagesSquare },
   { to: "/employee/calls", label: "Call Reporting", icon: Phone },
-  { to: "/employee/leads", label: "Leads", icon: Users },
   { to: "/employee/sales-process", label: "Sales Process", icon: FileText },
   { to: "/employee/assets", label: "Assets", icon: Download },
   { to: "/employee/meetings", label: "Meetings", icon: Calendar },

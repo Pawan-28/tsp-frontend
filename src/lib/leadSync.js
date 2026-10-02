@@ -12,6 +12,7 @@ import { formatCallDisplayDate } from "./callDisplay.js";
 import { resolveLeadForCall } from "./leadKanban.js";
 import { phonesMatchLoose } from "./callMetrics.js";
 import { apiGet } from "./api.js";
+import { extractTracking } from "./leadMeta.js";
 
 /** Canonical pipeline_stage values written to DB (employee kanban labels). */
 export const CANONICAL_STAGE_LABELS = EMP_KANBAN_STAGES.map((s) => s.label);
@@ -167,13 +168,15 @@ export function apiLeadToEmployee(rawLead, avatarColors = AVATAR_COLORS) {
   const revenue = Number(lead.expectedRevenue ?? lead.expected_revenue ?? 0);
 
   const meta = typeof lead.sourceMeta === "string" ? (() => { try { return JSON.parse(lead.sourceMeta); } catch { return {}; } })() : (lead.sourceMeta || lead.source_meta || {});
-  const utmSource = lead.utm_source || lead.utmSource || meta.utm_source || meta.utmSource || "";
-  const utmMedium = lead.utm_medium || lead.utmMedium || meta.utm_medium || meta.utmMedium || "";
-  const utmCampaign = lead.utm_campaign || lead.utmCampaign || meta.utm_campaign || meta.utmCampaign || "";
-  const utmTerm = lead.utm_term || lead.utmTerm || meta.utm_term || meta.utmTerm || "";
-  const utmContent = lead.utm_content || lead.utmContent || meta.utm_content || meta.utmContent || "";
+  // UTMs + SOP id in whatever spelling / nesting n8n or the form sent them.
+  const tracking = extractTracking(lead, meta);
+  const utmSource = tracking.utm_source;
+  const utmMedium = tracking.utm_medium;
+  const utmCampaign = tracking.utm_campaign;
+  const utmTerm = tracking.utm_term;
+  const utmContent = tracking.utm_content;
   const sop = lead.sop || lead.sopName || meta.sop || meta.sopName || "";
-  const sopId = lead.sopId || lead.sop_id || meta.sopId || meta.sop_id || "";
+  const sopId = tracking.sopId;
   const serviceId = lead.serviceId || lead.service_id || meta.serviceId || meta.service_id || "";
   const service = lead.service || lead.serviceName || meta.services || meta.service || lead.requirements || lead.insights || "—";
 
@@ -255,13 +258,15 @@ export function apiLeadToAdmin(rawLead) {
     "—";
 
   const meta = typeof lead.sourceMeta === "string" ? (() => { try { return JSON.parse(lead.sourceMeta); } catch { return {}; } })() : (lead.sourceMeta || lead.source_meta || {});
-  const utmSource = lead.utm_source || lead.utmSource || meta.utm_source || meta.utmSource || "";
-  const utmMedium = lead.utm_medium || lead.utmMedium || meta.utm_medium || meta.utmMedium || "";
-  const utmCampaign = lead.utm_campaign || lead.utmCampaign || meta.utm_campaign || meta.utmCampaign || "";
-  const utmTerm = lead.utm_term || lead.utmTerm || meta.utm_term || meta.utmTerm || "";
-  const utmContent = lead.utm_content || lead.utmContent || meta.utm_content || meta.utmContent || "";
+  // UTMs + SOP id in whatever spelling / nesting n8n or the form sent them.
+  const tracking = extractTracking(lead, meta);
+  const utmSource = tracking.utm_source;
+  const utmMedium = tracking.utm_medium;
+  const utmCampaign = tracking.utm_campaign;
+  const utmTerm = tracking.utm_term;
+  const utmContent = tracking.utm_content;
   const sop = lead.sop || lead.sopName || meta.sop || meta.sopName || "";
-  const sopId = lead.sopId || lead.sop_id || meta.sopId || meta.sop_id || "";
+  const sopId = tracking.sopId;
   const serviceId = lead.serviceId || lead.service_id || meta.serviceId || meta.service_id || "";
   const service = lead.requirements || lead.service || meta.services || meta.service || lead.insights || "";
 
@@ -572,6 +577,7 @@ export function normalizeLeadForDetailPanel(lead) {
 export function buildDetailDraft(lead) {
   if (!lead) return {};
   const meta = typeof lead.sourceMeta === "string" ? (() => { try { return JSON.parse(lead.sourceMeta); } catch { return {}; } })() : (lead.sourceMeta || lead.source_meta || {});
+  const tracking = extractTracking(lead, meta);
   return {
     phone: lead.phone || "",
     email: lead.email || "",
@@ -580,15 +586,15 @@ export function buildDetailDraft(lead) {
     city: lead.city || "",
     service: lead.service || meta.services || meta.service || "",
     serviceId: lead.serviceId || meta.serviceId || "",
-    sop: lead.sop || meta.sop || meta.sopName || lead.sopId || meta.sopId || "",
-    sopId: lead.sopId || meta.sopId || "",
+    sop: lead.sop || meta.sop || meta.sopName || "",
+    sopId: tracking.sopId,
     company: lead.company || lead.company_name || "",
     expectedRevenue: String(lead.expectedRevenue || parseEmpBudget(lead.budget) || ""),
-    utm_source: lead.utm_source || meta.utm_source || "",
-    utm_medium: lead.utm_medium || meta.utm_medium || "",
-    utm_campaign: lead.utm_campaign || meta.utm_campaign || "",
-    utm_term: lead.utm_term || meta.utm_term || "",
-    utm_content: lead.utm_content || meta.utm_content || "",
+    utm_source: tracking.utm_source,
+    utm_medium: tracking.utm_medium,
+    utm_campaign: tracking.utm_campaign,
+    utm_term: tracking.utm_term,
+    utm_content: tracking.utm_content,
   };
 }
 

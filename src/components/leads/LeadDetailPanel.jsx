@@ -14,7 +14,7 @@ import {
   LOCAL_SOPS,
 } from "../../data/employeeMock.js";
 import { LeadStatusBadge, AvatarCircle, FormTextarea, BtnPrimary } from "../../employee/components/EmpUI.jsx";
-import CashCollectedPanel from "../CashCollectedPanel.jsx";
+import CashCollectedPanel, { paymentTypeForStage } from "../CashCollectedPanel.jsx";
 import { CANONICAL_STAGE_LABELS, buildDetailDraft, unwrapApiList, filterAssignableEmployees, isDummyEmployee } from "../../lib/leadSync.js";
 import { callFromApiLite } from "../../lib/callFromApiLite.js";
 import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../../lib/callDisplay.js";
@@ -243,6 +243,8 @@ export default function LeadDetailPanel({
   const [serviceOptions, setServiceOptions] = useState(CANONICAL_SERVICES);
   const [bookMeetingOpen, setBookMeetingOpen] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false);
+  // Stage → Advance Paid / Payment Complete opens "Cash Collected" with the matching payment type.
+  const [cashPrompt, setCashPrompt] = useState({ type: "", signal: 0 });
 
   const handleGenerateAiMom = async (callToProcess) => {
     if (!callToProcess || isProcessingAi) return;
@@ -995,6 +997,8 @@ export default function LeadDetailPanel({
             if (onStageChange) {
               onStageChange(val);
             }
+            const payType = paymentTypeForStage(val);
+            if (payType) setCashPrompt((p) => ({ type: payType, signal: p.signal + 1 }));
           }}
           options={CANONICAL_STAGE_LABELS}
           readOnly={readOnly}
@@ -1046,6 +1050,8 @@ export default function LeadDetailPanel({
         leadId={liveLead._dbId ?? liveLead.id}
         leadName={liveLead.name}
         employeeId={liveLead.assigneeId || employee?.id}
+        defaultPaymentType={cashPrompt.type || paymentTypeForStage(draft.stage)}
+        openSignal={cashPrompt.signal}
       />
 
       {showReassignment && reassignLead && (
