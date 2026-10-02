@@ -67,9 +67,27 @@ export function getMomSections(call) {
   return hasRealContent(parsed) ? parsed : null;
 }
 
+/**
+ * "[GEMINI CHARGES]" block that aiService.js prepends to ai_summary.
+ * @returns {{ total: string, lines: string[] } | null}
+ */
+export function getGeminiCharges(call) {
+  const raw = String(call?.ai_summary || call?.aiSummary || call?.notes || call?.note || "");
+  const m = raw.match(/\[GEMINI CHARGES\]\n([\s\S]*?)(?:\n\n|$)/);
+  if (!m) return null;
+  const lines = m[1].split("\n").map((l) => l.trim()).filter(Boolean);
+  const totalLine = lines.find((l) => /^Total:/i.test(l)) || "";
+  return { total: totalLine.replace(/^Total:\s*/i, ""), lines: lines.filter((l) => l !== totalLine) };
+}
+
+/** ai_summary without the "[GEMINI CHARGES]" block (for plain-text rendering). */
+export function stripGeminiCharges(text) {
+  return String(text || "").replace(/^\[GEMINI CHARGES\]\n[\s\S]*?(?:\n\n|$)/, "");
+}
+
 /** Raw fallback text when no structured/bracket-tagged sections are recognizable. */
 export function getMomPlainText(call) {
   if (!call) return "";
   const raw = call.ai_summary || call.aiSummary || call.note || call.notes || "";
-  return typeof raw === "string" ? raw : "";
+  return typeof raw === "string" ? stripGeminiCharges(raw) : "";
 }

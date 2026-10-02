@@ -21,8 +21,9 @@ import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../.
 import { formatTelUrl, formatWhatsAppPhone } from "../../lib/phoneUtils.js";
 import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
-import { getMomSections, getMomPlainText } from "../../lib/momFormat.js";
-import MomSections from "./MomSections.jsx";
+import { getMomSections, getMomPlainText, stripGeminiCharges } from "../../lib/momFormat.js";
+import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
+import { isOutboundCall } from "../../lib/callMetrics.js";
 import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal.jsx";
 import { cleanServiceName } from "../../lib/meetingTitle.js";
 
@@ -342,6 +343,48 @@ export default function LeadDetailPanel({
       .map((c) => normalizeCallForDisplay(c, liveLead))
       .sort((a, b) => new Date(b.callAt || b.date || 0) - new Date(a.callAt || a.date || 0));
   }, [resolvedCalls, liveLead]);
+
+  // Total dial attempts to this lead (outbound calls incl. not-picked) — "Dialed N×".
+  const dialCount = useMemo(() => {
+    const seen = new Set();
+    let n = 0;
+    for (const c of resolvedCalls) {
+      const mine = String(c.leadId) === String(liveLead.id) || String(c.leadId) === String(liveLead._dbId)
+        || (liveLead.phone && (phonesMatchLoose(c.phone, liveLead.phone) || phonesMatchLoose(c.clientPhone, liveLead.phone)));
+      if (!mine || !isOutboundCall(c)) continue;
+      const key = String(c.callyzerCallId || c.callyzer_call_id || c.id || "");
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      n += 1;
+    }
+    return n;
+  }, [resolvedCalls, liveLead]);
+
+  // SOP shown in Lead Details: the lead's own SOP, else the SOP the CRM applies to the
+  // lead's service (same matching as the AI MoM / n8n webhook), else "All Services" SOP.
+  const [sopCatalog, setSopCatalog] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiGet("/api/v1/sops", { headers: crmHeaders, cacheTtl: 5 * 60_000 })
+      .then((res) => {
+        const list = Array.isArray(res) ? res : (res?.data || res?.sops || []);
+        if (!cancelled && Array.isArray(list)) setSopCatalog(list);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [crmHeaders]);
+
+  const resolvedSopLabel = useMemo(() => {
+    const own = String(draft.sop || draft.sopId || "").trim();
+    if (own && own !== "—") return own;
+    const service = cleanServiceName(draft.service) || cleanServiceName(liveLead?.service);
+    const active = sopCatalog.filter((sp) => String(sp.status || "").toLowerCase() !== "archived");
+    const servicesOf = (sp) => (Array.isArray(sp.services) && sp.services.length ? sp.services : [sp.service || "All Services"]);
+    const hit = (service && active.find((sp) => servicesOf(sp).includes(service)))
+      || active.find((sp) => servicesOf(sp).includes("All Services"));
+    if (!hit) return "";
+    return [hit.sop_code, hit.title].filter(Boolean).join(" · ") + (own ? "" : " (by service)");
+  }, [draft.sop, draft.sopId, draft.service, liveLead?.service, sopCatalog]);
 
   const allNotesAndSummaries = useMemo(() => {
     const userNotes = notesList.map((n) => ({
@@ -828,6 +871,12 @@ export default function LeadDetailPanel({
               <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-50 border border-rose-100 text-[10px] font-bold text-rose-800">
  {currentAssignee}
               </span>
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-50 border border-slate-200 text-[10px] font-bold text-slate-700 tabular-nums"
+                title="Total dial attempts to this lead"
+              >
+                <Phone className="w-3 h-3" /> Dialed {dialCount}×
+              </span>
             </div>
           </div>
         </div>
@@ -890,8 +939,13 @@ export default function LeadDetailPanel({
                   </span>
                   <span className="text-slate-400 font-medium">{item.dateStr}</span>
                 </div>
+                {item.isAiCallSummary && typeof item.body === "string" && (
+                  <GeminiChargesBar call={{ ai_summary: item.body }} />
+                )}
                 <p className="text-slate-800 leading-relaxed font-medium whitespace-pre-line text-[11px]">
-                  {formatAiSummaryText(item.body)}
+                  {item.isAiCallSummary && typeof item.body === "string"
+                    ? stripGeminiCharges(item.body)
+                    : formatAiSummaryText(item.body)}
                 </p>
               </div>
             ))}
@@ -934,43 +988,19 @@ export default function LeadDetailPanel({
         />
         <DetailField
           label="SOP"
-          value={draft.sop || draft.sopId || "—"}
+          value={draft.sop || draft.sopId || resolvedSopLabel || "—"}
           onChange={patchDraft("sop")}
           readOnly={readOnly}
         />
         <DetailField label="City" value={draft.city} onChange={patchDraft("city")} readOnly={readOnly} />
         <DetailField label="Company" value={draft.company} onChange={patchDraft("company")} readOnly={readOnly} />
-      </div>
-
-      {/* ── Marketing Attribution & UTMs ── */}
-      <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between border-b border-rose-100/70 pb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-rose-50 text-rose-600 grid place-items-center shrink-0">
-              <Megaphone className="w-3.5 h-3.5" />
-            </div>
-            <div>
-              <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-wider">
-                Marketing Attribution & UTMs
-              </h4>
-              <p className="text-[9px] text-slate-400 font-medium">Tracking metadata from n8n & ad channels</p>
-            </div>
-          </div>
-          {(draft.utm_source || liveLead.utm_source) && (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">
-              {draft.utm_source || liveLead.utm_source}
-            </span>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2.5">
-          <DetailField label="UTM Source" value={draft.utm_source} onChange={patchDraft("utm_source")} readOnly={readOnly} />
-          <DetailField label="UTM Medium" value={draft.utm_medium} onChange={patchDraft("utm_medium")} readOnly={readOnly} />
-          <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
-          <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
-          <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} />
-          <DetailField label="SOP Code / ID" value={draft.sopId || liveLead.sopId || draft.sop || "—"} readOnly />
-        </div>
+        {/* UTM + SOP code shown right here in the details grid */}
+        <DetailField label="UTM Source" value={draft.utm_source} onChange={patchDraft("utm_source")} readOnly={readOnly} />
+        <DetailField label="UTM Medium" value={draft.utm_medium} onChange={patchDraft("utm_medium")} readOnly={readOnly} />
+        <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
+        <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} />
+        <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
+        <DetailField label="SOP Code / ID" value={draft.sopId || liveLead.sopId || resolvedSopLabel || "—"} readOnly />
       </div>
 
       {isDirty && !readOnly && (

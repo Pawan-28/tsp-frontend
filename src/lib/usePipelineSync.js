@@ -19,6 +19,7 @@ const emptyBoard = () => ({
   callsRaw: [],
   leads: [],
   meetings: [],
+  dialCounts: {},
   syncedAt: null,
 });
 
@@ -89,6 +90,8 @@ function normalizeMasterPayload(raw, { mapLeads = true, attachLeads = [] } = {})
     callsRaw,
     leads: apiLeads,
     meetings,
+    // { [leadId]: all-time outbound dial attempts } — employee board only.
+    dialCounts: data.dialCounts && typeof data.dialCounts === "object" ? data.dialCounts : {},
     syncedAt: raw?.syncedAt || data.syncedAt || null,
   };
 }

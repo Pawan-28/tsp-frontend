@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useDeferredValue, memo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff, Video } from "lucide-react";
+import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff, Video, CalendarClock } from "lucide-react";
 import toast from "react-hot-toast";
 import { GlassCard, Badge, StatCard } from "../../components/Primitives.jsx";
 import AddLeadDrawer from "../../components/AddLeadDrawer.jsx";
@@ -185,8 +185,28 @@ function cardTemperatureKey(temperature) {
   return null;
 }
 
-const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage }) {
+// Quick actions on every lead card: temperature + Not Interested + Schedule Follow-up.
+const CARD_QUICK_TEMPS = [
+  { id: "hot", label: "Hot", active: "bg-red-50 text-red-700 border-red-300" },
+  { id: "warm", label: "Warm", active: "bg-amber-50 text-amber-800 border-amber-300" },
+  { id: "cold", label: "Cold", active: "bg-sky-50 text-sky-700 border-sky-300" },
+];
+const CARD_QUICK_BTN =
+  "h-5 px-1.5 rounded-md border text-[9px] font-bold leading-none transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed";
+const CARD_QUICK_IDLE = "bg-white text-slate-500 border-slate-200 hover:border-rose-300 hover:text-rose-700";
+
+const LeadCard = memo(function LeadCard({
+  lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage,
+  dialCount = 0, onSetTemperature, onNotInterested, onScheduleFollowUp,
+}) {
   const canDrag = isDraggablePipelineLead(lead);
+  const tempKey = cardTemperatureKey(lead.temperature);
+  const isNotInterested = currentStage === "not_interested";
+  const stop = (fn) => (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    fn?.();
+  };
 
   const rawPhone = lead.phone || lead.phone_number || "";
   const cleanDigits = String(rawPhone).replace(/\D/g, "");
@@ -287,9 +307,60 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
             </select>
           </div>
         )}
-        <div className="flex items-center justify-between pt-2 border-t border-rose-50">
+        {(onSetTemperature || onScheduleFollowUp) && (
+          <div
+            className="flex flex-wrap items-center gap-1 mb-2"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            draggable={false}
+          >
+            {CARD_QUICK_TEMPS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                disabled={!canDrag}
+                title={canDrag ? `Mark ${t.label}` : "Link this call to a CRM lead first"}
+                aria-pressed={tempKey === t.id}
+                onClick={stop(() => onSetTemperature?.(lead, t.id))}
+                className={`${CARD_QUICK_BTN} ${tempKey === t.id ? t.active : CARD_QUICK_IDLE}`}
+              >
+                {t.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={!canDrag}
+              title="Move to Not Interested"
+              aria-pressed={isNotInterested}
+              onClick={stop(() => onNotInterested?.(lead))}
+              className={`${CARD_QUICK_BTN} ${isNotInterested ? "bg-violet-50 text-violet-700 border-violet-300" : CARD_QUICK_IDLE}`}
+            >
+              Not Int.
+            </button>
+            <button
+              type="button"
+              disabled={!canDrag}
+              title="Schedule follow-up"
+              onClick={stop(() => onScheduleFollowUp?.(lead))}
+              className={`${CARD_QUICK_BTN} inline-flex items-center gap-0.5 bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100`}
+            >
+              <CalendarClock className="w-2.5 h-2.5" /> Follow-up
+            </button>
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-1 pt-2 border-t border-rose-50">
           <span className="text-xs font-black text-rose-700 tabular-nums">{lead.budget}</span>
-          <span className="text-[9px] font-medium text-slate-400">{lastLabel}</span>
+          <span className="flex items-center gap-1.5 min-w-0">
+            {dialCount > 0 && (
+              <span
+                className="inline-flex items-center gap-0.5 text-[9px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded px-1 tabular-nums"
+                title={`Dialed ${dialCount} time${dialCount === 1 ? "" : "s"}`}
+              >
+                <Phone className="w-2.5 h-2.5" /> {dialCount}×
+              </span>
+            )}
+            <span className="text-[9px] font-medium text-slate-400 truncate">{lastLabel}</span>
+          </span>
         </div>
       </div>
     </div>
@@ -302,6 +373,8 @@ export default function EmployeeLeads() {
     loading: leadsLoading,
     addLead,
     updateLeadStage,
+    updateLeadTemperature,
+    scheduleFollowUp,
     createMeeting,
     refreshLeads,
     employee,
@@ -352,6 +425,10 @@ export default function EmployeeLeads() {
   const [bookingServiceOptions, setBookingServiceOptions] = useState(["—"]);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
 
+  // Lead card → "Follow-up" quick action (uses the existing scheduleFollowUp flow).
+  const [followUpModal, setFollowUpModal] = useState({ open: false, lead: null });
+  const [followUpForm, setFollowUpForm] = useState({ date: getEmpAppToday(), time: "11:00", type: "Call", note: "" });
+
   useEffect(() => {
     setSummaryVisible(readSummaryVisiblePref());
   }, []);
@@ -388,6 +465,7 @@ export default function EmployeeLeads() {
     meetings: boardMeetings,
     calls: boardCalls,
     syncing: boardSyncing,
+    dialCounts = {},
     remapCallsForLeads,
     refresh: refreshBoard,
     refreshLeadsOnly: refreshBoardFromDb,
@@ -692,6 +770,48 @@ export default function EmployeeLeads() {
         : `Moved to ${target.label}`,
       { id: `lead-move-${lead.id}-${stageId}` },
     );
+  };
+
+  // ── Lead card quick actions ──────────────────────────────────────────────
+  const handleCardTemperature = (lead, temp) => {
+    if (!isDraggablePipelineLead(lead) || !updateLeadTemperature) return;
+    updateLeadTemperature(lead.id, temp);
+    toast.success(`${lead.name || "Lead"} marked ${temp.charAt(0).toUpperCase()}${temp.slice(1)}`, { id: `temp-${lead.id}` });
+  };
+
+  const handleCardNotInterested = (lead) => {
+    moveLeadToStage(lead.id, "not_interested", { scroll: false });
+  };
+
+  const openFollowUpModal = (lead) => {
+    if (!isDraggablePipelineLead(lead)) {
+      toast.error("Link this Callyzer call to a lead before scheduling a follow-up.");
+      return;
+    }
+    setFollowUpForm({ date: getEmpAppToday(), time: "11:00", type: "Call", note: "" });
+    setFollowUpModal({ open: true, lead });
+  };
+
+  const handleFollowUpSubmit = async () => {
+    const lead = followUpModal.lead;
+    if (!lead) return;
+    if (!followUpForm.date || !followUpForm.time) {
+      toast.error("Pick date and time");
+      return;
+    }
+    const saved = await scheduleFollowUp?.({
+      leadName: lead.name,
+      company: lead.company,
+      type: followUpForm.type,
+      date: followUpForm.date,
+      time: followUpForm.time,
+      note: followUpForm.note,
+      leadId: lead.id,
+      phone: lead.phone,
+    });
+    if (saved === null) return; // scheduleFollowUp already showed the error
+    toast.success("Follow-up scheduled — added to My Tasks");
+    setFollowUpModal({ open: false, lead: null });
   };
 
   const openBookingModal = (lead) => {
@@ -1008,6 +1128,10 @@ export default function EmployeeLeads() {
                         onDragStart={() => setDragLeadId(lead.id)}
                         onDragEnd={() => setDragLeadId(null)}
                         onMoveStage={moveLeadToStage}
+                        dialCount={dialCounts[String(lead.id)] || 0}
+                        onSetTemperature={handleCardTemperature}
+                        onNotInterested={handleCardNotInterested}
+                        onScheduleFollowUp={openFollowUpModal}
                       />
                     ))}
                     {hiddenCount > 0 && (
@@ -1103,6 +1227,11 @@ export default function EmployeeLeads() {
                           onOpen={() => setSelected(lead)}
                           onDragStart={() => setDragLeadId(lead.id)}
                           onDragEnd={() => setDragLeadId(null)}
+                          currentStage={stage.id}
+                          dialCount={dialCounts[String(lead.id)] || 0}
+                          onSetTemperature={handleCardTemperature}
+                          onNotInterested={handleCardNotInterested}
+                          onScheduleFollowUp={openFollowUpModal}
                         />
                       ))}
                       {hiddenCount > 0 && (
@@ -1137,6 +1266,48 @@ export default function EmployeeLeads() {
       />
 
       <EmployeeLeadDrawer lead={selected} periodCalls={periodCalls} onClose={() => setSelected(null)} onMoveStage={moveLeadToStage} />
+
+      <EmpModal
+        open={followUpModal.open}
+        onClose={() => setFollowUpModal({ open: false, lead: null })}
+        title="Schedule Follow-up"
+        subtitle={followUpModal.lead ? `${followUpModal.lead.name || "Lead"} · ${followUpModal.lead.phone || ""}` : ""}
+        footer={(
+          <>
+            <BtnSecondary onClick={() => setFollowUpModal({ open: false, lead: null })}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={handleFollowUpSubmit}>
+              <CalendarClock className="w-4 h-4" /> Schedule
+            </BtnPrimary>
+          </>
+        )}
+      >
+        <div className="grid grid-cols-2 gap-3 mb-3 sm:mb-4">
+          <div>
+            <FormLabel>Date</FormLabel>
+            <FormInput type="date" value={followUpForm.date} onChange={(e) => setFollowUpForm((f) => ({ ...f, date: e.target.value }))} />
+          </div>
+          <div>
+            <FormLabel>Time</FormLabel>
+            <TimeOfDaySelects value={followUpForm.time} onChange={(time) => setFollowUpForm((f) => ({ ...f, time }))} />
+          </div>
+        </div>
+        <FormGroup>
+          <FormLabel>Type</FormLabel>
+          <FormSelect value={followUpForm.type} onChange={(e) => setFollowUpForm((f) => ({ ...f, type: e.target.value }))}>
+            <option>Call</option>
+            <option>WhatsApp</option>
+            <option>Email</option>
+          </FormSelect>
+        </FormGroup>
+        <FormGroup>
+          <FormLabel>Note</FormLabel>
+          <FormInput
+            value={followUpForm.note}
+            placeholder="What to discuss…"
+            onChange={(e) => setFollowUpForm((f) => ({ ...f, note: e.target.value }))}
+          />
+        </FormGroup>
+      </EmpModal>
 
       <PipelineBookMeetingModal
         open={bookingModal.open}
