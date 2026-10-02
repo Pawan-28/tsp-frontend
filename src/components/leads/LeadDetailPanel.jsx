@@ -3,7 +3,7 @@ import {
   Phone, MessageCircle, Mail, Sparkles, Clock,
   Users, RefreshCw, Shuffle, ChevronDown, ChevronUp, Zap,
   CheckCircle, Circle, ShieldCheck, Play, Pause, Volume2, ArrowLeft, Calendar, RotateCcw,
-  Megaphone, Target, Video,
+  Megaphone, Target, Video, CalendarClock,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -25,6 +25,7 @@ import { getMomSections, getMomPlainText, stripGeminiCharges } from "../../lib/m
 import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
 import { isOutboundCall } from "../../lib/callMetrics.js";
 import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal.jsx";
+import LeadFollowUpModal from "../../employee/components/LeadFollowUpModal.jsx";
 import { cleanServiceName } from "../../lib/meetingTitle.js";
 
 const TEMPERATURE_BTN_ACTIVE = {
@@ -220,6 +221,7 @@ export default function LeadDetailPanel({
   startCallyzerCall,
   createMeeting,
   onMeetingBooked,
+  scheduleFollowUp,
   onTemperatureChange,
   onStageChange,
   pipelineView = false,
@@ -240,6 +242,7 @@ export default function LeadDetailPanel({
   const [callsLoading, setCallsLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState(CANONICAL_SERVICES);
   const [bookMeetingOpen, setBookMeetingOpen] = useState(false);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
 
   const handleGenerateAiMom = async (callToProcess) => {
     if (!callToProcess || isProcessingAi) return;
@@ -868,6 +871,34 @@ export default function LeadDetailPanel({
               {readOnly && isTemperatureStatus && (
                 <LeadStatusBadge status={liveLead.status} label={LEAD_STATUS_LABELS[liveLead.status]} />
               )}
+              {variant === "employee" && !readOnly && (
+                <div className="inline-flex gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (draft.stage === "Not Interested") return;
+                      patchDraft("stage")("Not Interested");
+                      onStageChange?.("Not Interested");
+                    }}
+                    aria-pressed={draft.stage === "Not Interested"}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-bold border transition ${
+                      draft.stage === "Not Interested"
+                        ? "bg-violet-50 text-violet-700 border-violet-300"
+                        : "bg-white/90 border-rose-100 text-slate-500 hover:bg-violet-50/60 hover:text-violet-700"
+                    }`}
+                  >
+                    Not Interested
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFollowUpOpen(true)}
+                    disabled={typeof scheduleFollowUp !== "function"}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition disabled:opacity-40"
+                  >
+                    <CalendarClock className="w-3 h-3" /> Follow-up
+                  </button>
+                </div>
+              )}
               <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-50 border border-rose-100 text-[10px] font-bold text-rose-800">
  {currentAssignee}
               </span>
@@ -1156,6 +1187,15 @@ export default function LeadDetailPanel({
             )}
           </div>
         </>
+      )}
+
+      {variant === "employee" && followUpOpen && (
+        <LeadFollowUpModal
+          open={followUpOpen}
+          lead={liveLead}
+          scheduleFollowUp={scheduleFollowUp}
+          onClose={() => setFollowUpOpen(false)}
+        />
       )}
 
       {variant === "employee" && bookMeetingOpen && (
