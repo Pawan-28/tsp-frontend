@@ -451,6 +451,25 @@ export async function fetchAllEmployeeLeads(apiGetFn, employeeId, { headers, pag
   return all;
 }
 
+/** UTM + SOP values carried through every lead reshaping step (pipeline card, detail drawer). */
+function carryTracking(lead) {
+  const meta = typeof lead.sourceMeta === "string"
+    ? (() => { try { return JSON.parse(lead.sourceMeta); } catch { return {}; } })()
+    : (lead.sourceMeta || lead.source_meta || {});
+  const t = withUtmSourceFallback(extractTracking(lead, meta), lead, meta);
+  return {
+    sourceMeta: meta,
+    utm_source: t.utm_source,
+    utm_medium: t.utm_medium,
+    utm_campaign: t.utm_campaign,
+    utm_term: t.utm_term,
+    utm_content: t.utm_content,
+    sopId: t.sopId,
+    sop: lead.sop || lead.sopName || meta.sop || meta.sopName || "",
+    serviceId: lead.serviceId || lead.service_id || meta.serviceId || meta.service_id || "",
+  };
+}
+
 export function apiLeadToPipeline(lead) {
   if (!lead) return null;
   const stageRaw = lead.pipelineStage || lead.pipeline_stage || lead.status || "Lead";
@@ -508,6 +527,7 @@ export function apiLeadToPipeline(lead) {
     employeeName: owner,
     assigned_employee: owner,
     winProbability: lead.winProbability ?? lead.win_probability ?? 50,
+    ...carryTracking(lead),
     activities: [],
     tasks: [],
   };
@@ -571,6 +591,7 @@ export function normalizeLeadForDetailPanel(lead) {
     av,
     color,
     temperature: lead.temperature,
+    ...carryTracking(lead),
   };
 }
 
