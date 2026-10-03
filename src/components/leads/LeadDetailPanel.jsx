@@ -686,7 +686,9 @@ export default function LeadDetailPanel({
             </div>
           ) : (
             <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-center text-xs text-slate-400 font-semibold italic">
-              No call recording
+              {(Number(c.durationSec ?? c.duration_sec ?? 0) > 0 || (c.duration && !/^0*:?0*:?0*$/.test(String(c.duration))))
+                ? "Recording not available yet — it syncs from Callyzer shortly after the call"
+                : "No call recording"}
             </div>
           )}
         </div>
