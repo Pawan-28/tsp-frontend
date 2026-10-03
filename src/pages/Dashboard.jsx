@@ -1434,6 +1434,70 @@ function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChan
   );
 }
 
+// ─── AI Cost (Gemini: call transcript + MoM summary) ─────────────────────────
+const inr2 = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function AiCostPanel({ data, loading, filterKey }) {
+  const isMobile = useIsMobile();
+  const sel = data?.selected || { inr: 0, usd: 0, transcriptInr: 0, momInr: 0, calls: 0 };
+  const periodName = { today: "Today", week: "This week", month: "This month", custom: "Selected range" }[filterKey] || "This period";
+  const daily = (data?.daily || []).map((d) => ({ ...d, label: d.date.slice(8) + "/" + d.date.slice(5, 7) }));
+  const quick = [
+    { label: "Today", v: data?.today },
+    { label: "Week", v: data?.week },
+    { label: "Month", v: data?.month },
+  ];
+  const avg = sel.calls ? sel.inr / sel.calls : 0;
+
+  return (
+    <div className={`${PANEL} p-2.5 sm:p-5 min-w-0 w-full`}>
+      <SectionHead
+        compact={isMobile}
+        icon={Brain}
+        title="AI Credit Spent"
+        sub="Call transcript + MoM summary (Gemini, estimated)"
+      />
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{periodName}</p>
+          <p className="text-2xl sm:text-3xl font-display font-extrabold text-slate-900 leading-tight">{loading ? "…" : inr2(sel.inr)}</p>
+          <p className="text-[11px] text-slate-500">${Number(sel.usd || 0).toFixed(4)} · {sel.calls} call{sel.calls === 1 ? "" : "s"} · avg {inr2(avg)}/call</p>
+        </div>
+        <div className="text-right text-[11px] shrink-0">
+          <p className="text-slate-500">Transcript <span className="font-bold text-slate-800">{inr2(sel.transcriptInr)}</span></p>
+          <p className="text-slate-500">MoM summary <span className="font-bold text-slate-800">{inr2(sel.momInr)}</span></p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        {quick.map((q) => (
+          <div key={q.label} className="rounded-xl bg-rose-50/60 border border-rose-100 px-2 py-1.5 text-center">
+            <p className="text-[9px] font-bold uppercase text-rose-400">{q.label}</p>
+            <p className="text-xs font-bold text-slate-900">{loading ? "…" : inr2(q.v?.inr)}</p>
+            <p className="text-[9px] text-slate-400">{q.v?.calls || 0} calls</p>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Daily spend</p>
+      <div style={{ width: "100%", height: 120 }}>
+        <ResponsiveContainer>
+          <BarChart data={daily} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+            <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+            <YAxis hide />
+            <Tooltip
+              cursor={{ fill: "rgba(225,29,72,0.06)" }}
+              formatter={(v, _n, item) => [`${inr2(v)} · ${item?.payload?.calls || 0} calls`, "Spent"]}
+              labelFormatter={(l, items) => items?.[0]?.payload?.date || l}
+            />
+            <Bar dataKey="inr" fill="#e11d48" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 // ─── AI Insights Panel ────────────────────────────────────────────────────────
 function HighlightText({ text }) {
   if (!text) return null;
@@ -2332,6 +2396,8 @@ export default function Dashboard() {
   const [teamEmployees, setTeamEmployees] = useState(() => hydrateTeamCache());
   const [chartRevenue, setChartRevenue] = useState(initialDash?.revenueSeries ?? []);
   const [pipelineStats, setPipelineStats] = useState(null);
+  const [aiCost, setAiCost] = useState(null);
+  const [aiCostLoading, setAiCostLoading] = useState(true);
   const [pipelineLoading, setPipelineLoading] = useState(true);
   const [liveActivity, setLiveActivity] = useState(() => hydrateActivityCache());
   const [dashboardLoading, setDashboardLoading] = useState(!initialDash?.filterData);
@@ -2459,6 +2525,19 @@ export default function Dashboard() {
         if (!cancelled) setCustomRangeLoading(false);
       });
 
+    return () => { cancelled = true; };
+  }, [preset, bounds?.start, bounds?.end]);
+
+  // AI credit spent (transcript + MoM) for the selected Today / Week / Month / Custom period.
+  useEffect(() => {
+    if (preset === "custom" && (!bounds?.start || !bounds?.end)) return undefined;
+    let cancelled = false;
+    setAiCostLoading(true);
+    const params = buildPeriodQueryParams({ preset, bounds });
+    apiGet(`/api/dashboard/ai-cost?${params.toString()}`, { cacheTtl: 30_000 })
+      .then((data) => { if (!cancelled && data?.success) setAiCost(data); })
+      .catch(() => { if (!cancelled) setAiCost(null); })
+      .finally(() => { if (!cancelled) setAiCostLoading(false); });
     return () => { cancelled = true; };
   }, [preset, bounds?.start, bounds?.end]);
 
@@ -2607,6 +2686,7 @@ export default function Dashboard() {
         </div>
 
         <div className="flex flex-col gap-3 sm:gap-4 min-w-0 w-full">
+          <AiCostPanel data={aiCost} loading={aiCostLoading} filterKey={filterKey} />
           <AIInsightsPanel insights={insightItems} filterKey={filterKey} forecastValue={pipelineForecast} onRefresh={handleRefreshDashboard} />
           <ImpMetrics metrics={resolvedMetrics} filterKey={filterKey} />
           <RecentActivityPanel items={activityItems} filterKey={filterKey} />
