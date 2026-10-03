@@ -12,7 +12,7 @@ import { formatCallDisplayDate } from "./callDisplay.js";
 import { resolveLeadForCall } from "./leadKanban.js";
 import { phonesMatchLoose } from "./callMetrics.js";
 import { apiGet } from "./api.js";
-import { extractTracking } from "./leadMeta.js";
+import { extractTracking, withUtmSourceFallback } from "./leadMeta.js";
 
 /** Canonical pipeline_stage values written to DB (employee kanban labels). */
 export const CANONICAL_STAGE_LABELS = EMP_KANBAN_STAGES.map((s) => s.label);
@@ -577,7 +577,7 @@ export function normalizeLeadForDetailPanel(lead) {
 export function buildDetailDraft(lead) {
   if (!lead) return {};
   const meta = typeof lead.sourceMeta === "string" ? (() => { try { return JSON.parse(lead.sourceMeta); } catch { return {}; } })() : (lead.sourceMeta || lead.source_meta || {});
-  const tracking = extractTracking(lead, meta);
+  const tracking = withUtmSourceFallback(extractTracking(lead, meta), lead, meta);
   return {
     phone: lead.phone || "",
     email: lead.email || "",

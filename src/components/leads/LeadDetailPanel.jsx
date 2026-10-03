@@ -379,17 +379,43 @@ export default function LeadDetailPanel({
     return () => { cancelled = true; };
   }, [crmHeaders]);
 
-  const resolvedSopLabel = useMemo(() => {
-    const own = String(draft.sop || draft.sopId || "").trim();
-    if (own && own !== "—") return own;
-    const service = cleanServiceName(draft.service) || cleanServiceName(liveLead?.service);
+  // The SOP record behind this lead: by explicit id/code, then by name, then by the lead's service.
+  const resolvedSopRecord = useMemo(() => {
     const active = sopCatalog.filter((sp) => String(sp.status || "").toLowerCase() !== "archived");
+    const norm = (v) => String(v ?? "").trim().toLowerCase();
+    const idNeedle = norm(draft.sopId || liveLead?.sopId);
+    const nameNeedle = norm(draft.sop || liveLead?.sop);
+    if (idNeedle) {
+      const hit = sopCatalog.find((sp) => norm(sp.sop_code) === idNeedle || norm(sp.id) === idNeedle || norm(sp.title) === idNeedle);
+      if (hit) return { sop: hit, byService: false };
+    }
+    if (nameNeedle) {
+      const hit = sopCatalog.find((sp) => norm(sp.title) === nameNeedle || norm(sp.sop_code) === nameNeedle)
+        || sopCatalog.find((sp) => norm(sp.title).includes(nameNeedle) || nameNeedle.includes(norm(sp.title)));
+      if (hit) return { sop: hit, byService: false };
+    }
+    const service = cleanServiceName(draft.service) || cleanServiceName(liveLead?.service);
     const servicesOf = (sp) => (Array.isArray(sp.services) && sp.services.length ? sp.services : [sp.service || "All Services"]);
     const hit = (service && active.find((sp) => servicesOf(sp).includes(service)))
       || active.find((sp) => servicesOf(sp).includes("All Services"));
-    if (!hit) return "";
-    return [hit.sop_code, hit.title].filter(Boolean).join(" · ") + (own ? "" : " (by service)");
-  }, [draft.sop, draft.sopId, draft.service, liveLead?.service, sopCatalog]);
+    return hit ? { sop: hit, byService: true } : null;
+  }, [draft.sop, draft.sopId, draft.service, liveLead?.sop, liveLead?.sopId, liveLead?.service, sopCatalog]);
+
+  const resolvedSopLabel = useMemo(() => {
+    const own = String(draft.sop || "").trim();
+    if (own && own !== "—") return own;
+    if (!resolvedSopRecord) return String(draft.sopId || "").trim();
+    const { sop, byService } = resolvedSopRecord;
+    return [sop.sop_code, sop.title].filter(Boolean).join(" · ") + (byService ? " (by service)" : "");
+  }, [draft.sop, draft.sopId, resolvedSopRecord]);
+
+  // Always the short code (SOP-007), never the long title.
+  const resolvedSopCode = useMemo(() => {
+    const rec = resolvedSopRecord?.sop;
+    if (rec?.sop_code) return rec.sop_code;
+    if (rec?.id != null) return String(rec.id);
+    return String(draft.sopId || liveLead?.sopId || "").trim();
+  }, [resolvedSopRecord, draft.sopId, liveLead?.sopId]);
 
   const allNotesAndSummaries = useMemo(() => {
     const userNotes = notesList.map((n) => ({
@@ -1023,7 +1049,7 @@ export default function LeadDetailPanel({
         />
         <DetailField
           label="SOP"
-          value={draft.sop || draft.sopId || resolvedSopLabel || "—"}
+          value={resolvedSopLabel || "—"}
           onChange={patchDraft("sop")}
           readOnly={readOnly}
         />
@@ -1035,7 +1061,7 @@ export default function LeadDetailPanel({
         <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
         <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} />
         <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
-        <DetailField label="SOP Code / ID" value={draft.sopId || liveLead.sopId || resolvedSopLabel || "—"} readOnly />
+        <DetailField label="SOP Code / ID" value={resolvedSopCode || "—"} readOnly />
       </div>
 
       {isDirty && !readOnly && (
