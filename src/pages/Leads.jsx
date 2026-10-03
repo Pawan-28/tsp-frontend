@@ -18,7 +18,7 @@ import { apiLeadToAdmin, apiEmployeeToAdmin, filterAssignableEmployees, fetchLea
 import {
   getAssignmentState, assignLead, bulkAssign,
   toggleEmployeeReceiving, setDistributionMode, setAutoAssign,
-  initRoundRobinOrder, syncRoundRobinOrder, autoAssignUnassigned, runDistributionNow, computeWorkload,
+  initRoundRobinOrder, DEFAULT_EMPLOYEE_CAPACITY, syncRoundRobinOrder, autoAssignUnassigned, runDistributionNow, computeWorkload,
   workloadStatus,   getAssignmentForLead, getLeadId, normalizeSource,
   isConverted, persistAssignmentState,
   isQueueEligibleLead, isLeadUnassigned,
@@ -628,7 +628,16 @@ const showToast = (message, type = "success") => {
               type="button"
               onClick={() => {
                 if (selected.size === 0) {
-                  showToast("Select leads in the queue, choose a mode, then Run Now", "error");
+                  // Nothing selected → let the server drain the whole queue (server-side round robin).
+                  apiPost("/api/v1/assignment/run-round-robin", { limit: 500 }, { headers: getAdminCrmHeaders() })
+                    .then((res) => {
+                      const r = res?.data ?? res;
+                      const done = r?.processed ?? 0;
+                      showToast(done > 0 ? `${done} queued lead${done === 1 ? "" : "s"} assigned by round robin` : "No eligible reps or no queued leads", done > 0 ? "success" : "error");
+                      invalidateCache("/api/v1");
+                      loadData();
+                    })
+                    .catch((err) => showToast(err?.message || "Round robin run failed", "error"));
                   return;
                 }
                 const selectedLeads = leads.filter((l) =>
@@ -932,7 +941,7 @@ const showToast = (message, type = "success") => {
               employees.map((emp) => {
                 const stats = workload[emp.id] || { assigned: 0, active: 0, converted: 0, followUps: 0 };
                 const settings = assignState.employeeSettings[String(emp.id)] || {};
-                const cap = settings.maxCapacity ?? 15;
+                const cap = settings.maxCapacity ?? DEFAULT_EMPLOYEE_CAPACITY;
                 const utilPct = cap > 0 ? Math.round((stats.active / cap) * 100) : 0;
                 const status = workloadStatus(utilPct);
                 return (

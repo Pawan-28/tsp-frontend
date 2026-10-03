@@ -360,7 +360,7 @@ function isValidMeetingUrl(value) {
 }
 
 export default function EmployeeFollowUps() {
-  const { leads, followUps, scheduleFollowUp, createMeeting, refreshLeads, calls, employee } = useEmployee();
+  const { leads, followUps, scheduleFollowUp, createMeeting, refreshLeads, calls, employee, startCallyzerCall } = useEmployee();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [filter, setFilter] = useState("all");
@@ -516,11 +516,16 @@ export default function EmployeeFollowUps() {
     navigate(`/employee/call-assistant?${params.toString()}`);
   };
 
-  const handleNewLeadLiveCall = (lead) => {
+  // Dials straight away (same as the lead panel's Live Call), then opens the assistant with the timer running.
+  const handleNewLeadLiveCall = async (lead) => {
+    const session = await startCallyzerCall?.(lead);
+    if (!session) return; // startCallyzerCall already showed the reason (no phone, Callyzer error, …)
     const params = new URLSearchParams();
     if (lead?.id) params.set("leadId", String(lead.id));
     if (lead?.name) params.set("lead", lead.name);
+    params.set("live", "1");
     navigate(`/employee/call-assistant?${params.toString()}`);
+    if (session.message) toast.success(session.message);
   };
 
   const handleWhatsApp = ({ lead, phone }) => {

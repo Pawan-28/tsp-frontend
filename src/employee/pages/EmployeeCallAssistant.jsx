@@ -148,6 +148,7 @@ export default function EmployeeCallAssistant() {
   const urlPhone = searchParams.get("phone");
   const urlSop = searchParams.get("sop");
   const urlFollowUp = searchParams.get("followUp");
+  const urlLive = searchParams.get("live") === "1";
 
   const {
     leads,
@@ -180,6 +181,14 @@ export default function EmployeeCallAssistant() {
 
   const [callDuration, setCallDuration] = useState(0);
   const [callyzerCallActive, setCallyzerCallActive] = useState(false);
+  // Arrived from a Live Call button that already dialled → start the call timer immediately.
+  useEffect(() => {
+    if (urlLive) {
+      setCallyzerCallActive(true);
+      setCallDuration(0);
+    }
+  }, [urlLive]);
+
   useEffect(() => {
     if (!callyzerCallActive) return undefined;
     const timer = setInterval(() => {

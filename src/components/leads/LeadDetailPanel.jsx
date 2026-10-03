@@ -828,9 +828,10 @@ export default function LeadDetailPanel({
             type="button"
             onClick={async () => {
               const session = await startCallyzerCall?.(liveLead);
+              if (!session) return; // reason already shown by startCallyzerCall — stay here instead of opening a dead call screen
               onClose?.();
-              navigate(`/employee/call-assistant?leadId=${liveLead.id}&lead=${encodeURIComponent(liveLead.name)}`);
-              if (session?.message) toast.success(session.message);
+              navigate(`/employee/call-assistant?leadId=${liveLead.id}&lead=${encodeURIComponent(liveLead.name)}&live=1`);
+              if (session.message) toast.success(session.message);
             }}
             className="flex-1 h-10 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold transition shadow-[0_4px_12px_rgba(220,38,38,0.2)] flex items-center justify-center gap-1.5"
           >

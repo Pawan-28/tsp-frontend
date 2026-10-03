@@ -239,9 +239,11 @@ export function syncRoundRobinOrder(state, employees) {
   return next;
 }
 
+export const DEFAULT_EMPLOYEE_CAPACITY = 5000;
+
 function employeeCapacity(emp, settings, workload) {
   const s = settings[String(emp.id)] || {};
-  return s.maxCapacity ?? 15;
+  return s.maxCapacity ?? DEFAULT_EMPLOYEE_CAPACITY;
 }
 
 function employeeUtilization(emp, settings, workload) {
