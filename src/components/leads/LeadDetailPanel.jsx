@@ -233,6 +233,9 @@ export default function LeadDetailPanel({
   const viewOnlyPipeline = pipelineView && readOnly;
   const [draft, setDraft] = useState(() => buildDetailDraft(liveLead));
   const [waPickerOpen, setWaPickerOpen] = useState(false);
+  // Optimistic Hot/Warm/Cold selection so the toggle responds instantly and never sticks on the old value.
+  const [tempOverride, setTempOverride] = useState(null);
+  useEffect(() => { setTempOverride(null); }, [liveLead?.id]);
   const [saving, setSaving] = useState(false);
   const [notesList, setNotesList] = useState([]);
   const [newNote, setNewNote] = useState("");
@@ -466,6 +469,8 @@ export default function LeadDetailPanel({
 
   const handleTemperatureChange = async (newTemp) => {
     if (!liveLead?.id) return;
+    const previous = tempOverride;
+    setTempOverride(newTemp);
     try {
       if (updateLeadTemperature) {
         await updateLeadTemperature(liveLead.id, newTemp);
@@ -475,6 +480,7 @@ export default function LeadDetailPanel({
       }
       toast.success(`Temperature updated to ${newTemp}`);
     } catch (err) {
+      setTempOverride(previous);
       toast.error(err.message || "Failed to update temperature");
     }
   };
@@ -875,7 +881,7 @@ export default function LeadDetailPanel({
                   aria-label="Lead temperature"
                 >
                   {EMP_LEAD_TEMPERATURES.map(({ id, label }) => {
-                    const active = liveLead.status === id;
+                    const active = (tempOverride ?? liveLead.status) === id;
                     return (
                       <button
                         key={id}
@@ -884,6 +890,7 @@ export default function LeadDetailPanel({
                           if (updateLeadTemperature) {
                             handleTemperatureChange(id);
                           } else if (onTemperatureChange) {
+                            setTempOverride(id);
                             onTemperatureChange(id);
                           }
                         }}

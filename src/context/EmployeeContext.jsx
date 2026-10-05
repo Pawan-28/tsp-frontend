@@ -1057,7 +1057,7 @@ export function EmployeeProvider({ children }) {
   }, [leads, usingApi]);
 
   const updateLeadTemperature = useCallback(async (leadId, nextStatus) => {
-    setLeads((prev) => prev.map((l) => (l.id === leadId
+    setLeads((prev) => prev.map((l) => (String(l.id) === String(leadId) || (l._dbId != null && String(l._dbId) === String(leadId))
       ? {
         ...l,
         status: nextStatus,

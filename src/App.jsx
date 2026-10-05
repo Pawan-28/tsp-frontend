@@ -70,6 +70,20 @@ class CallAssistantErrorBoundary extends Component {
   }
 }
 
+// Mobile employees land on the Leads/Pipeline page once per session (after login); the Dashboard stays reachable from the menu.
+function EmployeeHome() {
+  let redirect = false;
+  try {
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+    if (isMobile && !sessionStorage.getItem("emp_mobile_home_done")) {
+      sessionStorage.setItem("emp_mobile_home_done", "1");
+      redirect = true;
+    }
+  } catch { /* storage unavailable: show dashboard */ }
+  if (redirect) return <Navigate to="/employee/pipeline" replace />;
+  return <EmployeeDashboard />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -103,7 +117,7 @@ export default function App() {
 
             <Route element={<RequireAuth roles={["employee"]} />}>
               <Route path="/employee" element={<EmployeeLayout />}>
-                <Route index element={<EmployeeDashboard />} />
+                <Route index element={<EmployeeHome />} />
                 <Route path="tasks" element={<EmployeeTasks />} />
                 <Route path="follow-ups" element={<EmployeeFollowUps />} />
                 <Route path="whatsapp-scripts" element={<EmployeeWhatsAppScripts />} />
