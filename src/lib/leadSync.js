@@ -563,12 +563,13 @@ export function normalizeLeadForDetailPanel(lead) {
     || "—";
 
   const temp = String(lead.temperature || "").toLowerCase();
+  // The lead's `temperature` is the source of truth for Hot/Warm/Cold (a stale `status` of "warm"
+  // must never override a temperature the user just changed).
   let status = lead.status || "warm";
-  if (!["hot", "warm", "cold"].includes(status)) {
-    if (temp.includes("hot")) status = "hot";
-    else if (temp.includes("cold")) status = "cold";
-    else if (temp.includes("warm")) status = "warm";
-  }
+  if (temp.includes("hot")) status = "hot";
+  else if (temp.includes("cold")) status = "cold";
+  else if (temp.includes("warm")) status = "warm";
+
 
   return {
     id: lead._dbId ?? lead.id,
