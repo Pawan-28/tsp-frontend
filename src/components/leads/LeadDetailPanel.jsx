@@ -1070,7 +1070,7 @@ export default function LeadDetailPanel({
         <DetailField label="UTM Source" value={draft.utm_source} onChange={patchDraft("utm_source")} readOnly={readOnly} />
         <DetailField label="UTM Medium" value={draft.utm_medium} onChange={patchDraft("utm_medium")} readOnly={readOnly} />
         <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
-        <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} />
+        {/* <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} /> */}
         <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
         <DetailField label="SOP Code / ID" value={resolvedSopCode || "—"} readOnly />
       </div>
