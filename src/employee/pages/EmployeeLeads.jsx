@@ -379,9 +379,13 @@ export default function EmployeeLeads() {
   const rawPeriod = String(searchParams.get("period") || "month").toLowerCase();
   const customFrom = searchParams.get("from") || "";
   const customTo = searchParams.get("to") || "";
-  const period = rawPeriod === "custom"
-    ? (parseCustomPeriod(encodeCustomPeriod(customFrom, customTo)) ? encodeCustomPeriod(customFrom, customTo) : "month")
-    : (["today", "week", "month"].includes(rawPeriod) ? rawPeriod : "month");
+  // "Yesterday" has no backend preset: it is sent as a one-day custom range (yesterday → yesterday).
+  const yesterdayKey = localDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  const period = rawPeriod === "yesterday" && yesterdayKey
+    ? encodeCustomPeriod(yesterdayKey, yesterdayKey)
+    : rawPeriod === "custom"
+      ? (parseCustomPeriod(encodeCustomPeriod(customFrom, customTo)) ? encodeCustomPeriod(customFrom, customTo) : "month")
+      : (["today", "week", "month"].includes(rawPeriod) ? rawPeriod : "month");
   const customRange = parseCustomPeriod(period);
   const deferredPeriod = useDeferredValue(period);
   const isBoardStale = deferredPeriod !== period;
@@ -389,6 +393,7 @@ export default function EmployeeLeads() {
     ? "Today"
     : period === "week"
       ? "This Week"
+      : rawPeriod === "yesterday" ? "Yesterday"
       : customRange ? `${customRange.startDate} → ${customRange.endDate}` : "This Month";
   const [groupRev, setGroupRev] = useState(0);
   const [expandedColumns, setExpandedColumns] = useState({});
@@ -913,7 +918,7 @@ export default function EmployeeLeads() {
               icon={Wallet}
               iconBg="bg-green-50"
               iconColor="text-green-600"
-              change={period === "today" ? "Today" : period === "week" ? "This week" : customRange ? "Custom range" : "This month"}
+              change={period === "today" ? "Today" : period === "week" ? "This week" : rawPeriod === "yesterday" ? "Yesterday" : customRange ? "Custom range" : "This month"}
               sub=""
             />
             </div>

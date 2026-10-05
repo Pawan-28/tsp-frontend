@@ -11,7 +11,7 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import { AnimatePresence } from "framer-motion";
 import { CustomDatePopover } from "../../components/DateRangeFilter.jsx";
-import { RANGE_TABS, PERIOD_PILL_BTN, PERIOD_PILL_ACTIVE, PERIOD_PILL_INACTIVE } from "../../lib/dateRange.js";
+import { PERIOD_PILL_BTN, PERIOD_PILL_ACTIVE, PERIOD_PILL_INACTIVE } from "../../lib/dateRange.js";
 
 const QUICK_ACTIONS = [
   { label: "Add Lead",            icon: Plus,          to: "/employee/leads",        search: "?action=add" },
@@ -51,6 +51,14 @@ const CALL_PERIODS = [
   { id: "month", label: "This Month" },
 ];
 
+// Lead pipeline board tabs: Today | Yesterday | Month | Custom
+const PIPELINE_TABS = [
+  { id: "today", label: "Today", shortLabel: "Today" },
+  { id: "yesterday", label: "Yesterday", shortLabel: "Yest." },
+  { id: "month", label: "Month", shortLabel: "Month" },
+  { id: "custom", label: "Custom", shortLabel: "Custom" },
+];
+
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -74,7 +82,7 @@ function PipelineDateFilter({ currentPeriod, fromDate, toDate, onSelect, onApply
 
   return (
     <div className={compact ? "grid grid-cols-4 gap-1 w-full min-w-0" : "flex items-center gap-0.5 sm:gap-1 flex-shrink-0 min-w-0"}>
-      {RANGE_TABS.map((t) => (
+      {PIPELINE_TABS.map((t) => (
         <button
           key={t.id}
           type="button"
