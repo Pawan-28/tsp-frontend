@@ -10,6 +10,7 @@
 // never has to special-case old vs. new data, and never dumps raw JSON.
 
 export const SECTION_LABELS = {
+  keyHighlights: "KEY HIGHLIGHTS",
   callHeader: "CALL HEADER",
   discussionHighlights: "DISCUSSION HIGHLIGHTS & KEY REQUIREMENTS",
   qualificationsMet: "QUALIFICATIONS MET",
@@ -21,6 +22,7 @@ export const LABEL_TO_KEY = Object.fromEntries(
 );
 
 export const MOM_SECTION_ORDER = [
+  "keyHighlights",
   "callHeader",
   "discussionHighlights",
   "qualificationsMet",
@@ -28,6 +30,7 @@ export const MOM_SECTION_ORDER = [
 ];
 
 export const MOM_SECTION_TITLES = {
+  keyHighlights: "Key Highlights",
   callHeader: "Call Header",
   discussionHighlights: "Discussion Highlights & Key Requirements",
   qualificationsMet: "Qualifications Met",

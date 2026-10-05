@@ -1,13 +1,13 @@
 import { formatINR, formatServicePriceLabel } from "../lib/indianFormat.js";
 
-export const SERVICE_CATEGORIES = [
-  { id: "all", label: "Category: All" },
-  { id: "ai", label: "AI Solutions" },
-  { id: "crm", label: "CRM & Ops" },
-  { id: "leadgen", label: "Lead Gen" },
-  { id: "consulting", label: "Consulting" },
-  { id: "dev", label: "Custom Dev" },
-];
+// export const SERVICE_CATEGORIES = [
+//   { id: "all", label: "Category: All" },
+//   { id: "ai", label: "AI Solutions" },
+//   { id: "crm", label: "CRM & Ops" },
+//   { id: "leadgen", label: "Lead Gen" },
+//   { id: "consulting", label: "Consulting" },
+//   { id: "dev", label: "Custom Dev" },
+// ];
 
 export const SERVICE_STATUSES = [
   { id: "all", label: "Status: All" },
