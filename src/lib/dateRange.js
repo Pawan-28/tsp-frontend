@@ -1,6 +1,6 @@
 export const RANGE_TABS = [
   { id: "today", label: "Today", shortLabel: "Today" },
-  { id: "week", label: "Week", shortLabel: "Week" },
+  { id: "yesterday", label: "Yesterday", shortLabel: "Yest." },
   { id: "month", label: "Month", shortLabel: "Month" },
   { id: "custom", label: "Custom", shortLabel: "Custom" },
 ];
@@ -20,9 +20,13 @@ export function presetToApiLabel(preset) {
 }
 
 export function defaultPresetForRoute(pathname) {
-  if (pathname === "/") return "week";
+  if (pathname === "/") return "today";
   if (pathname === "/team") return "month";
   return "month";
+}
+
+export function yesterdayKey(now = new Date()) {
+  return formatLocalYMD(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
 }
 
 export function emptyRangeState(pathname) {
@@ -54,6 +58,12 @@ export function getDateBounds(preset, fromDate = "", toDate = "") {
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
   const weekStartStr = formatLocalYMD(weekStart);
+
+  if (preset === "yesterday") {
+    const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const yStr = formatLocalYMD(y);
+    return { start: yStr, end: yStr };
+  }
 
   if (preset === "week" || preset === "this_week") {
     return { start: weekStartStr, end: todayStr };

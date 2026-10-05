@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   emptyRangeState,
+  yesterdayKey,
   getDateBounds,
   presetToApiLabel,
 } from "../lib/dateRange.js";
@@ -33,7 +34,13 @@ export function DateRangeProvider({ children }) {
     return () => window.clearTimeout(id);
   }, [byRoute]);
 
-  const current = byRoute[pathname] ?? emptyRangeState(pathname);
+  const stored = byRoute[pathname] ?? emptyRangeState(pathname);
+  // Old sessions may still hold "week" (tab removed) -> fall back to Month.
+  const uiPreset = stored.preset === "week" ? "month" : stored.preset;
+  // "Yesterday" is served to every page as a one-day custom range, so no page/API needs a new preset.
+  const current = uiPreset === "yesterday"
+    ? { preset: "custom", fromDate: yesterdayKey(), toDate: yesterdayKey() }
+    : { ...stored, preset: uiPreset };
 
   const setPreset = (preset) => {
     setByRoute((prev) => ({
@@ -57,6 +64,7 @@ export function DateRangeProvider({ children }) {
     () => ({
       pathname,
       preset: current.preset,
+      uiPreset,
       fromDate: current.fromDate,
       toDate: current.toDate,
       apiLabel: presetToApiLabel(current.preset),
@@ -64,7 +72,7 @@ export function DateRangeProvider({ children }) {
       setPreset,
       setCustomDates,
     }),
-    [pathname, current.preset, current.fromDate, current.toDate],
+    [pathname, current.preset, current.fromDate, current.toDate, uiPreset],
   );
 
   return (

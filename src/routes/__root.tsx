@@ -37,6 +37,18 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
 
+  // A stale/missing JS chunk (typical right after a deploy) is the usual cause of a random
+  // "page didn't load": reload once automatically instead of showing the error screen.
+  if (typeof window !== "undefined" && /dynamically imported module|Importing a module script failed|Loading chunk|Loading CSS chunk/i.test(String(error?.message || ""))) {
+    try {
+      const last = Number(sessionStorage.getItem("chunk_reload_at") || 0);
+      if (Date.now() - last > 30000) {
+        sessionStorage.setItem("chunk_reload_at", String(Date.now()));
+        window.location.reload();
+      }
+    } catch { /* ignore */ }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">

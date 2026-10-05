@@ -92,7 +92,8 @@ export function CustomDatePopover({ fromDate, setFromDate, toDate, setToDate, on
 }
 
 export default function DateRangeFilter({ className = "", compact = false }) {
-  const { preset, fromDate, toDate, setPreset, setCustomDates } = useDateRange();
+  const { preset: effectivePreset, uiPreset, fromDate, toDate, setPreset, setCustomDates } = useDateRange();
+  const preset = uiPreset || effectivePreset;
   const [showCalendar, setShowCalendar] = useState(false);
   const [draftFrom, setDraftFrom] = useState(fromDate);
   const [draftTo, setDraftTo] = useState(toDate);
