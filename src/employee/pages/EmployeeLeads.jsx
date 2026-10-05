@@ -185,22 +185,11 @@ function cardTemperatureKey(temperature) {
   return null;
 }
 
-// Quick actions on every lead card: Hot / Warm / Cold (Not Interested + Follow-up live in Lead Details).
-const CARD_QUICK_TEMPS = [
-  { id: "hot", label: "Hot", active: "bg-red-50 text-red-700 border-red-300" },
-  { id: "warm", label: "Warm", active: "bg-amber-50 text-amber-800 border-amber-300" },
-  { id: "cold", label: "Cold", active: "bg-sky-50 text-sky-700 border-sky-300" },
-];
-const CARD_QUICK_BTN =
-  "h-5 px-1.5 rounded-md border text-[9px] font-bold leading-none transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed";
-const CARD_QUICK_IDLE = "bg-white text-slate-500 border-slate-200 hover:border-rose-300 hover:text-rose-700";
-
 const LeadCard = memo(function LeadCard({
   lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage,
-  dialCount = 0, onSetTemperature,
+  dialCount = 0,
 }) {
   const canDrag = isDraggablePipelineLead(lead);
-  const tempKey = cardTemperatureKey(lead.temperature);
   const stop = (fn) => (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -304,28 +293,6 @@ const LeadCard = memo(function LeadCard({
                 </option>
               ))}
             </select>
-          </div>
-        )}
-        {onSetTemperature && (
-          <div
-            className="flex flex-wrap items-center gap-1 mb-2"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-            draggable={false}
-          >
-            {CARD_QUICK_TEMPS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                disabled={!canDrag}
-                title={canDrag ? `Mark ${t.label}` : "Link this call to a CRM lead first"}
-                aria-pressed={tempKey === t.id}
-                onClick={stop(() => onSetTemperature?.(lead, t.id))}
-                className={`${CARD_QUICK_BTN} ${tempKey === t.id ? t.active : CARD_QUICK_IDLE}`}
-              >
-                {t.label}
-              </button>
-            ))}
           </div>
         )}
         <div className="flex items-center justify-between gap-1 pt-2 border-t border-rose-50">

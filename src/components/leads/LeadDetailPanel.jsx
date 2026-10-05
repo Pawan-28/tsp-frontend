@@ -26,6 +26,7 @@ import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
 import { isOutboundCall } from "../../lib/callMetrics.js";
 import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal.jsx";
 import LeadFollowUpModal from "../../employee/components/LeadFollowUpModal.jsx";
+import WhatsAppScriptPicker from "../../employee/components/WhatsAppScriptPicker.jsx";
 import { cleanServiceName } from "../../lib/meetingTitle.js";
 
 const TEMPERATURE_BTN_ACTIVE = {
@@ -231,6 +232,7 @@ export default function LeadDetailPanel({
   const readOnly = readOnlyProp ?? variant === "admin";
   const viewOnlyPipeline = pipelineView && readOnly;
   const [draft, setDraft] = useState(() => buildDetailDraft(liveLead));
+  const [waPickerOpen, setWaPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notesList, setNotesList] = useState([]);
   const [newNote, setNewNote] = useState("");
@@ -814,12 +816,11 @@ export default function LeadDetailPanel({
                 toast.error("Phone number not found for this lead");
                 return;
               }
-              const formatted = formatWhatsAppPhone(liveLead.phone);
-              if (!formatted) {
+              if (!formatWhatsAppPhone(liveLead.phone)) {
                 toast.error("Phone number not found for this lead");
                 return;
               }
-              window.open(`https://wa.me/${formatted}`, "_blank", "noopener,noreferrer");
+              setWaPickerOpen(true);
             }}
             className="flex-1 h-10 rounded-xl border border-emerald-250 bg-emerald-50/10 text-emerald-800 hover:bg-emerald-50/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
           >
@@ -1230,6 +1231,15 @@ export default function LeadDetailPanel({
           lead={liveLead}
           scheduleFollowUp={scheduleFollowUp}
           onClose={() => setFollowUpOpen(false)}
+        />
+      )}
+
+      {variant === "employee" && waPickerOpen && (
+        <WhatsAppScriptPicker
+          open={waPickerOpen}
+          onClose={() => setWaPickerOpen(false)}
+          lead={liveLead}
+          phone={formatWhatsAppPhone(liveLead?.phone) || liveLead?.phone || ""}
         />
       )}
 
