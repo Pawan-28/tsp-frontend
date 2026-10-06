@@ -27,6 +27,7 @@ import { useAdmin } from "../context/AdminContext.jsx";
 import { extractLeadService, leadBelongsToService } from "../lib/servicesRegistry.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../lib/segmentPills.js";
 import { PERIOD_PILL_BTN, PERIOD_PILL_INACTIVE } from "../lib/dateRange.js";
+import { PIPELINE_STAGE_DEFINITIONS, mapStageToId, getStageMetaById } from "../lib/pipelineStages.js";
 
 const SOURCE_LABELS = {
   meta_ads: { label: "Meta Ads", tone: "info", color: "#2563eb" },
@@ -152,6 +153,10 @@ const [toast, setToast] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [dragLeadId, setDragLeadId] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
+  // Employee -> pipeline stage filter: "" = the unassigned queue (default); an employee id shows that
+  // employee's leads, narrowed by the chosen pipeline stage.
+  const [empFilter, setEmpFilter] = useState("");
+  const [stageFilter, setStageFilter] = useState("all");
   const [sortKey, setSortKey] = useState("created_at");
   const [sortDir] = useState("desc");
 
@@ -367,6 +372,54 @@ const showToast = (message, type = "success") => {
           : String(vb).localeCompare(String(va));
       });
   }, [queueLeads, search, sortKey, sortDir, showSheetLeadsOnly, selectedService]);
+
+  // Same ownership rules as computeWorkload: local assignment -> DB assignedTo -> assigned_to.
+  const leadOwnerId = useCallback((lead) => {
+    const local = assignState.assignments?.[String(getLeadId(lead))]?.employeeId;
+    if (local) return String(local);
+    const db = lead.assignedTo;
+    if (db && typeof db === "object" && db.id != null) return String(db.id);
+    const raw = (db && typeof db !== "object" ? db : null) ?? lead.assigned_to ?? lead.assigneeId;
+    return raw != null && raw !== "" ? String(raw) : "";
+  }, [assignState.assignments]);
+
+  const employeeView = Boolean(empFilter);
+  const selectedEmployee = useMemo(
+    () => employees.find((e) => String(e.id) === String(empFilter)) || null,
+    [employees, empFilter],
+  );
+
+  // The chosen employee's leads, before the stage filter (drives the per-stage counts).
+  const employeeAllLeads = useMemo(() => {
+    if (!employeeView) return [];
+    const q = search.toLowerCase().trim();
+    return enrichedLeads.filter((l) => {
+      if (leadOwnerId(l) !== String(empFilter)) return false;
+      if (selectedService && selectedService !== "All Services" && !leadBelongsToService(l, selectedService)) return false;
+      if (!q) return true;
+      return [l.lead_name, l.phone, l.phone_number, getLeadService(l)]
+        .some((f) => String(f || "").toLowerCase().includes(q));
+    });
+  }, [employeeView, enrichedLeads, empFilter, leadOwnerId, search, selectedService]);
+
+  const stageCounts = useMemo(() => {
+    const counts = {};
+    for (const l of employeeAllLeads) {
+      const id = mapStageToId(l.pipeline_stage, l.status);
+      counts[id] = (counts[id] || 0) + 1;
+    }
+    return counts;
+  }, [employeeAllLeads]);
+
+  const employeeLeads = useMemo(() => {
+    const list = stageFilter === "all"
+      ? employeeAllLeads
+      : employeeAllLeads.filter((l) => mapStageToId(l.pipeline_stage, l.status) === stageFilter);
+    return [...list].sort((a, b) => String(b[sortKey] ?? "").localeCompare(String(a[sortKey] ?? "")));
+  }, [employeeAllLeads, stageFilter, sortKey]);
+
+  // What the table shows: the unassigned queue, or the selected employee's leads.
+  const viewLeads = employeeView ? employeeLeads : filtered;
 
   const handleAssign = useCallback(
     async (lead, employee, method = "manual") => {
@@ -783,7 +836,7 @@ const showToast = (message, type = "success") => {
                     />
                   </div>
                   <span className="inline-flex items-center h-5 px-2 rounded-full text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-100/50 whitespace-nowrap">
-                    {showSheetLeadsOnly ? "Sheet Uploads" : "N8N & Manual"}
+                    {employeeView ? (selectedEmployee?.name || "Employee") : (showSheetLeadsOnly ? "Sheet Uploads" : "N8N & Manual")}
                   </span>
                 </div>
 
@@ -825,40 +878,90 @@ const showToast = (message, type = "success") => {
                   </button>
                 </div>
               </div>
+
+              {/* Employee -> pipeline stage filter */}
+              <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                <select
+                  value={empFilter}
+                  onChange={(e) => { setEmpFilter(e.target.value); setStageFilter("all"); setSelected(new Set()); }}
+                  className="h-8 rounded-lg border border-rose-100 bg-white px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-rose-400 max-w-[220px]"
+                  aria-label="Filter by employee"
+                >
+                  <option value="">Unassigned queue ({queueLeads.length})</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={String(e.id)}>
+                      {e.name} ({workload[e.id]?.assigned ?? 0})
+                    </option>
+                  ))}
+                </select>
+                {employeeView && (
+                  <>
+                    <select
+                      value={stageFilter}
+                      onChange={(e) => setStageFilter(e.target.value)}
+                      className="h-8 rounded-lg border border-rose-100 bg-white px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-rose-400 max-w-[220px]"
+                      aria-label="Filter by pipeline stage"
+                    >
+                      <option value="all">All stages ({employeeAllLeads.length})</option>
+                      {PIPELINE_STAGE_DEFINITIONS.map((st) => (
+                        <option key={st.id} value={st.id}>{st.label} ({stageCounts[st.id] || 0})</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => { setEmpFilter(""); setStageFilter("all"); }}
+                      className="inline-flex items-center gap-1 h-8 px-2 rounded-lg border border-rose-200 text-rose-700 text-[10px] font-bold hover:bg-rose-50 transition"
+                    >
+                      <X size={12} /> Clear
+                    </button>
+                  </>
+                )}
+              </div>
         </div>
 
             <div className="max-h-[480px] overflow-y-auto">
               {loading ? (
                 <p className="p-6 text-center text-rose-300 font-semibold text-xs">Loading queue…</p>
-              ) : filtered.length === 0 ? (
-                <p className="p-6 text-center text-slate-400 text-xs">No unassigned N8N or manual leads in queue</p>
+              ) : viewLeads.length === 0 ? (
+                <p className="p-6 text-center text-slate-400 text-xs">
+                  {employeeView
+                    ? `No ${stageFilter === "all" ? "" : `${getStageMetaById(stageFilter).label} `}leads for ${selectedEmployee?.name || "this employee"}`
+                    : "No unassigned N8N or manual leads in queue"}
+                </p>
               ) : isMobile ? (
                 <div className="p-2 sm:p-3 flex flex-col gap-2">
-                  {filtered.map((lead) => {
+                  {viewLeads.map((lead) => {
                     const lid = String(getLeadId(lead));
                     return (
                       <div
                         key={lid}
-                        draggable
-                        onDragStart={() => setDragLeadId(lid)}
+                        draggable={!employeeView}
+                        onDragStart={() => { if (!employeeView) setDragLeadId(lid); }}
                         onDragEnd={() => setDragLeadId(null)}
                         className="rounded-xl border border-rose-100 bg-white p-2.5 active:bg-rose-50/30"
                       >
                         <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            className="shrink-0 w-3.5 h-3.5"
-                            checked={selected.has(lid)}
-                            onChange={() => toggleSelect(lid)}
-                          />
+                          {!employeeView && (
+                            <input
+                              type="checkbox"
+                              className="shrink-0 w-3.5 h-3.5"
+                              checked={selected.has(lid)}
+                              onChange={() => toggleSelect(lid)}
+                            />
+                          )}
                           <button type="button" onClick={() => setDetailLead(lead)} className="text-left flex-1 min-w-0">
                             <p className="text-xs font-bold text-slate-900 truncate leading-tight">{lead.lead_name || "—"}</p>
                             <p className="text-[10px] text-slate-500 truncate tabular-nums">{getLeadPhone(lead)}</p>
                           </button>
-                          <GripVertical size={14} className="text-rose-300 shrink-0" />
+                          {!employeeView && <GripVertical size={14} className="text-rose-300 shrink-0" />}
                         </div>
                         <div className="flex flex-wrap items-center gap-1 mt-1.5 pl-5">
                           <span className="text-[10px] font-semibold text-slate-600 truncate">{getLeadService(lead)}</span>
+                          {employeeView && (
+                            <Badge tone={getStageMetaById(mapStageToId(lead.pipeline_stage, lead.status)).badgeTone}>
+                              {getStageMetaById(mapStageToId(lead.pipeline_stage, lead.status)).label}
+                            </Badge>
+                          )}
                         </div>
                       </div>
                     );
@@ -870,27 +973,35 @@ const showToast = (message, type = "success") => {
                 <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr>
                     <th className="p-2 w-8">
-                      <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0} onChange={toggleSelectAll} />
+                      {!employeeView && (
+                        <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0} onChange={toggleSelectAll} />
+                      )}
                     </th>
                     <th className="p-2 text-left text-[9px] font-bold text-rose-700 uppercase tracking-wider">Lead</th>
                     <th className="p-2 text-left text-[9px] font-bold text-rose-700 uppercase tracking-wider">Phone</th>
                     <th className="p-2 text-left text-[9px] font-bold text-rose-700 uppercase tracking-wider">Service</th>
+                    {employeeView && (
+                      <th className="p-2 text-left text-[9px] font-bold text-rose-700 uppercase tracking-wider">Stage</th>
+                    )}
                     <th className="p-2 w-8" />
                 </tr>
               </thead>
               <tbody>
-                  {filtered.map((lead) => {
+                  {viewLeads.map((lead) => {
                     const lid = String(getLeadId(lead));
+                    const stageMeta = getStageMetaById(mapStageToId(lead.pipeline_stage, lead.status));
                     return (
                       <tr
                         key={lid}
-                        draggable
-                        onDragStart={() => setDragLeadId(lid)}
+                        draggable={!employeeView}
+                        onDragStart={() => { if (!employeeView) setDragLeadId(lid); }}
                         onDragEnd={() => setDragLeadId(null)}
-                        className="border-t border-rose-50/80 hover:bg-rose-50/40 cursor-grab active:cursor-grabbing"
+                        className={`border-t border-rose-50/80 hover:bg-rose-50/40 ${employeeView ? "" : "cursor-grab active:cursor-grabbing"}`}
                       >
                         <td className="p-2">
-                          <input type="checkbox" checked={selected.has(lid)} onChange={() => toggleSelect(lid)} />
+                          {!employeeView && (
+                            <input type="checkbox" checked={selected.has(lid)} onChange={() => toggleSelect(lid)} />
+                          )}
                         </td>
                         <td className="p-2">
                           <button type="button" onClick={() => setDetailLead(lead)} className="text-left">
@@ -903,9 +1014,14 @@ const showToast = (message, type = "success") => {
                         <td className="p-2">
                           <span className="text-[10px] font-semibold text-slate-600">{getLeadService(lead)}</span>
                         </td>
-                        <td className="p-2 text-rose-300">
-                          <GripVertical size={14} />
+                        {employeeView && (
+                          <td className="p-2">
+                            <Badge tone={stageMeta.badgeTone}>{stageMeta.label}</Badge>
                           </td>
+                        )}
+                        <td className="p-2 text-rose-300">
+                          {!employeeView && <GripVertical size={14} />}
+                        </td>
                       </tr>
                         );
                       })}
@@ -915,7 +1031,9 @@ const showToast = (message, type = "success") => {
               )}
             </div>
             <div className="px-3 sm:px-4 py-2 border-t border-rose-50 text-[9px] sm:text-[10px] text-slate-400">
-              N8N & manual unassigned leads · drag onto employee cards · {filtered.length} in queue
+              {employeeView
+                ? `${selectedEmployee?.name || "Employee"} · ${stageFilter === "all" ? "all stages" : getStageMetaById(stageFilter).label} · ${viewLeads.length} lead${viewLeads.length === 1 ? "" : "s"}`
+                : `N8N & manual unassigned leads · drag onto employee cards · ${filtered.length} in queue`}
             </div>
           </div>
           </div>
