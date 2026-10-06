@@ -148,7 +148,15 @@ export function usePipelineSync({
   const attachRef = useRef(attachLeads);
   attachRef.current = attachLeads;
 
-  const [master, setMaster] = useState(() => cached?.board ?? emptyBoard());
+  // The board is stored together with the cache key (scope + period) it was loaded for, so a board for
+  // one period can never be shown — or cached — under another (e.g. Today's calls under "Week").
+  const [masterState, setMasterState] = useState(() => ({ key: cacheKey, board: cached?.board ?? emptyBoard() }));
+  const monthKey = scope === "employee" ? `${sk}|period=month` : null;
+  const master = masterState.key === cacheKey
+    ? masterState.board
+    // Period just changed and its board isn't loaded yet: use the cached board for it, else the cached
+    // Month board (a superset, sliced to the period below), else nothing — never the previous period.
+    : (masterCache.get(cacheKey)?.board ?? (monthKey && masterCache.get(monthKey)?.board) ?? emptyBoard());
   const [loading, setLoading] = useState(!cached);
   const [syncing, setSyncing] = useState(false);
   const reqIdRef = useRef(0);
@@ -192,12 +200,12 @@ export function usePipelineSync({
       const unchanged = silent && boardSignature(prevBoard) === boardSignature(normalized);
       if (!unchanged) {
         masterCache.set(cacheKey, { board: normalized, ts: Date.now() });
-        setMaster(normalized);
+        setMasterState({ key: cacheKey, board: normalized });
       }
       if (sync) lastFullSyncAt.set(sk, Date.now());
     } catch {
       if (reqId !== reqIdRef.current) return;
-      if (!hit) setMaster(emptyBoard());
+      if (!hit) setMasterState({ key: cacheKey, board: emptyBoard() });
     } finally {
       if (reqId === reqIdRef.current) {
         setLoading(false);
@@ -213,7 +221,7 @@ export function usePipelineSync({
 
     const hit = masterCache.get(cacheKey);
     if (hit) {
-      setMaster(hit.board);
+      setMasterState({ key: cacheKey, board: hit.board });
       setLoading(false);
     }
 
@@ -248,14 +256,16 @@ export function usePipelineSync({
   );
 
   const remapCallsForLeads = useCallback((leads) => {
-    setMaster((prev) => {
+    setMasterState((prev) => {
+      // Ignore if the loaded board belongs to a different period than the one now selected.
+      if (prev.key !== cacheKey) return prev;
       const remapped = {
-        ...prev,
-        calls: mapCallsFromApiLite(prev.callsRaw || [], leads),
+        ...prev.board,
+        calls: mapCallsFromApiLite(prev.board.callsRaw || [], leads),
       };
       remapped.stats = statsFromCalls(remapped.calls);
       masterCache.set(cacheKey, { board: remapped, ts: Date.now() });
-      return remapped;
+      return { key: cacheKey, board: remapped };
     });
   }, [cacheKey]);
 
