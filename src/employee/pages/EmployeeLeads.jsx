@@ -24,7 +24,7 @@ import { filterLeadsByActivityPeriod, encodeCustomPeriod, parseCustomPeriod, loc
 import useIsMobile from "../../lib/useIsMobile.js";
 import EmployeeLeadDrawer from "../components/EmployeeLeadDrawer.jsx";
 import {
-  LeadStatusBadge, EmpModal, BtnPrimary, BtnSecondary, FormGroup, FormLabel, FormInput, FormSelect, AvatarCircle,
+  EmpModal, BtnPrimary, BtnSecondary, FormGroup, FormLabel, FormInput, FormSelect, AvatarCircle,
 } from "../components/EmpUI.jsx";
 import { TimeOfDaySelects } from "../components/TimeOfDaySelects.jsx";
 import { apiGet } from "../../lib/api.js";
@@ -173,18 +173,6 @@ function PipelineBookMeetingModal({
   );
 }
 
-// Top-right card badge = the lead's real temperature from the API (hot/warm/cold, or
-// DB labels like "Hot Lead"). Anything else → no badge (never a "NEW" fallback).
-const CARD_TEMPERATURE_LABELS = { hot: "Hot", warm: "Warm", cold: "Cold" };
-function cardTemperatureKey(temperature) {
-  const t = String(temperature ?? "").trim().toLowerCase();
-  if (!t) return null;
-  if (t === "hot" || t.startsWith("hot ")) return "hot";
-  if (t === "warm" || t.startsWith("warm ")) return "warm";
-  if (t === "cold" || t.startsWith("cold ")) return "cold";
-  return null;
-}
-
 const LeadCard = memo(function LeadCard({
   lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage,
   dialCount = 0,
@@ -262,12 +250,6 @@ const LeadCard = memo(function LeadCard({
                 <Phone className="w-3 h-3 fill-rose-600 text-rose-600" />
               </button>
             ) : null}
-            {cardTemperatureKey(lead.temperature) && (
-              <LeadStatusBadge
-                status={cardTemperatureKey(lead.temperature)}
-                label={CARD_TEMPERATURE_LABELS[cardTemperatureKey(lead.temperature)]}
-              />
-            )}
           </div>
         </div>
 

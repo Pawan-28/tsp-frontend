@@ -8,7 +8,6 @@ import PipelineLeadDrawer from "../components/pipeline/PipelineLeadDrawer.jsx";
 import { formatTelUrl } from "../lib/phoneUtils.js";
 import {
   PIPELINE_STAGES,
-  PRIORITY_BADGE,
   formatPipelineValue,
   getPipelineSummary,
   getStageMeta,
@@ -45,7 +44,6 @@ function isDraggablePipelineLead(lead) {
 }
 
 const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, onMoveStage, currentStage }) {
-  const priorityTone = PRIORITY_BADGE[lead.priority] || "muted";
   const canDrag = isDraggablePipelineLead(lead);
 
   const rawPhone = lead.phone || lead.phone_number || "";
@@ -109,7 +107,6 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
                 <Phone className="w-3 h-3 fill-rose-600 text-rose-600" />
               </button>
             ) : null}
-            <Badge tone={priorityTone}>{lead.priority}</Badge>
           </div>
         </div>
 

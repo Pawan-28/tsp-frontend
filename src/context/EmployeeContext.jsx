@@ -70,6 +70,7 @@ import { invalidatePipelineBoardCache } from "../lib/usePipelineSync.js";
 const EmployeeContext = createContext(null);
 
 const EMPLOYEE_CACHE_TTL = 60_000;
+const MEETINGS_POLL_MS = 30_000;
 const CALLYZER_SYNC_INTERVAL_MS = CALLYZER_POLL_INTERVAL_MS;
 const EMPLOYEE_LIST_CACHE_TTL = 5 * 60 * 1000;
 const WORKSPACE_SNAPSHOT_PREFIX = "emp_workspace_v2:";
@@ -1681,6 +1682,19 @@ export function EmployeeProvider({ children }) {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [usingApi, employee?.id, loading]);
+
+  // Customer-booked meetings (form / n8n webhook) are created server-side while this page is open and
+  // realtime pushes are off, so poll the meetings list — bypassing the 60s response cache — to show them.
+  useEffect(() => {
+    const employeeId = getAuthenticatedEmployeeId();
+    if (!usingApi || !employeeId || linkError) return undefined;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      invalidateCache(`/api/v1/employee/${employeeId}/meetings`);
+      refreshMeetings(employeeId, leadsRef.current);
+    }, MEETINGS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [usingApi, employee?.id, linkError, refreshMeetings]);
 
   // Live sync — a stage change made elsewhere (admin web, another device) refetches this employee's leads.
   useEffect(() => {

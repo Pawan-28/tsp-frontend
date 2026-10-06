@@ -51,10 +51,11 @@ const CALL_PERIODS = [
   { id: "month", label: "This Month" },
 ];
 
-// Lead pipeline board tabs: Today | Yesterday | Month | Custom
+// Lead pipeline board tabs: Today | Yesterday | Week | Month | Custom
 const PIPELINE_TABS = [
   { id: "today", label: "Today", shortLabel: "Today" },
   { id: "yesterday", label: "Yesterday", shortLabel: "Yest." },
+  { id: "week", label: "Week", shortLabel: "Week" },
   { id: "month", label: "Month", shortLabel: "Month" },
   { id: "custom", label: "Custom", shortLabel: "Custom" },
 ];
@@ -81,7 +82,7 @@ function PipelineDateFilter({ currentPeriod, fromDate, toDate, onSelect, onApply
   const hasCustom = currentPeriod === "custom" && fromDate && toDate;
 
   return (
-    <div className={compact ? "grid grid-cols-4 gap-1 w-full min-w-0" : "flex items-center gap-0.5 sm:gap-1 flex-shrink-0 min-w-0"}>
+    <div className={compact ? "grid grid-cols-5 gap-1 w-full min-w-0" : "flex items-center gap-0.5 sm:gap-1 flex-shrink-0 min-w-0"}>
       {PIPELINE_TABS.map((t) => (
         <button
           key={t.id}
