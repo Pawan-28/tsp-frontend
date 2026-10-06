@@ -10,7 +10,7 @@ import {
 import { mapStageToId, PIPELINE_STAGE_DEFINITIONS } from "./pipelineStages.js";
 import { isDateKeyInPeriod, isMeetingDateKeyInPeriod, localDateKey, parseCustomPeriod, resolveCallDateKey } from "./periodFilter.js";
 import { parseAppDateTime } from "./timezone.js";
-import { formatCallDisplayDate } from "./callDisplay.js";
+import { formatCallDisplayDate, buildLeadCallTimestampIndex, resolveLeadLastCallTimestamp } from "./callDisplay.js";
 
 /** Stages set manually by rep — not auto-routed from Callyzer calls. */
 export const ADVANCED_KANBAN_STAGES = new Set([
@@ -541,6 +541,47 @@ export function getLeadTimestampMs(lead) {
   return numId || 0;
 }
 
+/**
+ * MEETING BOOKED column order — by the lead's meeting time, not by when anyone last called:
+ *   1. upcoming meetings, soonest first (a meeting in 2 h sits above one in 3 h),
+ *   2. meetings already held / past, most recent first,
+ *   3. leads in this stage with no meeting on record, newest activity first.
+ * Each card is tagged with `_meetingAt` so it shows the meeting time (see buildLeadActivityLabelMap).
+ */
+export function orderMeetingBookedColumn(columnLeads = [], meetings = [], fallbackMs = getLeadTimestampMs, now = Date.now()) {
+  const byLead = new Map();
+  for (const m of Array.isArray(meetings) ? meetings : []) {
+    if (!m || m.status === "cancelled" || m.leadId == null) continue;
+    const raw = m.scheduledAt || m.date;
+    const ms = raw ? (parseAppDateTime(raw) || new Date(String(raw).replace(" ", "T"))).getTime() : NaN;
+    if (Number.isNaN(ms)) continue;
+    const id = String(m.leadId);
+    const cur = byLead.get(id);
+    const upcoming = ms >= now;
+    // Keep the soonest upcoming meeting; otherwise the most recent past one.
+    if (!cur
+      || (upcoming && (!cur.upcoming || ms < cur.ms))
+      || (!upcoming && !cur.upcoming && ms > cur.ms)) {
+      byLead.set(id, { ms, upcoming, raw });
+    }
+  }
+
+  const tagged = columnLeads.map((lead) => {
+    const hit = byLead.get(String(lead.id)) || byLead.get(String(lead._linkedLeadId ?? ""));
+    return { lead: hit ? { ...lead, _meetingAt: new Date(hit.ms).toISOString() } : lead, hit };
+  });
+  const group = (t) => (t.hit ? (t.hit.upcoming ? 0 : 1) : 2);
+  tagged.sort((a, b) => {
+    const ga = group(a);
+    const gb = group(b);
+    if (ga !== gb) return ga - gb;
+    if (ga === 0) return a.hit.ms - b.hit.ms;          // soonest first
+    if (ga === 1) return b.hit.ms - a.hit.ms;          // most recent first
+    return fallbackMs(b.lead) - fallbackMs(a.lead);    // no meeting: newest activity first
+  });
+  return tagged.map((t) => t.lead);
+}
+
 function callTimestampMs(call) {
   const raw = call?.callAt || call?.startedAt || call?.createdAt || call?.date;
   if (!raw) return NaN;
@@ -729,10 +770,21 @@ export function groupKanbanSyncedWithCallyzer(
     pushLead("lead", withLatestCallTimestamp(lead, getLeadCalls(lead)));
   }
 
-  // Sort every pipeline column so newest/latest leads appear at the top
+  // Every column is newest-first by the SAME time the card displays (last call / activity), so the
+  // visible times always read top-to-bottom as latest -> oldest. Meeting Booked is the exception:
+  // soonest upcoming meeting first (see orderMeetingBookedColumn).
+  const tsIndex = buildLeadCallTimestampIndex(periodCalls);
+  const displayedMs = (lead) => {
+    const ts = resolveLeadLastCallTimestamp(lead, periodCalls, tsIndex);
+    const ms = ts ? Date.parse(ts) : NaN;
+    return Number.isNaN(ms) ? getLeadTimestampMs(lead) : ms;
+  };
   for (const colKey of Object.keys(map)) {
-    if (Array.isArray(map[colKey])) {
-      map[colKey].sort((a, b) => getLeadTimestampMs(b) - getLeadTimestampMs(a));
+    if (!Array.isArray(map[colKey])) continue;
+    if (colKey === "meeting_booked") {
+      map[colKey] = orderMeetingBookedColumn(map[colKey], meetings, displayedMs);
+    } else {
+      map[colKey].sort((a, b) => displayedMs(b) - displayedMs(a));
     }
   }
 

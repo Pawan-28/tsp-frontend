@@ -1810,7 +1810,7 @@ function ActivityHistoryDrawerContent({ items }) {
         ...item,
         category: cat,
         isAlert: isAlert,
-        time: getRelativeTime(idx),
+        time: formatRealRelativeTime(item.createdAt || item.created_at),
         catTag: getCategoryTag(text)
       };
     });
@@ -1914,10 +1914,11 @@ function ActivityHistoryDrawerContent({ items }) {
 }
 
 // Helper generators
-const formatRealRelativeTime = (dateInput, fallbackIndex = 0) => {
-  if (!dateInput) return getRelativeTime(fallbackIndex);
+// No usable timestamp -> "—" (never a made-up time; getRelativeTime was never defined and crashed the Dashboard).
+const formatRealRelativeTime = (dateInput) => {
+  if (!dateInput) return "—";
   const date = new Date(dateInput);
-  if (isNaN(date.getTime())) return getRelativeTime(fallbackIndex);
+  if (isNaN(date.getTime())) return "—";
 
   const diffMs = Date.now() - date.getTime();
   const diffSecs = Math.floor(diffMs / 1000);
@@ -2018,7 +2019,7 @@ function RecentActivityPanel({ items = [], filterKey }) {
           {activeItems.map((item, i) => {
             const config = getActivityIconConfig(item.text);
             const Icon = config.icon;
-            const timeStr = formatRealRelativeTime(item.createdAt || item.created_at, i);
+            const timeStr = formatRealRelativeTime(item.createdAt || item.created_at);
 
             return (
               <motion.div

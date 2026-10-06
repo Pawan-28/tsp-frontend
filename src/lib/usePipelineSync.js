@@ -23,6 +23,10 @@ const emptyBoard = () => ({
   syncedAt: null,
 });
 
+// Stable instance for the "period changed, nothing loaded yet" fallback — a fresh object per render would
+// retrigger every effect that depends on the board arrays.
+const EMPTY_BOARD = emptyBoard();
+
 function scopeKey(scope, employeeId) {
   return scope === "employee" ? `emp:${employeeId}` : "admin";
 }
@@ -156,7 +160,7 @@ export function usePipelineSync({
     ? masterState.board
     // Period just changed and its board isn't loaded yet: use the cached board for it, else the cached
     // Month board (a superset, sliced to the period below), else nothing — never the previous period.
-    : (masterCache.get(cacheKey)?.board ?? (monthKey && masterCache.get(monthKey)?.board) ?? emptyBoard());
+    : (masterCache.get(cacheKey)?.board ?? (monthKey && masterCache.get(monthKey)?.board) ?? EMPTY_BOARD);
   const [loading, setLoading] = useState(!cached);
   const [syncing, setSyncing] = useState(false);
   const reqIdRef = useRef(0);

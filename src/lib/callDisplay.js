@@ -15,6 +15,11 @@ export function buildLeadActivityLabelMap(grouped = {}, periodCalls = [], callIn
     if (!Array.isArray(list)) continue;
     for (const lead of list) {
       if (!lead?.id || map.has(lead.id)) continue;
+      // Meeting Booked cards show WHEN THE MEETING IS (that is also what the column is ordered by).
+      if (lead._meetingAt) {
+        map.set(lead.id, `\u{1F4C5} ${formatCallDisplayDate(lead._meetingAt)}`);
+        continue;
+      }
       map.set(lead.id, resolveLeadLastActivityLabel(lead, periodCalls, index));
     }
   }

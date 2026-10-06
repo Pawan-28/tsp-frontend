@@ -608,8 +608,8 @@ export default function EmployeeLeads() {
     employeeId: employee?.id ?? null,
     scopeCallsByAssignee: true,
     groupRev,
-    // Unanswered dial today → card moves to the bottom of NOT PICK.
-    notPickAttemptOrdering: true,
+    // NOT PICK is latest-first like every other column (the old "unanswered dial today sinks to the
+    // bottom" re-ordering made the visible times look shuffled). Pass notPickAttemptOrdering: true to restore it.
   });
 
   const activityLabelMap = useMemo(

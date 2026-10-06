@@ -215,14 +215,6 @@ export default function Settings() {
       prev.map(e => (e.team === bulkTeam ? { ...e, [bulkField]: numVal } : e))
     );
 
-    const newLog = {
-      id: Date.now(),
-      action: `Bulk updated ${bulkField} target to ${numVal} for team: ${bulkTeam}`,
-      admin: "Alex Chen",
-      timestamp: new Date().toISOString().slice(0, 16).replace("T", " "),
-      type: "targets"
-    };
-    setAuditLogs(prev => [newLog, ...prev]);
     setDraftCount(prev => prev + 1);
     toast.success(`Successfully bulk updated ${bulkField} targets for all ${bulkTeam} employees.`);
   };
