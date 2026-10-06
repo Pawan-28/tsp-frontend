@@ -8,7 +8,7 @@ import {
   parseCallDurationSeconds,
 } from "./callMetrics.js";
 import { mapStageToId, PIPELINE_STAGE_DEFINITIONS } from "./pipelineStages.js";
-import { isDateKeyInPeriod, localDateKey, parseCustomPeriod, resolveCallDateKey } from "./periodFilter.js";
+import { isDateKeyInPeriod, isMeetingDateKeyInPeriod, localDateKey, parseCustomPeriod, resolveCallDateKey } from "./periodFilter.js";
 import { parseAppDateTime } from "./timezone.js";
 import { formatCallDisplayDate } from "./callDisplay.js";
 
@@ -324,7 +324,7 @@ export function filterMeetingsForPeriod(meetings = [], period = "month", now = n
     const raw = m.scheduledAt || m.date;
     if (!raw) return period === "month";
     const key = localDateKey(new Date(raw));
-    return isDateKeyInPeriod(key, period, now);
+    return isMeetingDateKeyInPeriod(key, period, now);
   });
 }
 

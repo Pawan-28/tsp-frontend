@@ -73,6 +73,27 @@ export function isDateKeyInPeriod(dateKey, period, now = new Date()) {
   return Boolean(monthStartKey && dateKey >= monthStartKey && dateKey <= todayKey);
 }
 
+/**
+ * Meetings are scheduled ahead of time, so "Week" / "Month" cover the WHOLE calendar week
+ * (Mon–Sun) / month — a meeting booked for Friday must show on Tuesday's Week view. Calls and
+ * lead activity (isDateKeyInPeriod) can't be in the future, so they stay capped at today.
+ */
+export function isMeetingDateKeyInPeriod(dateKey, period, now = new Date()) {
+  if (!dateKey) return false;
+  if (parseCustomPeriod(period)) return isDateKeyInPeriod(dateKey, period, now);
+  const p = String(period || "month").toLowerCase();
+  if (p === "week" || p === "this_week") {
+    const start = weekStartMonday(now);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return dateKey >= localDateKey(start) && dateKey <= localDateKey(end);
+  }
+  if (p === "today" || p === "day") return isDateKeyInPeriod(dateKey, period, now);
+  const monthStart = monthStartLocal(now);
+  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+  return dateKey >= localDateKey(monthStart) && dateKey <= localDateKey(monthEnd);
+}
+
 export function resolveCallDateKey(call) {
   if (!call || typeof call !== "object") return null;
   if (call.callDay) return call.callDay;
