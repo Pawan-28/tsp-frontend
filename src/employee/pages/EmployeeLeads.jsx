@@ -23,6 +23,7 @@ import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } f
 import { filterLeadsByActivityPeriod, encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../../lib/periodFilter.js";
 import useIsMobile from "../../lib/useIsMobile.js";
 import EmployeeLeadDrawer from "../components/EmployeeLeadDrawer.jsx";
+import MeetingBookedWhatsAppModal from "../components/MeetingBookedWhatsAppModal.jsx";
 import {
   EmpModal, BtnPrimary, BtnSecondary, FormGroup, FormLabel, FormInput, FormSelect, AvatarCircle,
 } from "../components/EmpUI.jsx";
@@ -357,6 +358,8 @@ export default function EmployeeLeads() {
   });
   const [bookingServiceOptions, setBookingServiceOptions] = useState(["—"]);
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  // Saved meeting + its lead → offers the customer a WhatsApp confirmation right after booking.
+  const [bookedPrompt, setBookedPrompt] = useState({ meeting: null, lead: null });
 
   useEffect(() => {
     setSummaryVisible(readSummaryVisiblePref());
@@ -760,6 +763,7 @@ export default function EmployeeLeads() {
       await refreshLeads();
       toast.success(`Google Meet booked — ${bookingLead.name} moved to Meeting Booked`);
       setBookingModal({ open: false, lead: null });
+      setBookedPrompt({ meeting: saved, lead: bookingLead });
     } finally {
       setBookingSubmitting(false);
     }
@@ -1166,6 +1170,14 @@ export default function EmployeeLeads() {
         submitting={bookingSubmitting}
         onSubmit={handleBookingSubmit}
         onClose={closeBookingModal}
+      />
+
+      <MeetingBookedWhatsAppModal
+        open={Boolean(bookedPrompt.meeting)}
+        meeting={bookedPrompt.meeting}
+        lead={bookedPrompt.lead}
+        employee={employee}
+        onClose={() => setBookedPrompt({ meeting: null, lead: null })}
       />
     </div>
   );

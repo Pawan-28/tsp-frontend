@@ -45,6 +45,34 @@ export function openWhatsAppChat(phone, message = "") {
   return true;
 }
 
+/** Booked meeting → "Wed, 7 Oct 2026" / "2:00 PM" (scheduledAt is the IST wall-clock "YYYY-MM-DDTHH:mm:ss"). */
+function formatMeetingWhen(scheduledAt) {
+  const d = scheduledAt ? new Date(scheduledAt) : null;
+  if (!d || Number.isNaN(d.getTime())) return { date: "", time: "" };
+  return {
+    date: d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
+    time: d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase(),
+  };
+}
+
+/** Default confirmation text sent to the customer right after a meeting is booked (editable before sending). */
+export function buildMeetingConfirmationMessage({ leadName, meeting, employeeName } = {}) {
+  const { date, time } = formatMeetingWhen(meeting?.scheduledAt);
+  const lines = [
+    leadName ? `Hi ${leadName},` : "Hi,",
+    "",
+    "Your meeting is confirmed ✅",
+    meeting?.title ? `📌 *${meeting.title}*` : null,
+    date ? `📅 *Date:* ${date}` : null,
+    time ? `⏰ *Time:* ${time}` : (meeting?.time ? `⏰ *Time:* ${meeting.time}` : null),
+    meeting?.meetLink ? `\n🔗 *Join Google Meet:* ${meeting.meetLink}` : null,
+    "",
+    "Looking forward to speaking with you!",
+    employeeName ? `— ${employeeName}` : null,
+  ];
+  return lines.filter((l) => l !== null).join("\n");
+}
+
 function mapScript(row) {
   if (!row) return null;
   return {

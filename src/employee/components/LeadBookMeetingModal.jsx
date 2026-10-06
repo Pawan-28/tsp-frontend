@@ -6,6 +6,7 @@ import { TimeOfDaySelects } from "./TimeOfDaySelects.jsx";
 import { getEmpAppToday } from "../../data/employeeMock.js";
 import { buildClarityCallTitle, resolveCustomerName, resolveLeadServiceName } from "../../lib/meetingTitle.js";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
+import MeetingBookedWhatsAppModal from "./MeetingBookedWhatsAppModal.jsx";
 
 const READONLY_FIELD =
   "min-h-10 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700 font-semibold flex items-center";
@@ -21,15 +22,30 @@ export default function LeadBookMeetingModal({ open, lead, serviceName, employee
   const [date, setDate] = useState(getEmpAppToday());
   const [time, setTime] = useState("14:00");
   const [submitting, setSubmitting] = useState(false);
+  // Saved meeting → after booking, offer to send the customer a WhatsApp confirmation.
+  const [booked, setBooked] = useState(null);
 
   useEffect(() => {
     if (open) {
       setDate(getEmpAppToday());
       setTime("14:00");
+      setBooked(null);
     }
   }, [open, lead?.id]);
 
   if (!lead) return null;
+
+  if (booked) {
+    return (
+      <MeetingBookedWhatsAppModal
+        open={open}
+        meeting={booked}
+        lead={lead}
+        employee={employee}
+        onClose={() => { setBooked(null); onClose?.(); }}
+      />
+    );
+  }
 
   const service = serviceName || resolveLeadServiceName(lead);
   const customerName = resolveCustomerName(lead);
@@ -62,7 +78,7 @@ export default function LeadBookMeetingModal({ open, lead, serviceName, employee
       if (!saved) return;
       toast.success(`Meeting booked — ${saved.title || title}`);
       await onBooked?.(saved);
-      onClose?.();
+      setBooked(saved);
     } finally {
       setSubmitting(false);
     }
