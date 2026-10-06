@@ -5,7 +5,7 @@ import {
   CheckCircle, Circle, ShieldCheck, Play, Pause, Volume2, ArrowLeft, Calendar, RotateCcw,
   Megaphone, Target, Video, CalendarClock,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LEAD_STATUS_LABELS,
@@ -27,7 +27,7 @@ import { isOutboundCall } from "../../lib/callMetrics.js";
 import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal.jsx";
 import LeadFollowUpModal from "../../employee/components/LeadFollowUpModal.jsx";
 import WhatsAppScriptPicker from "../../employee/components/WhatsAppScriptPicker.jsx";
-import { cleanServiceName } from "../../lib/meetingTitle.js";
+import { cleanServiceName, matchCatalogService } from "../../lib/meetingTitle.js";
 
 const TEMPERATURE_BTN_ACTIVE = {
   hot: "bg-rose-100 border-rose-200 text-rose-800 shadow-sm",
@@ -35,14 +35,8 @@ const TEMPERATURE_BTN_ACTIVE = {
   cold: "bg-sky-100 border-sky-200 text-sky-800 shadow-sm",
 };
 
-const CANONICAL_SERVICES = [
-  "—",
-  "AI Automation Suite",
-  "CRM Setup & Onboarding",
-  "Lead Gen Engine",
-  "Custom Software Dev",
-  "Strategic Consulting",
-];
+// Real options come from /api/services; until they load, only the empty choice is offered.
+const DEFAULT_SERVICE_OPTIONS = ["—"];
 
 const fieldCardClass = "rounded-xl border border-rose-100 bg-[#fffbfb] p-3 shadow-[0_1px_2px_rgba(244,63,94,0.01)]";
 const labelClass = "text-[9px] font-bold uppercase tracking-wider text-slate-400";
@@ -87,9 +81,12 @@ function normalizeCallForDisplay(call, liveLead) {
 const CUSTOM_FIELD_OPTION = "__custom__";
 
 function DetailField({ label, value, onChange, readOnly = false, type = "text", options, allowCustom = false }) {
-  const [customMode, setCustomMode] = useState(
-    allowCustom && Boolean(value) && value !== "—" && !options?.includes(value),
-  );
+  // Only the user's "+ Add new…" opens free-text mode. A stored value that isn't in `options`
+  // is appended to them so the select shows it instead of silently falling back to "—".
+  const [customMode, setCustomMode] = useState(false);
+  const selectOptions = options && value && value !== "—" && !options.includes(value)
+    ? [...options, value]
+    : options;
 
   return (
     <div className={fieldCardClass}>
@@ -128,7 +125,7 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
           }}
           className={inputClass}
         >
-          {options.map((opt) => (
+          {selectOptions.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
           {allowCustom && <option value={CUSTOM_FIELD_OPTION}>+ Add new…</option>}
@@ -245,7 +242,13 @@ export default function LeadDetailPanel({
   const [noteSaving, setNoteSaving] = useState(false);
   const [fetchedCalls, setFetchedCalls] = useState([]);
   const [callsLoading, setCallsLoading] = useState(false);
-  const [serviceOptions, setServiceOptions] = useState(CANONICAL_SERVICES);
+  const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
+  // Catalog entries ({ name, serviceId, priceNum }) — used to resolve the lead's stored service
+  // and to default the budget to the service price.
+  const [serviceCatalog, setServiceCatalog] = useState([]);
+  // Once the user picks a service themselves, never overwrite it with the lead's stored value.
+  const serviceTouchedRef = useRef(false);
+  useEffect(() => { serviceTouchedRef.current = false; }, [liveLead?.id]);
   const [bookMeetingOpen, setBookMeetingOpen] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   // Stage → Advance Paid / Payment Complete opens "Cash Collected" with the matching payment type.
@@ -291,11 +294,16 @@ export default function LeadDetailPanel({
     (async () => {
       try {
         const data = await apiGet("/api/services", { headers: crmHeaders, cacheTtl: 30_000 });
-        const names = (data?.services || data?.data || [])
-          .map((s) => s.name || s.title)
-          .filter(Boolean);
-        if (!cancelled && names.length) {
-          setServiceOptions(["—", ...names]);
+        const catalog = (data?.services || data?.data || [])
+          .map((s) => ({
+            name: s.name || s.title,
+            serviceId: s.serviceId || s.serviceCode || s.service_code || "",
+            priceNum: Number(s.priceNum ?? s.price_num) || 0,
+          }))
+          .filter((s) => s.name);
+        if (!cancelled && catalog.length) {
+          setServiceCatalog(catalog);
+          setServiceOptions(["—", ...catalog.map((s) => s.name)]);
         }
       } catch {
         // keep defaults
@@ -303,6 +311,38 @@ export default function LeadDetailPanel({
     })();
     return () => { cancelled = true; };
   }, [crmHeaders]);
+
+  // The webhook stores the service inside `requirements` ("[Service: X] SOP: …") or only as a service
+  // code (SRV-010), and the draft is built once per lead — so resolve it against the catalog here.
+  // This is what makes the Service dropdown show the lead's real service instead of "—".
+  useEffect(() => {
+    if (serviceTouchedRef.current || !liveLead) return;
+    const meta = liveLead.sourceMeta && typeof liveLead.sourceMeta === "object" ? liveLead.sourceMeta : {};
+    const named = [liveLead.service, meta.service, meta.services]
+      .map((v) => (Array.isArray(v) ? v.join(", ") : v));
+    const hit = matchCatalogService(
+      [liveLead.serviceId, meta.serviceId, ...named, liveLead.requirements],
+      serviceCatalog,
+    );
+    const resolved = hit?.name
+      || named.map(cleanServiceName).find((s) => s && !/^SRV-/i.test(s) && s.length <= 60)
+      || "";
+    if (!resolved) return;
+    setDraft((prev) => (prev.service === resolved ? prev : { ...prev, service: resolved }));
+  }, [liveLead?.id, liveLead?.service, liveLead?.requirements, liveLead?.serviceId, serviceCatalog]);
+
+  const handleServiceChange = (val) => {
+    serviceTouchedRef.current = true;
+    setDraft((prev) => {
+      const next = { ...prev, service: val };
+      const priced = matchCatalogService(val, serviceCatalog);
+      // Default the budget to the service price, but never overwrite one the rep already set.
+      if (priced?.priceNum > 0 && !(Number(prev.expectedRevenue) > 0)) {
+        next.expectedRevenue = String(priced.priceNum);
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     // Always fetch calls from the API for the specific lead so Callyzer
@@ -1053,7 +1093,7 @@ export default function LeadDetailPanel({
         <DetailField
           label="Service"
           value={draft.service || "—"}
-          onChange={patchDraft("service")}
+          onChange={handleServiceChange}
           options={serviceOptions}
           allowCustom
           readOnly={readOnly}

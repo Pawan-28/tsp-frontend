@@ -15,10 +15,46 @@ export function cleanServiceName(value) {
   const bracketed = text.match(/^\[Service:\s*([^\]]+)\]/i);
   if (bracketed) text = bracketed[1].trim();
   else {
-    const prefixed = text.match(/^Service:\s*(.+)$/im);
+    // Stop at " | " so "Service: X | SOP: Y" yields just "X".
+    const prefixed = text.match(/^Service:\s*([^|\r\n]+)/im);
     if (prefixed) text = prefixed[1].trim();
   }
   return EMPTY_SERVICE_VALUES.has(text.toLowerCase()) ? "" : text;
+}
+
+/**
+ * Match whatever the webhook/lead stored (raw requirements, "[Service: X] …", a service code like
+ * SRV-010, or a name in a different case) to a service in the catalog.
+ * `catalog` = [{ name, serviceId }]. Returns the catalog entry, or null.
+ */
+export function matchCatalogService(candidates, catalog) {
+  const list = Array.isArray(catalog) ? catalog.filter((s) => s?.name) : [];
+  if (!list.length) return null;
+  const values = (Array.isArray(candidates) ? candidates : [candidates])
+    .map((c) => String(c ?? "").trim())
+    .filter(Boolean);
+
+  for (const raw of values) {
+    const lower = raw.toLowerCase();
+    // 1) service code / id (SRV-010)
+    const byId = list.find((s) => s.serviceId && String(s.serviceId).toLowerCase() === lower);
+    if (byId) return byId;
+    // 2) exact name after cleaning
+    const cleaned = cleanServiceName(raw).toLowerCase();
+    if (cleaned) {
+      const byName = list.find((s) => s.name.toLowerCase() === cleaned);
+      if (byName) return byName;
+    }
+  }
+  // 3) catalog name appears inside the raw text (longest name first so
+  //    "Book Launch With Celebrities" wins over "Book Launch")
+  const byLength = [...list].sort((a, b) => b.name.length - a.name.length);
+  for (const raw of values) {
+    const lower = raw.toLowerCase();
+    const hit = byLength.find((s) => lower.includes(s.name.toLowerCase()));
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /** Service for an employee-panel lead object (same field order the UI already uses). */

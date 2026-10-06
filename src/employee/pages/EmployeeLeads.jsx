@@ -204,7 +204,7 @@ const LeadCard = memo(function LeadCard({
   const hasValidName = rawName && !/^unknown$/i.test(rawName) && rawName !== "Lead";
   const displayName = hasValidName ? rawName : formattedPhone;
 
-  const displayService = lead.service || lead.requirements || lead.serviceName || lead.service_name || "—";
+  const displayService = resolveLeadServiceName(lead) || "—";
 
   return (
     <div
@@ -551,10 +551,7 @@ export default function EmployeeLeads() {
   }, [cashCollections, period]);
 
   function formatCashCard(val) {
-    if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`;
-    if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
-    if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
-    return `₹${val.toLocaleString("en-IN")}`;
+    return formatEmpPipelineValue(val);
   }
 
 
@@ -597,7 +594,9 @@ export default function EmployeeLeads() {
       });
     }
     if (selectedService && selectedService !== "All Services") {
-      list = list.filter((l) => l.service === selectedService || l.requirements === selectedService);
+      const wanted = selectedService.toLowerCase();
+      list = list.filter((l) => resolveLeadServiceName(l).toLowerCase() === wanted
+        || String(l.requirements || "").toLowerCase().includes(wanted));
     }
     return list;
   }, [statusFiltered, search, selectedService]);

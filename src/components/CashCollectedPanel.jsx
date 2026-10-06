@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { Banknote, Calendar, CreditCard, FileText, Loader2, Paperclip, Plus, Receipt, Upload } from "lucide-react";
 import { apiGet, apiPostForm, invalidateCache } from "../lib/api.js";
+import { formatINR } from "../lib/indianFormat.js";
 
 const PAYMENT_MODES = [
   { value: "UPI", label: "UPI" },
@@ -27,12 +28,6 @@ export function paymentTypeForStage(stage) {
   return "";
 }
 
-function formatINR(amount) {
-  const n = Number(amount) || 0;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
-}
 
 function formatDateTime(value) {
   if (!value) return "—";

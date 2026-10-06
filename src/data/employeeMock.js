@@ -17,6 +17,7 @@ import {
   isStaleUncontactedAdminLead,
 } from "../lib/leadKanban.js";
 import { isDateKeyInPeriod, localDateKey as periodLocalDateKey } from "../lib/periodFilter.js";
+import { formatINR } from "../lib/indianFormat.js";
 
 export {
   resolveLeadKanbanColumn,
@@ -718,10 +719,7 @@ export function parseEmpBudget(budget) {
 }
 
 export function formatEmpPipelineValue(n) {
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(0)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(0)}K`;
-  return `₹${n}`;
+  return formatINR(n);
 }
 
 export function getEmpPipelineSummary(leads) {

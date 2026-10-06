@@ -29,6 +29,7 @@ import { filterLeadsByActivityPeriod } from "../lib/periodFilter.js";
 import { buildLeadActivityLabelMap } from "../lib/callDisplay.js";
 import { onLeadChanged, onDashboardRefresh, markLocalLeadChange } from "../lib/realtime.js";
 import { CANONICAL_SERVICES } from "../lib/servicesRegistry.js";
+import { resolveLeadServiceName } from "../lib/meetingTitle.js";
 
 function startLeadCardDrag(e, leadId, onDragStart) {
   e.dataTransfer.setData("text/plain", String(leadId));
@@ -55,7 +56,7 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
   const hasValidName = rawName && !/^unknown$/i.test(rawName) && rawName !== "Lead";
   const displayName = hasValidName ? rawName : formattedPhone;
 
-  const displayService = lead.service || lead.requirements || lead.serviceName || lead.service_name || "—";
+  const displayService = resolveLeadServiceName(lead) || "—";
 
   return (
     <div
@@ -304,7 +305,9 @@ export default function Pipeline() {
     }
 
     if (selectedService && selectedService !== "All Services") {
-      list = list.filter((l) => l.service === selectedService || l.requirements === selectedService);
+      const wanted = selectedService.toLowerCase();
+      list = list.filter((l) => resolveLeadServiceName(l).toLowerCase() === wanted
+        || String(l.requirements || "").toLowerCase().includes(wanted));
     }
     if (selectedEmployee && selectedEmployee !== "All Employees") {
       const empLower = selectedEmployee.toLowerCase();

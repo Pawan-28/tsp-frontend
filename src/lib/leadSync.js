@@ -13,6 +13,7 @@ import { resolveLeadForCall } from "./leadKanban.js";
 import { phonesMatchLoose } from "./callMetrics.js";
 import { apiGet } from "./api.js";
 import { extractTracking, withUtmSourceFallback } from "./leadMeta.js";
+import { cleanServiceName } from "./meetingTitle.js";
 
 /** Canonical pipeline_stage values written to DB (employee kanban labels). */
 export const CANONICAL_STAGE_LABELS = EMP_KANBAN_STAGES.map((s) => s.label);
@@ -606,7 +607,8 @@ export function buildDetailDraft(lead) {
     stage: lead.stage || lead.pipelineStage || "Lead",
     source: lead.source || meta.source || meta.utm_source || "",
     city: lead.city || "",
-    service: lead.service || meta.services || meta.service || "",
+    // Strip the "[Service: X] …" / "Service: X" wrapper the webhook stores in requirements.
+    service: cleanServiceName(String(lead.service || meta.services || meta.service || "")),
     serviceId: lead.serviceId || meta.serviceId || "",
     sop: lead.sop || meta.sop || meta.sopName || "",
     sopId: tracking.sopId,

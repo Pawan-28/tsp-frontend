@@ -3,6 +3,7 @@ import {
   groupEmpLeadsKanban,
 } from "../lib/leadKanban.js";
 import { normalizeLeadForDetailPanel } from "../lib/leadSync.js";
+import { formatINR } from "../lib/indianFormat.js";
 
 export const PIPELINE_STAGES = PIPELINE_STAGE_DEFINITIONS;
 
@@ -15,11 +16,7 @@ export const PRIORITY_BADGE = {
 export const PRIORITY_OPTIONS = ["HOT", "WARM", "COLD"];
 
 export function formatPipelineValue(amount) {
-  const n = Number(amount) || 0;
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(0)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(0)}K`;
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+  return formatINR(amount);
 }
 
 export function timeAgoShort(iso) {

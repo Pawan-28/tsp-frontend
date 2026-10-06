@@ -695,10 +695,7 @@ const LEADERBOARD_RANKS = [
 // ─── Leader Board ─────────────────────────────────────────────────────────────
 function fmtLeaderRevenue(n) {
   const v = Number(n) || 0;
-  if (v >= 10000000) return `₹${(v / 10000000).toFixed(1)}Cr`;
-  if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`;
-  if (v >= 1000) return `₹${(v / 1000).toFixed(0)}K`;
-  return v > 0 ? `₹${Math.round(v)}` : "₹0";
+  return v > 0 ? formatINR(v) : "₹0";
 }
 
 function MultiSegmentCircle({ totalCalls, pickup, meetings, proposals, advancePay }) {

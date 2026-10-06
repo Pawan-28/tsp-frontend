@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Maximize2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { apiGet, apiPost, apiDelete, invalidateCache } from "../lib/api.js";
+import { formatINR } from "../lib/indianFormat.js";
 import { formatCashINR, formatCashDateTime, resolveSlipUrl } from "../components/CashCollectedPanel.jsx";
 import { useDateRange } from "../context/DateRangeContext.jsx";
 import EmployeeDoodleAvatar from "../employee/components/EmployeeDoodleAvatar.jsx";
@@ -564,12 +565,7 @@ const fmtDate = (d) => {
   }
 };
 const fmt$ = (v) => `$${(v / 1000).toFixed(0)}k`;
-const fmtINR = (v) => {
-  const n = Number(v) || 0;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${Math.round(n)}`;
-};
+const fmtINR = (v) => formatINR(v);
 
 function normalizeEmployee(emp) {
   const leads = Number(emp.leads) || 0;

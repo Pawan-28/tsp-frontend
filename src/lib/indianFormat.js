@@ -1,13 +1,28 @@
 import { toIndianMobile10 } from "./phoneUtils.js";
 /** Indian currency and number formatting helpers. */
 
+/** Rounds to 1 decimal and drops a trailing ".0" (2.0 → "2", 2.5 → "2.5"). */
+function trimUnit(value) {
+  return String(Math.round(value * 10) / 10);
+}
+
+/**
+ * Compact rupee label: 250000 → ₹2.5L, 200000 → ₹2L, 65000 → ₹65K, 25000 → ₹25K.
+ * Never rounds lakhs to a whole number (250000 must not become ₹3L).
+ */
 export function formatINR(amount) {
   const n = Number(amount) || 0;
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
+  if (n >= 10000000) return `₹${trimUnit(n / 10000000)}Cr`;
+  if (n >= 100000) return `₹${trimUnit(n / 100000)}L`;
+  if (n >= 1000) {
+    const k = trimUnit(n / 1000);
+    // 99,950+ rounds up to "100K" — show it as 1L instead.
+    return Number(k) >= 100 ? "₹1L" : `₹${k}K`;
+  }
   return `₹${Math.round(n).toLocaleString("en-IN")}`;
 }
+
+export { formatINR as formatCompactINR };
 
 export function formatIndianNumber(value) {
   const n = Number(value);

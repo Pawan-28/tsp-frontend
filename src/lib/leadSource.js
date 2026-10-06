@@ -1,4 +1,5 @@
 import { normalizeSource } from "./leadAssignment.js";
+import { formatINR } from "./indianFormat.js";
 
 /** Known marketing / intake sources shown first on the dashboard. */
 export const SOURCE_CATALOG = [
@@ -226,11 +227,7 @@ export function getSourcesSummary(sourceGroups = []) {
 }
 
 export function formatSourceRevenue(val) {
-  const n = Number(val) || 0;
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+  return formatINR(val);
 }
 
 export function filterLeadsBySourceKey(leads, sourceKey) {
