@@ -21,7 +21,10 @@ import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../.
 import { formatTelUrl, formatWhatsAppPhone } from "../../lib/phoneUtils.js";
 import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
-import { getMomSections, getMomPlainText, stripGeminiCharges } from "../../lib/momFormat.js";
+import { getMomSections, getMomPlainText, stripGeminiCharges, isWasteMomText } from "../../lib/momFormat.js";
+import ExtraInfoCard from "./ExtraInfoCard.jsx";
+import { buildExtraInfoRows } from "../../lib/extraInfo.js";
+import { useEmployee } from "../../context/EmployeeContext.jsx";
 import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
 import { isOutboundCall, isMissedCall, callStatusMeta } from "../../lib/callMetrics.js";
 import { sourceLabel } from "../../lib/sourceLabels.js";
@@ -260,6 +263,9 @@ export default function LeadDetailPanel({
   const [fetchedCalls, setFetchedCalls] = useState([]);
   const [callsLoading, setCallsLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
+  // Extra Info: customer-level profile (leads.source_meta.extraInfo) + the CRM data that owns meeting / follow-up.
+  const { meetingsUpcoming, meetingsHistory, followUps } = useEmployee();
+  const [fetchedExtraInfo, setFetchedExtraInfo] = useState(null);
   // Catalog entries ({ name, serviceId, priceNum }) — used to resolve the lead's stored service.
   const [serviceCatalog, setServiceCatalog] = useState([]);
   // Once the user picks a service themselves, never overwrite it with the lead's stored value.
@@ -269,6 +275,26 @@ export default function LeadDetailPanel({
   const [followUpOpen, setFollowUpOpen] = useState(false);
   // Stage → Advance Paid / Payment Complete opens "Cash Collected" with the matching payment type.
   const [cashPrompt, setCashPrompt] = useState({ type: "", signal: 0 });
+
+  // Latest stored Extra Info for this customer (the lead in memory can be older than the last processed call).
+  const refreshExtraInfo = async () => {
+    const id = liveLead?._dbId || liveLead?.id;
+    if (!id || !/^\d+$/.test(String(id))) return;
+    try {
+      const res = await apiGet(`/api/v1/leads/${id}`, { headers: crmHeaders, cacheTtl: 0 });
+      const data = res?.data && typeof res.data === "object" ? res.data : res;
+      let meta = data?.sourceMeta ?? data?.source_meta;
+      if (typeof meta === "string") { try { meta = JSON.parse(meta); } catch { meta = null; } }
+      setFetchedExtraInfo(meta && typeof meta === "object" && meta.extraInfo ? meta.extraInfo : null);
+    } catch {
+      /* keep what we have - Extra Info is informational */
+    }
+  };
+
+  useEffect(() => {
+    setFetchedExtraInfo(null);
+    refreshExtraInfo();
+  }, [liveLead?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerateAiMom = async (callToProcess) => {
     if (!callToProcess || isProcessingAi) return;
@@ -290,6 +316,7 @@ export default function LeadDetailPanel({
         checklistProgress: updatedCallData.checklist_progress || updatedCallData.checklistProgress || prev?.checklistProgress,
       }));
       toast.success("AI MoM generated successfully!", { id: toastId });
+      refreshExtraInfo(); // the AI just folded this call into the customer's Extra Info
     } catch (err) {
       toast.error(err.message || "Failed to generate AI MoM.");
     } finally {
@@ -507,6 +534,21 @@ export default function LeadDetailPanel({
       }
       const summaryText = c.aiSummary || c.ai_summary || c.notes || c.note || (c.connected ? `Call completed (${c.duration}). Outcome: ${c.outcome}` : null);
       if (!summaryText) return null;
+      // A MoM exists only for a call that really connected and was analysed. Filler text stored on a call that had no
+      // conversation (the "not connected" template, a silent recording, ...) is hidden here - the stored text is not deleted.
+      if (isWasteMomText(summaryText)) {
+        const label = callStatusMeta(c).label;
+        return {
+          id: `call-log-${c.id}`,
+          authorType: "call-log",
+          authorName: `${label} call`,
+          body: `${label} call \u00b7 ${c.date || "Call log"} \u00b7 No conversation recorded`,
+          createdAt,
+          dateStr: c.date || "Call Log",
+          isAiCallSummary: false,
+          isCallLogEntry: true,
+        };
+      }
 
       const callNum = leadCalls.length - idx;
       return {
@@ -571,6 +613,22 @@ export default function LeadDetailPanel({
     "—"
   );
   const isTemperatureStatus = ["hot", "warm", "cold"].includes(liveLead.status);
+
+  // EXTRA INFO rows: stored AI profile -> older MOMs -> live CRM data. Calls are newest first; only calls that really connected
+  // and carry a real MoM can contribute (not-connected filler never does).
+  const extraInfo = useMemo(() => {
+    const analysed = leadCalls.filter((c) => !isCallNotConnected(c) && !isWasteMomText(c.aiSummary || c.ai_summary || c.notes || c.note));
+    const stored = fetchedExtraInfo || (liveLead.sourceMeta && typeof liveLead.sourceMeta === "object" ? liveLead.sourceMeta.extraInfo : null);
+    const built = buildExtraInfoRows({
+      stored,
+      calls: analysed,
+      lead: liveLead,
+      temperatureId: (tempOverride ?? (isTemperatureStatus ? liveLead.status : "")) || liveLead.temperature || "",
+      meetings: [...(meetingsUpcoming || []), ...(meetingsHistory || [])],
+      followUps: followUps || [],
+    });
+    return { ...built, hasAnalysedCall: analysed.some((c) => getMomSections(c)) || Boolean(stored) };
+  }, [leadCalls, fetchedExtraInfo, liveLead, tempOverride, isTemperatureStatus, meetingsUpcoming, meetingsHistory, followUps]);
 
   const isDirty = useMemo(() => {
     if (readOnly) return false;
@@ -1010,6 +1068,9 @@ export default function LeadDetailPanel({
         </div>
       </div>
 
+      {/* EXTRA INFO - customer-level sales profile, directly below the header card and above the notes / call history. */}
+      <ExtraInfoCard rows={extraInfo.rows} hasAnalysedCall={extraInfo.hasAnalysedCall} />
+
       {/* Notes (written by people) + call log / AI call summaries — shown right below the lead header card. */}
       <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3.5 shadow-sm">
         <div className="flex items-center justify-between border-b border-rose-50 pb-2">
@@ -1284,6 +1345,10 @@ export default function LeadDetailPanel({
                   {isCallNotConnected(c) ? (
                     <p className="text-[9.5px] text-slate-400 font-semibold pt-1.5 border-t border-rose-50">
                       Not connected — no recording or AI summary
+                    </p>
+                  ) : isWasteMomText(c.aiSummary || c.ai_summary || c.notes || c.note) ? (
+                    <p className="text-[9.5px] text-slate-400 font-semibold pt-1.5 border-t border-rose-50">
+                      No conversation recorded — no MoM
                     </p>
                   ) : (
                     <button

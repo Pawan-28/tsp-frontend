@@ -19,6 +19,7 @@ import { LOCAL_SOPS, LEAD_STATUS_LABELS, EMP_KANBAN_STAGES, getEmpStageMeta, map
 import { temperatureToApi, workflowStatusFromTemperature, apiLeadToEmployee, unwrapApiList } from "../../lib/leadSync.js";
 import { formatCallDisplayDate, formatCallDurationLabel } from "../../lib/callDisplay.js";
 import { callStatusMeta, isOutboundCall, normalizeCallOutcome } from "../../lib/callMetrics.js";
+import { isWasteMomText } from "../../lib/momFormat.js";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
 
 import SaveContactModal from "../../components/SaveContactModal.jsx";
@@ -336,7 +337,8 @@ export default function EmployeeCallDetail() {
         const { apiPost } = await import("../../lib/api.js");
         const { getCrmHeaders } = await import("../../lib/crmContext.js");
         const res = await apiPost(`/api/v1/ai/process-call/${call.id}`, {}, { headers: getCrmHeaders() });
-        if (res?.success && res?.call?.ai_summary) {
+        // a skipped call (never connected / nothing to summarise) comes back with its OLD stored text - never reuse that
+        if (res?.success && res?.call?.ai_summary && !res.call.skipped && !isWasteMomText(res.call.ai_summary)) {
           generatedMoM = res.call.ai_summary;
           newRating = res.call.rating || 5;
         }
@@ -351,53 +353,17 @@ export default function EmployeeCallDetail() {
         call.durationSec === 0 ||
         normalizeCallOutcome(call.outcome) === "failed";
 
-      if (!generatedMoM) {
-        const clientName = lead?.name || call.name || "Client";
-        const companyName = lead?.company || call.company || "Organization";
-        const callDuration = call.duration || "—";
-        const dateStr = call.date || "Today";
-        const callType = call.type === "in" ? "Inbound" : call.type === "miss" ? "Missed" : "Outbound";
-
-        if (isNotConnected) {
-          newRating = 0;
-          generatedMoM = `[CALL STATUS: NOT CONNECTED]
-• Client: ${clientName} (${companyName})
-• Call Ref: #${call.id} | Date: ${dateStr} | Duration: ${callDuration} (${callType})
-• Status: ${call.outcome || "Not connected"}
-
-[CALL LOG SUMMARY]
-• Call attempt was not connected or not picked up by the client.
-• No live audio conversation was recorded for this call log.
-
-[RECOMMENDED ACTION ITEMS]
-1. Re-attempt call or send a follow-up WhatsApp message to ${clientName}.
-2. Schedule a follow-up reminder for the next available slot.`;
-        } else {
-          newRating = 5;
-          generatedMoM = `[AI MINUTES OF MEETING - GEMINI PROCESSED]
-• Client: ${clientName} (${companyName})
-• Call Ref: #${call.id} | Date: ${dateStr} | Duration: ${callDuration} (${callType})
-• Status: ${call.outcome || "Connected"}
-
-[KEY DISCUSSION HIGHLIGHTS]
-• Transcribed and analyzed audio recording using Google Gemini.
-• Reviewed client requirements, integration readiness, and decision parameters.
-• Verified compliance against target SOP script and key qualification questions.
-
-[SOP COMPLIANCE & CHECKLIST AUDIT]
-• Script Adherence: High (85%+)
-• Qualification & BANT: Completed
-• Next Step Commitment: Secured
-
-[ACTION ITEMS & RECOMMENDATIONS]
-1. Send detailed proposal & customized feature breakdown to ${clientName}.
-2. Schedule technical walkthrough / decision-maker follow-up call.`;
-        }
-      }
-
+      // A MoM exists only for a call that really connected and was analysed by the AI. A call that never connected needs none (the old
+      // "not connected" filler was wasted text), and when the AI produced nothing we do NOT make one up - nothing is saved.
       if (isNotConnected) {
-        newRating = 0;
+        toast("This call did not connect - no MoM needed.");
+        return;
       }
+      if (!generatedMoM) {
+        toast.error("The AI could not generate a MoM for this call yet (no recording / transcript). Try again after the recording syncs.");
+        return;
+      }
+
 
       const updatedCall = {
         ...call,
@@ -406,7 +372,7 @@ export default function EmployeeCallDetail() {
         ai_summary: generatedMoM,
         notes: generatedMoM,
         rating: newRating,
-        hasRec: !isNotConnected,
+        hasRec: true,
       };
 
       // Save it to backend DB to make sure it persists forever!
@@ -427,7 +393,7 @@ export default function EmployeeCallDetail() {
       }
 
       setCalls((prev) => prev.map((c) => (String(c.id) === String(call.id) ? updatedCall : c)));
-      toast.success(isNotConnected ? "Logged Not Connected call status." : "AI MoM & SOP Checklist generated with Gemini!");
+      toast.success("AI MoM & SOP Checklist generated with Gemini!");
     } catch (err) {
       toast.error("Failed to process AI MoM: " + (err.message || "Unknown error"));
     } finally {
@@ -1066,7 +1032,7 @@ export default function EmployeeCallDetail() {
               </button>
             </div>
             
-            {(call.note || call.aiSummary || call.ai_summary || call.notes) ? (
+            {(() => { const t = call.note || call.aiSummary || call.ai_summary || call.notes; return t && !isWasteMomText(t); })() ? (
               <div className="flex-1 overflow-y-auto pr-1.5 scrollbar-thin">
                 <div className="text-xs text-slate-700 leading-relaxed font-medium bg-white/70 border border-rose-100/60 p-4 rounded-xl space-y-3 whitespace-pre-line shadow-[0_1px_3px_rgba(244,63,94,0.02)]">
                   {formatAiSummaryText(call.note || call.aiSummary || call.ai_summary || call.notes)}

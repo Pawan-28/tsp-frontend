@@ -92,5 +92,20 @@ export function stripGeminiCharges(text) {
 export function getMomPlainText(call) {
   if (!call) return "";
   const raw = call.ai_summary || call.aiSummary || call.note || call.notes || "";
-  return typeof raw === "string" ? stripGeminiCharges(raw) : "";
+  if (typeof raw !== "string" || isWasteMomText(raw)) return ""; // filler / not-connected text is never shown as a MoM
+  return stripGeminiCharges(raw);
+}
+
+/**
+ * Text stored on a call that is NOT a real MoM: the "not connected" filler, a silent-recording marker, a "transcript unavailable"
+ * marker, or the made-up "Gemini processed" template an older Call Detail page used to save. A MoM exists only for a call that
+ * really connected and was analysed - these are never shown as a MoM (the stored text is left alone, only hidden).
+ */
+export function isWasteMomText(text) {
+  const body = stripGeminiCharges(text).trimStart();
+  if (!body) return false;
+  return /^\[CALL STATUS: NOT CONNECTED\]/i.test(body)
+    || /^\[NO SPEECH DETECTED\]/i.test(body)
+    || /^\[TRANSCRIPT UNAVAILABLE\]/i.test(body)
+    || (/^\[AI MINUTES OF MEETING - GEMINI PROCESSED\]/i.test(body) && /Transcribed and analyzed audio recording using Google Gemini/i.test(body));
 }
