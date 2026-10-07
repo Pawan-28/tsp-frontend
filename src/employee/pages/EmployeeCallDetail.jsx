@@ -19,7 +19,9 @@ import { LOCAL_SOPS, LEAD_STATUS_LABELS, EMP_KANBAN_STAGES, getEmpStageMeta, map
 import { temperatureToApi, workflowStatusFromTemperature, apiLeadToEmployee, unwrapApiList } from "../../lib/leadSync.js";
 import { formatCallDisplayDate, formatCallDurationLabel } from "../../lib/callDisplay.js";
 import { callStatusMeta, isOutboundCall, normalizeCallOutcome } from "../../lib/callMetrics.js";
-import { isWasteMomText } from "../../lib/momFormat.js";
+import { isWasteMomText, stripGeminiCharges } from "../../lib/momFormat.js";
+import MomText from "../../components/leads/MomText.jsx";
+import { GeminiChargesBar } from "../../components/leads/MomSections.jsx";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
 
 import SaveContactModal from "../../components/SaveContactModal.jsx";
@@ -1034,8 +1036,9 @@ export default function EmployeeCallDetail() {
             
             {(() => { const t = call.note || call.aiSummary || call.ai_summary || call.notes; return t && !isWasteMomText(t); })() ? (
               <div className="flex-1 overflow-y-auto pr-1.5 scrollbar-thin">
-                <div className="text-xs text-slate-700 leading-relaxed font-medium bg-white/70 border border-rose-100/60 p-4 rounded-xl space-y-3 whitespace-pre-line shadow-[0_1px_3px_rgba(244,63,94,0.02)]">
-                  {formatAiSummaryText(call.note || call.aiSummary || call.ai_summary || call.notes)}
+                <div className="text-xs text-slate-700 leading-relaxed font-medium bg-white/70 border border-rose-100/60 p-4 rounded-xl space-y-3 shadow-[0_1px_3px_rgba(244,63,94,0.02)]">
+                  <GeminiChargesBar call={{ ai_summary: formatAiSummaryText(call.note || call.aiSummary || call.ai_summary || call.notes) }} />
+                  <MomText text={stripGeminiCharges(formatAiSummaryText(call.note || call.aiSummary || call.ai_summary || call.notes))} />
                 </div>
               </div>
             ) : (

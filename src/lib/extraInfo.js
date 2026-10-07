@@ -18,6 +18,8 @@ export const NOT_DISCUSSED = "Not discussed";
 export const UNKNOWN = "Unknown";
 
 export const EXTRA_INFO_ROWS = [
+  { key: "business", label: "Business / Job" },
+  { key: "interests", label: "Interests / Hobbies" },
   { key: "requirement", label: "Requirement" },
   { key: "intent", label: "Intent" },
   { key: "budget", label: "Budget" },

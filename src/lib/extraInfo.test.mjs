@@ -22,9 +22,9 @@ const T3 = "2026-10-09T10:00:00.000Z";
 const rowsOf = (input) => Object.fromEntries(buildExtraInfoRows(input).rows.map((r) => [r.key, r]));
 const valuesOf = (input) => Object.fromEntries(buildExtraInfoRows(input).rows.map((r) => [r.key, r.value]));
 
-// 0. rows: the 12 fields + Lead Temperature, in the requested order
+// 0. rows: business / interests + the 12 fields + Lead Temperature, in the requested order
 assert.deepEqual(EXTRA_INFO_ROWS.map((r) => r.label), [
-  "Requirement", "Intent", "Budget", "Offer / Price Quoted", "Main Concern", "Purchase Timeline", "Decision Maker", "Objection",
+  "Business / Job", "Interests / Hobbies", "Requirement", "Intent", "Budget", "Offer / Price Quoted", "Main Concern", "Purchase Timeline", "Decision Maker", "Objection",
   "Next Action", "Follow-up", "Meeting", "Conversion", "Lead Temperature",
 ]);
 
@@ -36,6 +36,7 @@ for (const v of ["", " ", "Not discussed", "not discussed on the call", "Not men
 
 // 2. CUSTOMER WITH A CONNECTED AI CALL: the stored AI profile fills the grid; values are the customer's, not hard-coded
 const aiProfile = BE.mergeExtraInfo(null, {
+  business: "Runs a media consultancy", interests: "Travel and cricket",
   requirement: "Podcast", intent: "Interested but delayed", budget: "Not discussed", offerQuoted: "Not discussed",
   mainConcern: "Certification pending", purchaseTimeline: "Tentatively 24-25 October / post-festivals", decisionMaker: "Not discussed",
   objection: "Certification delay", nextAction: "Customer to contact certification authority",
@@ -44,6 +45,7 @@ const aiProfile = BE.mergeExtraInfo(null, {
 const lead = { id: 5, name: "Customer", stage: "Conversation", pipelineStage: "Conversation", status: "warm" };
 const v1 = valuesOf({ stored: aiProfile, calls: [], lead, temperatureId: "warm", meetings: [], followUps: [] });
 assert.deepEqual(v1, {
+  business: "Runs a media consultancy", interests: "Travel and cricket",
   requirement: "Podcast", intent: "Interested but delayed", budget: NOT_DISCUSSED, offerQuoted: NOT_DISCUSSED, mainConcern: "Certification pending",
   purchaseTimeline: "Tentatively 24-25 October / post-festivals", decisionMaker: NOT_DISCUSSED, objection: "Certification delay",
   nextAction: "Customer to contact certification authority", followUp: "Yes — after certification update", meeting: NOT_DISCUSSED,
@@ -179,16 +181,38 @@ const { renderToStaticMarkup } = cardRequire(path.resolve(here, "../../node_modu
 const React = cardRequire(path.resolve(here, "../../node_modules/react/index.js"));
 const filled = buildExtraInfoRows({ stored: aiProfile, lead, temperatureId: "warm" });
 const html = renderToStaticMarkup(React.createElement(Card, { rows: filled.rows, hasAnalysedCall: true }));
-for (const label of EXTRA_INFO_ROWS.map((r) => r.label)) assert.ok(html.includes(label), `renders label ${label}`);
-for (const val of ["Podcast", "Interested but delayed", "Certification pending", "Tentatively 24-25 October / post-festivals", "Customer to contact certification authority", "Not converted", "Warm"]) {
+// known information from connected calls gets a tile (business / job and interests / hobbies included) ...
+const tileKeys = [...html.matchAll(/data-extra-key="([a-zA-Z]+)"/g)].map((m) => m[1]);
+assert.deepEqual(tileKeys.filter((k) => k !== "temperature"), [
+  "business", "interests", "requirement", "intent", "mainConcern", "purchaseTimeline", "objection", "nextAction", "followUp", "conversion",
+]);
+for (const val of ["Runs a media consultancy", "Travel and cricket", "Podcast", "Interested but delayed", "Certification pending",
+  "Tentatively 24-25 October / post-festivals", "Customer to contact certification authority", "Not converted"]) {
   assert.ok(html.includes(val), `renders value ${val}`);
 }
-assert.ok(html.indexOf("Requirement") < html.indexOf("Intent") && html.indexOf("Conversion") < html.indexOf("Lead Temperature"), "order as specified");
-assert.ok(html.includes("data-testid=\"extra-info-card\""));
-assert.ok(!html.includes("No analysed call yet"));
+for (const label of ["Business / Job", "Interests / Hobbies", "Requirement", "Intent", "Main Concern", "Purchase Timeline", "Objection", "Next Action", "Follow-up", "Conversion"]) {
+  assert.ok(html.includes(label), `renders label ${label}`);
+}
+// ... lead temperature is a small chip in the header ...
+assert.ok(html.includes('data-extra-key="temperature"') && html.indexOf('data-extra-key="temperature"') < html.indexOf('data-extra-key="business"'));
+assert.ok(html.includes(">Warm<"));
+// ... and what was NOT discussed gets no tile - it is named once in a muted line (nothing hidden, nothing invented)
+for (const k of ["budget", "offerQuoted", "decisionMaker", "meeting"]) assert.ok(!html.includes(`data-extra-key="${k}"`), `${k} has no tile`);
+const footer = html.slice(html.indexOf("Not discussed:"));
+for (const label of ["Budget", "Offer / Price Quoted", "Decision Maker", "Meeting"]) assert.ok(footer.includes(label), `${label} is listed as not discussed`);
+assert.ok(html.indexOf("Business / Job") < html.indexOf("Interests / Hobbies") && html.indexOf("Interests / Hobbies") < html.indexOf("Requirement"), "profile first");
+assert.ok(html.includes('data-testid="extra-info-card"'));
+assert.ok(!html.includes("No details yet"));
+// a SMALL box: values are clamped to 2 lines, the grid is 2 columns, tiles use small type
+assert.equal((html.match(/line-clamp-2/g) || []).length, 10, "every value is clamped to two lines");
+assert.ok(html.includes("sm:grid-cols-2") && html.includes("text-[11px]") && html.includes("p-2.5"));
+// a customer with nothing from calls yet
 const bare = renderToStaticMarkup(React.createElement(Card, { rows: empty.rows, hasAnalysedCall: false }));
-assert.ok(bare.includes("Not discussed") && bare.includes("Unknown") && bare.includes("No analysed call yet"));
-assert.ok(!/<dd[^>]*>\s*<\/dd>/.test(bare) && !/<span[^>]*><\/span>/.test(bare), "no blank values");
+assert.ok(bare.includes("No details yet") && !bare.includes("data-extra-key=\"business\""));
+assert.ok(!bare.includes("Unknown"), "no noise");
+const nothing = renderToStaticMarkup(React.createElement(Card, { rows: empty.rows, hasAnalysedCall: true }));
+assert.ok(nothing.includes("Nothing about this customer was discussed yet."));
+assert.ok(!/<dd[^>]*>\s*<\/dd>/.test(html + bare), "no blank values");
 fs.rmSync(tmp, { force: true });
 
 // 9. PLACEMENT: header card -> Extra Info -> notes / call history (source order of the lead panel)

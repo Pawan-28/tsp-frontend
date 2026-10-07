@@ -1,17 +1,53 @@
+import { Coins } from "lucide-react";
 import { MOM_SECTION_ORDER, MOM_SECTION_TITLES, getMomSections, getMomPlainText, getGeminiCharges } from "../../lib/momFormat.js";
+import MomText from "./MomText.jsx";
 
-/** Per-call Gemini transcript + MoM charges, shown at the top of the MoM. */
+/**
+ * One line of the charges block -> { label, value, detail }.
+ *   "Transcript: ₹0.40 — 1,200 audio + 30 text tokens in, 500 out"  ->  Transcript / ₹0.40 / "1,200 audio + ..."
+ *   "Model: gemini-2.5-flash"                                               ->  Model / gemini-2.5-flash
+ */
+export function parseChargeLine(line) {
+  const text = String(line || "").trim();
+  const at = text.indexOf(":");
+  if (at < 0) return { label: "", value: text, detail: "" };
+  const label = text.slice(0, at).trim();
+  const rest = text.slice(at + 1).trim();
+  const [value, ...detail] = rest.split(" — ");
+  return { label, value: value.trim(), detail: detail.join(" — ").trim() };
+}
+
+/** Per-call Gemini transcript + MoM charges: a small, compact box shown at the top of the MoM (same look as Extra Info). */
 export function GeminiChargesBar({ call }) {
   const charges = getGeminiCharges(call);
   if (!charges) return null;
+  const parts = charges.lines.map(parseChargeLine).filter((p) => p.label || p.value);
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-2.5 py-1.5 mb-2">
-      <p className="text-[10px] font-extrabold text-amber-900 uppercase tracking-wide">
-        Gemini charges (this call): <span className="tabular-nums normal-case">{charges.total}</span>
-      </p>
-      {charges.lines.map((l) => (
-        <p key={l} className="text-[9.5px] text-amber-800/90 tabular-nums">{l}</p>
-      ))}
+    <div
+      className="mb-2 rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-white to-amber-50/40 px-2.5 py-1.5 shadow-sm"
+      data-testid="gemini-charges"
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-amber-500 text-white shadow-sm">
+          <Coins className="h-3 w-3" />
+        </span>
+        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-amber-900">Gemini charges</span>
+        <span className="ml-auto text-[12px] font-black tabular-nums text-amber-900">{charges.total}</span>
+      </div>
+      {parts.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {parts.map((p) => (
+            <span
+              key={`${p.label}-${p.value}`}
+              title={p.detail || undefined}
+              className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/80 px-2 py-0.5 text-[9.5px] tabular-nums text-amber-900"
+            >
+              {p.label && <span className="font-bold text-amber-700">{p.label}</span>}
+              <span className="font-semibold">{p.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -71,9 +107,7 @@ export default function MomSections({ call, emptyText = "No AI MoM generated yet
     return (
       <div>
         <GeminiChargesBar call={call} />
-        <div className="text-xs text-slate-800 leading-relaxed font-medium whitespace-pre-line">
-          {plainText}
-        </div>
+        <MomText text={plainText} className="text-xs text-slate-800 leading-relaxed font-medium" />
       </div>
     );
   }

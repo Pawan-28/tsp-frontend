@@ -23,6 +23,7 @@ import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
 import { getMomSections, getMomPlainText, stripGeminiCharges, isWasteMomText } from "../../lib/momFormat.js";
 import ExtraInfoCard from "./ExtraInfoCard.jsx";
+import MomText from "./MomText.jsx";
 import { buildExtraInfoRows } from "../../lib/extraInfo.js";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
@@ -1140,11 +1141,13 @@ export default function LeadDetailPanel({
                 {item.isAiCallSummary && typeof item.body === "string" && (
                   <GeminiChargesBar call={{ ai_summary: item.body }} />
                 )}
-                <p className="text-slate-800 leading-relaxed font-medium whitespace-pre-line text-[11px]">
-                  {item.isAiCallSummary && typeof item.body === "string"
-                    ? stripGeminiCharges(item.body)
-                    : formatAiSummaryText(item.body)}
-                </p>
+                {item.isAiCallSummary && typeof item.body === "string" ? (
+                  <MomText text={stripGeminiCharges(item.body)} className="text-slate-800 leading-relaxed font-medium text-[11px]" />
+                ) : (
+                  <p className="text-slate-800 leading-relaxed font-medium whitespace-pre-line text-[11px]">
+                    {formatAiSummaryText(item.body)}
+                  </p>
+                )}
               </div>
               )
             ))}
