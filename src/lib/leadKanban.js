@@ -334,8 +334,15 @@ export function resolveLeadKanbanColumn(lead, calls = [], options = {}) {
   if (lead._fromCall && lead._callCol) return lead._callCol;
 
   const dbStageId = mapStageToId(lead.pipelineStage || lead.stage, lead.status);
-  if (lead.stageOverride || (dbStageId && dbStageId !== "lead")) return dbStageId;
+  if (lead.stageOverride) return dbStageId;
+  if (dbStageId && dbStageId !== "lead") {
+    // call-driven stages can be upgraded by the real call history; everything further along is kept as stored
+    const isCallStage = dbStageId in EARLY_COLUMN_RANK;
+    return (isCallStage && historyAwareColumn(lead, dbStageId, options.callHistory)) || dbStageId;
+  }
 
+  const fromHistory = historyAwareColumn(lead, "lead", options.callHistory);
+  if (fromHistory && fromHistory !== "lead") return fromHistory;
   return (
     resolveEarlyFunnelColumn(lead, calls, {
       outboundOnly: true,
@@ -439,6 +446,45 @@ export function resolveMeetingKanbanColumn(meeting, now = new Date()) {
 function personPhoneKey(lead) {
   const key = phoneLast10(lead?.phone || lead?.clientPhone);
   return key.length >= 10 ? key : "";
+}
+
+// ───────────────────────── Full call history -> early-funnel column ─────────────────────────
+// Backend utils/callHistory.js sends, per PERSON (phone), the buckets of ALL their calls (any employee, any date):
+//   { conversation, short, noPickup, rejected, missedIncoming, incomingShort, outbound, total, lastCallAt }
+// Business rule (priority): Conversation (answered >= 2 min) > Short Call (answered outbound < 2 min)
+//   > Not Pick (outbound, not answered) > Lead (no qualifying call). Rejected / Missed (incoming) / Incoming short
+// never move a lead out of Lead on their own. This is what stops a lead that was dialed (e.g. "Dialed 1x", or by a
+// previous owner, or last month) from sitting in Lead just because its stored stage still says "Lead".
+const EARLY_COLUMN_RANK = { lead: 0, not_pick: 1, short_call: 2, conversation_2min: 3 };
+
+/** Key of a lead's person in the call-history map (same as backend personKeySql). */
+export function callHistoryKey(lead) {
+  const k = personPhoneKey(lead);
+  if (k) return k;
+  return lead?.id != null ? `id:${lead._linkedLeadId ?? lead.id}` : "";
+}
+
+/** Pure: which early-funnel column does this history say? */
+export function columnFromCallHistory(h) {
+  if (!h) return "lead";
+  if (h.conversation > 0) return "conversation_2min";
+  if (h.short > 0) return "short_call";
+  if (h.noPickup > 0) return "not_pick";
+  return "lead";
+}
+
+function furthestEarlyColumn(a, b) {
+  return (EARLY_COLUMN_RANK[b] ?? 0) > (EARLY_COLUMN_RANK[a] ?? 0) ? b : a;
+}
+
+/**
+ * Column for a non-manual lead in the call-driven part of the funnel: the further of its stored stage and what its
+ * call history says. `null` when no call history was supplied (callers then fall back to the period-calls rule).
+ */
+export function historyAwareColumn(lead, storedColumn, callHistory) {
+  if (!callHistory) return null;
+  const fromHistory = columnFromCallHistory(callHistory[callHistoryKey(lead)]);
+  return furthestEarlyColumn(storedColumn || "lead", fromHistory);
 }
 
 /**
@@ -689,6 +735,7 @@ export function groupKanbanSyncedWithCallyzer(
   const {
     period = "month",
     visibleLeads = null,
+    callHistory = null,
   } = options;
   const periodKey = String(period).toLowerCase();
   const map = Object.fromEntries(PIPELINE_STAGE_DEFINITIONS.map((s) => [s.id, []]));
@@ -751,8 +798,13 @@ export function groupKanbanSyncedWithCallyzer(
   for (const lead of scopedVisible) {
     if (!showLead(lead)) continue;
     const dbStageId = mapStageToId(lead.pipelineStage || lead.stage, lead.status);
-    if (lead.stageOverride || (dbStageId && dbStageId !== "lead")) {
-      pushLead(dbStageId, lead);
+    if (lead.stageOverride) {
+      pushLead(dbStageId, lead); // a human placed it: it stays
+    } else if (dbStageId && dbStageId !== "lead") {
+      // Stored Not Pick / Short Call / Conversation can be stale (e.g. stored "Not Pick" but the person was later
+      // answered for 5 min): take the further of stored stage and call history. Later stages are kept as stored.
+      const upgraded = dbStageId in EARLY_COLUMN_RANK ? historyAwareColumn(lead, dbStageId, callHistory) : null;
+      pushLead(upgraded || dbStageId, lead);
     }
   }
 
@@ -780,6 +832,9 @@ export function groupKanbanSyncedWithCallyzer(
     if (leadHasConversation2MinPlus(leadCalls, { outboundOnly: false })) col = "conversation_2min";
     else if (leadHasShortCall(outboundCalls, { outboundOnly: true })) col = "short_call";
     else if (leadHasNotPickCall(outboundCalls, { outboundOnly: true })) col = "not_pick";
+    // the period's calls are only part of the story: the person's full history may place the card further along
+    const fullHistoryCol = historyAwareColumn(lead, col || "lead", callHistory);
+    if (fullHistoryCol && fullHistoryCol !== "lead") col = fullHistoryCol;
     if (col && col !== "lead") pushLead(col, withLatestCallTimestamp(lead, leadCalls));
   }
 
@@ -819,10 +874,19 @@ export function groupKanbanSyncedWithCallyzer(
       });
     const inAssignPeriod = (!["today", "week", "month"].includes(periodKey) && !parseCustomPeriod(periodKey))
       || isLeadAssignedInPeriod(lead, periodKey, undefined, { assignedOnly: true });
-    if (!allowUncontacted || !uncontactedNew || !inAssignPeriod) {
-      if (!(options.adminScope && isNewPipelineLead(lead) && !outboundLeadIds.has(id))) continue;
+    // A card only gets here when nothing above placed it. It is a Lead ONLY if the person's FULL call history has
+    // no qualifying outbound call: a dial by a previous owner, in an earlier month, or on a duplicate row all count.
+    const historyCol = callHistory ? columnFromCallHistory(callHistory[callHistoryKey(lead)]) : "lead";
+    if (historyCol === "lead") {
+      // Lead column eligibility (unchanged): fresh uncontacted assignment, or an admin-scope new lead; plus, when
+      // call history is available, a lead that is visible because of call activity in the period but had no
+      // qualifying call (only rejected / missed / incoming-short) - it stays a Lead instead of vanishing.
+      const visibleByPeriodCall = Boolean(callHistory) && kanbanIndex.callActiveIds.has(id);
+      const freshUncontacted = allowUncontacted && uncontactedNew && inAssignPeriod;
+      const adminNew = Boolean(options.adminScope && isNewPipelineLead(lead) && !outboundLeadIds.has(id));
+      if (!freshUncontacted && !adminNew && !visibleByPeriodCall) continue;
     }
-    pushLead("lead", withLatestCallTimestamp(lead, getLeadCalls(lead)));
+    pushLead(historyCol, withLatestCallTimestamp(lead, getLeadCalls(lead)));
   }
 
   // Every column is newest-first by the SAME time the card displays (last call / activity), so the

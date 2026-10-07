@@ -40,6 +40,7 @@ import { mapStageToId } from "../../lib/pipelineStages.js";
 import { formatActivityDate } from "../../lib/formatActivityDate.js";
 import { formatDialerPhone } from "../../lib/phoneUtils.js";
 import { sourceLabel } from "../../lib/sourceLabels.js";
+import { useCallHistory } from "../../lib/useCallHistory.js";
 import { MEETING_METRIC_INFO } from "../../lib/metricInfo.js";
 import { computeFollowUpCounts, computeTaskCounts } from "../../lib/followUpCounts.js";
 import { StatValueSkeleton } from "../../components/Skeleton.jsx";
@@ -199,11 +200,13 @@ export default function EmployeeDashboard() {
   // Pipeline bars: the same board grouping the Employee Pipeline uses, but ONLY cards active in the selected
   // period. Manually staged leads stay on the board for every period (tagged `_outsidePeriod`); counting them
   // made "Today" show last month's Meeting Booked / Not Interested totals while every call tile read 0.
+  const { callHistory } = useCallHistory({ scope: "employee", employeeId: employee?.id, enabled: Boolean(employee?.id), refreshKey: String(periodCalls?.length || 0) });
   const { pipeline, olderStagedCount } = useMemo(() => {
     const grouped = groupEmpLeadsKanban(leads, periodCalls, {
       period: periodKey,
       meetings: allMeetings,
       visibleLeads: leads,
+      callHistory, // same Lead / Not Pick / Short Call / Conversation rule as the Pipeline
     });
     let older = 0;
     const inPeriod = {};
@@ -230,7 +233,7 @@ export default function EmployeeDashboard() {
         color: s.color,
       })),
     };
-  }, [leads, periodCalls, periodKey, allMeetings, callyzerStats]);
+  }, [leads, periodCalls, periodKey, allMeetings, callyzerStats, callHistory]);
 
   // Lead sources follow the period too: leads created in it (same basis as the Total Leads tile).
   const periodLeads = useMemo(

@@ -21,6 +21,7 @@ import { buildLeadActivityLabelMap } from "../../lib/callDisplay.js";
 import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL, formatCallsAndLeads } from "../../lib/callMetrics.js";
 import { MEETING_METRIC_INFO } from "../../lib/metricInfo.js";
 import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount, KANBAN_SHOW_MORE_STEP } from "../../lib/usePipelineBoard.js";
+import { useCallHistory } from "../../lib/useCallHistory.js";
 import { usePipelineSync, boardPeriodQuery } from "../../lib/usePipelineSync.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import { parseCustomPeriod, localDateKey } from "../../lib/periodFilter.js";
@@ -472,6 +473,14 @@ export default function EmployeeLeads() {
     attachLeads: leads,
   });
 
+  // Full call history per person (all employees, all dates): drives Lead / Not Pick / Short Call / Conversation.
+  const { callHistory, callHistoryVersion } = useCallHistory({
+    scope: "employee",
+    employeeId: employee?.id,
+    enabled: Boolean(employee?.id),
+    refreshKey: String(boardCalls?.length || 0),
+  });
+
   const leadsRef = useRef(leads);
   leadsRef.current = leads;
 
@@ -671,6 +680,8 @@ export default function EmployeeLeads() {
     employeeId: employee?.id ?? null,
     scopeCallsByAssignee: true,
     groupRev,
+    callHistory,
+    callHistoryVersion,
     // NOT PICK is latest-first like every other column (the old "unanswered dial today sinks to the
     // bottom" re-ordering made the visible times look shuffled). Pass notPickAttemptOrdering: true to restore it.
   });
@@ -738,7 +749,7 @@ export default function EmployeeLeads() {
       return;
     }
     const target = getEmpStageMeta(stageId);
-    const currentStageId = resolveLeadKanbanColumn(lead, periodCalls, { scopeByAssignee: true });
+    const currentStageId = resolveLeadKanbanColumn(lead, periodCalls, { scopeByAssignee: true, callHistory });
     if (currentStageId === stageId) {
       if (scroll) scrollToStage(stageId);
       return;
@@ -843,7 +854,7 @@ export default function EmployeeLeads() {
     if (newLead && typeof newLead === "object") {
       const lead = addLead(newLead);
       toast.success(`${lead.name} added to pipeline`);
-      scrollToStage(resolveLeadKanbanColumn(lead, periodCalls, { scopeByAssignee: true }));
+      scrollToStage(resolveLeadKanbanColumn(lead, periodCalls, { scopeByAssignee: true, callHistory }));
     }
     closeModal();
   };

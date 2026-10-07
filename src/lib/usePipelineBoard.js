@@ -71,6 +71,8 @@ export function usePipelineBoard({
   scopeCallsByAssignee = false,
   groupRev = 0,
   notPickAttemptOrdering = false,
+  callHistory = null,
+  callHistoryVersion = 0,
 }) {
   const callScopedOnly = true;
   const periodLabel = period === "today"
@@ -88,8 +90,8 @@ export function usePipelineBoard({
 
   const visibleLen = visibleLeads?.length ?? null;
   const cacheKey = useMemo(
-    () => `${groupedCacheKey(period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev)}:${orderingDayKey}`,
-    [period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev, orderingDayKey],
+    () => `${groupedCacheKey(period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev)}:${orderingDayKey}:h${callHistory ? callHistoryVersion : 0}`,
+    [period, uniqueCalls, leads, meetings.length, visibleLen, adminScope, groupRev, orderingDayKey, callHistory, callHistoryVersion],
   );
 
   const computedBoardState = useMemo(() => {
@@ -107,6 +109,7 @@ export function usePipelineBoard({
       employeeId,
       scopeCallsByAssignee,
       notPickAttemptOrdering,
+      callHistory,
     });
     const baseLeads = filterPipelineLeadsForPeriod(leads, uniqueCalls, period, meetings, null, {
       adminScope,
@@ -147,6 +150,7 @@ export function usePipelineBoard({
     scopeCallsByAssignee,
     callyzerStats,
     notPickAttemptOrdering,
+    callHistory,
   ]);
 
   const [localOverrides, setLocalOverrides] = useState({});

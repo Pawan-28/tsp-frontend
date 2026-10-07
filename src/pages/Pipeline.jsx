@@ -21,6 +21,7 @@ import useIsMobile from "../lib/useIsMobile.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../lib/segmentPills.js";
 import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL } from "../lib/callMetrics.js";
 import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount, KANBAN_SHOW_MORE_STEP } from "../lib/usePipelineBoard.js";
+import { useCallHistory } from "../lib/useCallHistory.js";
 import { usePipelineSync, invalidatePipelineBoardCache, boardPeriodQuery } from "../lib/usePipelineSync.js";
 import { resolveLeadKanbanColumn, getPipelineStagePillCount } from "../lib/leadKanban.js";
 import { encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../lib/periodFilter.js";
@@ -250,6 +251,12 @@ export default function Pipeline() {
     mapLeads: true,
   });
 
+  // Full call history per person (all employees, all dates): drives Lead / Not Pick / Short Call / Conversation.
+  const { callHistory, callHistoryVersion } = useCallHistory({
+    scope: "admin",
+    refreshKey: String(syncedBoardCalls?.length || 0),
+  });
+
   useEffect(() => {
     if (!Array.isArray(syncedLeads)) return;
     setLeads((prev) => (prev === syncedLeads ? prev : syncedLeads));
@@ -448,6 +455,8 @@ export default function Pipeline() {
     scopeCallsByAssignee: true,
     visibleLeads: deferredFiltered,
     groupRev,
+    callHistory,
+    callHistoryVersion,
   });
 
   const activityLabelMap = useMemo(
@@ -517,7 +526,7 @@ export default function Pipeline() {
       toast.error("Link this Callyzer call to a lead before moving it.");
       return;
     }
-    const currentStageId = resolveLeadKanbanColumn(lead, periodCalls, { scopeByAssignee: true });
+    const currentStageId = resolveLeadKanbanColumn(lead, periodCalls, { scopeByAssignee: true, callHistory });
     if (currentStageId === stageId) {
       if (scroll) scrollToStage(stageId);
       return;
