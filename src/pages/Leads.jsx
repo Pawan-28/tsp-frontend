@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useIsMobile } from "../hooks/use-mobile.tsx";
 import {
   Users, Plus, Search, CheckCircle2, X,
-  Target, Flame, Pause, Play, PhoneCall,
+  Target, Flame, Pause, Play,
   GripVertical, ChevronDown, ChevronUp, History, Layers,
   Shuffle, Zap, Upload, FileSpreadsheet,
   } from "lucide-react";
@@ -28,6 +28,9 @@ import { extractLeadService, leadBelongsToService } from "../lib/servicesRegistr
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../lib/segmentPills.js";
 import { PERIOD_PILL_BTN, PERIOD_PILL_INACTIVE } from "../lib/dateRange.js";
 import { PIPELINE_STAGE_DEFINITIONS, mapStageToId, getStageMetaById } from "../lib/pipelineStages.js";
+import { matchCatalogService } from "../lib/meetingTitle.js";
+import { isHotLead } from "../data/pipelineMock.js";
+import { SkeletonBlock, StatValueSkeleton } from "../components/Skeleton.jsx";
 
 const SOURCE_LABELS = {
   meta_ads: { label: "Meta Ads", tone: "info", color: "#2563eb" },
@@ -62,10 +65,21 @@ function getLeadPhone(lead) {
   return lead.phone || lead.phone_number || "—";
 }
 
-function getLeadService(lead) {
-  const extracted = extractLeadService(lead);
-  if (extracted) return `Service: ${extracted}`;
-  return lead.service || lead.requirements || lead.insights || "—";
+const SERVICE_CODE_RE = /^SRV-\d+$/i;
+
+/**
+ * Service name for a queue row. Leads often store a catalog code ("SRV-001") instead of the name, so
+ * resolve it against the /api/services catalog. A code that can't be resolved shows "—", never the
+ * raw code; while the catalog is still loading a code shows "…".
+ * `catalog` = [{ name, serviceId }].
+ */
+function getLeadService(lead, catalog = [], catalogReady = true) {
+  const raw = String(extractLeadService(lead) || lead.service || lead.requirements || lead.insights || "").trim();
+  const hit = matchCatalogService([lead.serviceId, lead.service_id, raw, lead.service, lead.requirements], catalog);
+  if (hit) return hit.name;
+  if (!raw) return "—";
+  if (SERVICE_CODE_RE.test(raw)) return catalogReady ? "—" : "…";
+  return raw;
 }
 
 function EmployeeCard({ emp, stats, status, paused, onTogglePause, onDrop, dragOver }) {
@@ -141,6 +155,9 @@ export default function Leads() {
   const [employees, setEmployees] = useState([]);
   const [assignState, setAssignState] = useState(() => getAssignmentState());
   const [loading, setLoading] = useState(() => leads.length === 0);
+  // Service catalog (code -> name) so "SRV-001" renders as the real service name.
+  const [serviceCatalog, setServiceCatalog] = useState([]);
+  const [catalogReady, setCatalogReady] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [showSheetLeadsOnly, setShowSheetLeadsOnly] = useState(false);
@@ -240,6 +257,31 @@ const showToast = (message, type = "success") => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet("/api/services", { headers: getAdminCrmHeaders(), cacheTtl: 30_000 })
+      .then((data) => {
+        if (cancelled) return;
+        const list = Array.isArray(data?.services) ? data.services : (Array.isArray(data?.data) ? data.data : []);
+        setServiceCatalog(
+          list
+            .map((svc) => ({
+              name: svc.name || svc.title,
+              serviceId: svc.serviceId || svc.serviceCode || svc.service_code || "",
+            }))
+            .filter((svc) => svc.name),
+        );
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCatalogReady(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const serviceLabel = useCallback(
+    (lead) => getLeadService(lead, serviceCatalog, catalogReady),
+    [serviceCatalog, catalogReady],
+  );
 
   useEffect(() => {
     const leadId = searchParams.get("leadId");
@@ -345,9 +387,9 @@ const showToast = (message, type = "success") => {
   const metrics = useMemo(() => {
     const total = queueLeads.length;
     const pickup = total;
-    const hotLeads = leads.filter((l) =>
-      String(l.temperature || l.status || l.priority || "").toLowerCase().includes("hot"),
-    ).length;
+    // Same hot definition as the Pipeline summary (isHotLead), counted over ALL leads loaded here —
+    // Pipeline counts only the cards on its period board, so the two totals differ by universe.
+    const hotLeads = leads.filter(isHotLead).length;
     const converted = leads.filter(isConverted).length;
     return { total, pickup, hotLeads, converted, unassigned: total, assigned: leads.length - total };
   }, [queueLeads, leads]);
@@ -361,7 +403,7 @@ const showToast = (message, type = "success") => {
         }
         if (showSheetLeadsOnly && !l.is_bulk_uploaded) return false;
         if (!q) return true;
-        return [l.lead_name, l.phone, l.phone_number, getLeadService(l)]
+        return [l.lead_name, l.phone, l.phone_number, serviceLabel(l)]
           .some((f) => String(f || "").toLowerCase().includes(q));
       })
       .sort((a, b) => {
@@ -371,7 +413,7 @@ const showToast = (message, type = "success") => {
           ? String(va).localeCompare(String(vb))
           : String(vb).localeCompare(String(va));
       });
-  }, [queueLeads, search, sortKey, sortDir, showSheetLeadsOnly, selectedService]);
+  }, [queueLeads, search, sortKey, sortDir, showSheetLeadsOnly, selectedService, serviceLabel]);
 
   // Same ownership rules as computeWorkload: local assignment -> DB assignedTo -> assigned_to.
   const leadOwnerId = useCallback((lead) => {
@@ -397,10 +439,10 @@ const showToast = (message, type = "success") => {
       if (leadOwnerId(l) !== String(empFilter)) return false;
       if (selectedService && selectedService !== "All Services" && !leadBelongsToService(l, selectedService)) return false;
       if (!q) return true;
-      return [l.lead_name, l.phone, l.phone_number, getLeadService(l)]
+      return [l.lead_name, l.phone, l.phone_number, serviceLabel(l)]
         .some((f) => String(f || "").toLowerCase().includes(q));
     });
-  }, [employeeView, enrichedLeads, empFilter, leadOwnerId, search, selectedService]);
+  }, [employeeView, enrichedLeads, empFilter, leadOwnerId, search, selectedService, serviceLabel]);
 
   const stageCounts = useMemo(() => {
     const counts = {};
@@ -625,6 +667,10 @@ const showToast = (message, type = "success") => {
     setAddOpen(false);
   };
 
+  // Skeletons: never show 0 / "Queue clear" / empty roster while the first load is still in flight.
+  const queueLoading = loading && leads.length === 0;
+  const rosterLoading = loading && employees.length === 0;
+
   const modeLabels = {
     "round-robin": "Round Robin",
     workload: "Workload-based",
@@ -634,12 +680,39 @@ const showToast = (message, type = "success") => {
   return (
     <div className="space-y-4 pb-6 page-shell min-w-0">
       {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-        <StatCard label="In Queue" value={metrics.total} icon={Users} tone="primary" change={`${metrics.total} unassigned`} sub="N8N & manual only" />
-        <StatCard label="Pickup" value={metrics.pickup} icon={PhoneCall} tone="info" change={metrics.pickup ? "Awaiting assignment" : "Queue clear"} sub="" />
-        <StatCard label="Hot Leads" value={metrics.hotLeads} icon={Flame} tone="warning" change={metrics.hotLeads ? "High intent" : "None hot right now"} sub="" />
-        <StatCard label="Converted" value={metrics.converted} icon={Target} tone="success" change="Closed won" sub="" />
-            </div>
+      {/* "Pickup" used to repeat In Queue (same number, "Awaiting assignment") — folded into In Queue. */}
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <StatCard
+          compact
+          label="In Queue"
+          value={queueLoading ? <StatValueSkeleton /> : metrics.total}
+          icon={Users}
+          tone="primary"
+          changeTone={queueLoading ? "muted" : undefined}
+          change={queueLoading ? "Loading" : (metrics.total ? "Awaiting assignment" : "Queue clear")}
+          sub={queueLoading ? "" : "unassigned · N8N & manual"}
+        />
+        <StatCard
+          compact
+          label="Hot Leads"
+          value={queueLoading ? <StatValueSkeleton /> : metrics.hotLeads}
+          icon={Flame}
+          tone="warning"
+          changeTone={queueLoading ? "muted" : undefined}
+          change={queueLoading ? "Loading" : (metrics.hotLeads ? "High intent" : "None hot right now")}
+          sub={queueLoading ? "" : "all leads"}
+        />
+        <StatCard
+          compact
+          label="Converted"
+          value={queueLoading ? <StatValueSkeleton /> : metrics.converted}
+          icon={Target}
+          tone="success"
+          changeTone={queueLoading ? "muted" : undefined}
+          change={queueLoading ? "Loading" : "Closed won"}
+          sub={queueLoading ? "" : "all leads"}
+        />
+      </div>
 
       {/* Round Robin center */}
       <GlassCard className="p-0 overflow-hidden">
@@ -649,7 +722,9 @@ const showToast = (message, type = "success") => {
             <div className="min-w-0">
               <p className="text-xs sm:text-sm font-bold text-slate-900 truncate">Round Robin Distribution</p>
               <p className="text-[10px] text-slate-500 truncate">
-                {modeLabels[assignState.distribution.mode]} · {assignState.distribution.autoAssign ? "Auto ON" : "Auto OFF"}
+                {rosterLoading
+                  ? "Loading distribution settings…"
+                  : `${modeLabels[assignState.distribution.mode]} · ${assignState.distribution.autoAssign ? "Auto ON" : "Auto OFF"}`}
               </p>
             </div>
           </div>
@@ -732,7 +807,10 @@ const showToast = (message, type = "success") => {
         <div className="p-3 sm:p-4 md:hidden">
           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Allocation Order</p>
           <div className="space-y-1">
-            {rrOrder.map((r) => (
+            {rosterLoading && [0, 1, 2].map((i) => (
+              <SkeletonBlock key={i} className="block h-8 w-full rounded-lg" />
+            ))}
+            {!rosterLoading && rrOrder.map((r) => (
               <div
                 key={r.id ?? r.order}
                 className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
@@ -758,12 +836,12 @@ const showToast = (message, type = "success") => {
           <div className="grid grid-cols-2 gap-2 mt-3">
             <div className="rounded-lg bg-rose-50/80 px-2 py-2 text-center">
               <p className="text-[9px] font-bold text-slate-500 uppercase">Assigned Today</p>
-              <p className="text-lg font-black text-rose-700 leading-tight">{assignState.todayStats?.total || 0}</p>
+              <p className="text-lg font-black text-rose-700 leading-tight">{rosterLoading ? <SkeletonBlock className="h-5 w-8" /> : (assignState.todayStats?.total || 0)}</p>
             </div>
             <div className="rounded-lg bg-emerald-50/80 px-2 py-2 text-center">
               <p className="text-[9px] font-bold text-slate-500 uppercase">Active Reps</p>
               <p className="text-lg font-black text-emerald-700 leading-tight">
-                {employees.filter((e) => {
+                {rosterLoading ? <SkeletonBlock className="h-5 w-8" /> : employees.filter((e) => {
                   const s = assignState.employeeSettings[String(e.id)] || {};
                   return !s.receivingPaused && e.status !== "inactive";
                 }).length}
@@ -778,7 +856,10 @@ const showToast = (message, type = "success") => {
             <div className="flex-1 min-w-[280px]">
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Allocation Order</p>
               <div className="flex flex-wrap gap-1.5">
-                {rrOrder.map((r) => (
+                {rosterLoading && [0, 1, 2, 3].map((i) => (
+                  <SkeletonBlock key={i} className="h-7 w-28 rounded-lg" />
+                ))}
+                {!rosterLoading && rrOrder.map((r) => (
                   <span
                     key={r.id ?? r.order}
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
@@ -801,12 +882,12 @@ const showToast = (message, type = "success") => {
             <div className="flex gap-2 shrink-0 ml-auto">
               <div className="rounded-lg bg-rose-50/80 px-3 py-2 text-center min-w-[96px]">
                 <p className="text-[9px] font-bold text-slate-500 uppercase whitespace-nowrap">Assigned Today</p>
-                <p className="text-xl font-black text-rose-700 leading-tight">{assignState.todayStats?.total || 0}</p>
+                <p className="text-xl font-black text-rose-700 leading-tight">{rosterLoading ? <SkeletonBlock className="h-6 w-8" /> : (assignState.todayStats?.total || 0)}</p>
               </div>
               <div className="rounded-lg bg-emerald-50/80 px-3 py-2 text-center min-w-[96px]">
                 <p className="text-[9px] font-bold text-slate-500 uppercase whitespace-nowrap">Active Reps</p>
                 <p className="text-xl font-black text-emerald-700 leading-tight">
-                  {employees.filter((e) => {
+                  {rosterLoading ? <SkeletonBlock className="h-6 w-8" /> : employees.filter((e) => {
                     const s = assignState.employeeSettings[String(e.id)] || {};
                     return !s.receivingPaused && e.status !== "inactive";
                   }).length}
@@ -887,7 +968,7 @@ const showToast = (message, type = "success") => {
                   className="h-8 rounded-lg border border-rose-100 bg-white px-2 text-[11px] font-semibold text-slate-700 outline-none focus:border-rose-400 max-w-[220px]"
                   aria-label="Filter by employee"
                 >
-                  <option value="">Unassigned queue ({queueLeads.length})</option>
+                  <option value="">{queueLoading ? "Unassigned queue" : `Unassigned queue (${queueLeads.length})`}</option>
                   {employees.map((e) => (
                     <option key={e.id} value={String(e.id)}>
                       {e.name} ({workload[e.id]?.assigned ?? 0})
@@ -920,8 +1001,17 @@ const showToast = (message, type = "success") => {
         </div>
 
             <div className="max-h-[480px] overflow-y-auto">
-              {loading ? (
-                <p className="p-6 text-center text-rose-300 font-semibold text-xs">Loading queue…</p>
+              {loading && viewLeads.length === 0 ? (
+                <div className="p-3 space-y-2" role="status" aria-label="Loading queue">
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <SkeletonBlock className="h-3.5 w-3.5" />
+                      <SkeletonBlock className="h-3.5 w-1/4" />
+                      <SkeletonBlock className="h-3.5 w-1/5" />
+                      <SkeletonBlock className="h-3.5 w-1/4" />
+                    </div>
+                  ))}
+                </div>
               ) : viewLeads.length === 0 ? (
                 <p className="p-6 text-center text-slate-400 text-xs">
                   {employeeView
@@ -956,7 +1046,7 @@ const showToast = (message, type = "success") => {
                           {!employeeView && <GripVertical size={14} className="text-rose-300 shrink-0" />}
                         </div>
                         <div className="flex flex-wrap items-center gap-1 mt-1.5 pl-5">
-                          <span className="text-[10px] font-semibold text-slate-600 truncate">{getLeadService(lead)}</span>
+                          <span className="text-[10px] font-semibold text-slate-600 truncate">Service: {serviceLabel(lead)}</span>
                           {employeeView && (
                             <Badge tone={getStageMetaById(mapStageToId(lead.pipeline_stage, lead.status)).badgeTone}>
                               {getStageMetaById(mapStageToId(lead.pipeline_stage, lead.status)).label}
@@ -1012,7 +1102,7 @@ const showToast = (message, type = "success") => {
                           <span className="text-[11px] font-semibold text-slate-700 tabular-nums">{getLeadPhone(lead)}</span>
                         </td>
                         <td className="p-2">
-                          <span className="text-[10px] font-semibold text-slate-600">{getLeadService(lead)}</span>
+                          <span className="text-[10px] font-semibold text-slate-600">{serviceLabel(lead)}</span>
                         </td>
                         {employeeView && (
                           <td className="p-2">
@@ -1033,7 +1123,9 @@ const showToast = (message, type = "success") => {
             <div className="px-3 sm:px-4 py-2 border-t border-rose-50 text-[9px] sm:text-[10px] text-slate-400">
               {employeeView
                 ? `${selectedEmployee?.name || "Employee"} · ${stageFilter === "all" ? "all stages" : getStageMetaById(stageFilter).label} · ${viewLeads.length} lead${viewLeads.length === 1 ? "" : "s"}`
-                : `N8N & manual unassigned leads · drag onto employee cards · ${filtered.length} in queue`}
+                : (queueLoading
+                  ? "Loading queue…"
+                  : `N8N & manual unassigned leads · drag onto employee cards · ${filtered.length} in queue`)}
             </div>
           </div>
           </div>
@@ -1049,11 +1141,27 @@ const showToast = (message, type = "success") => {
               <div
                 className="overflow-y-auto overflow-x-hidden px-3 pt-3 pb-2 space-y-2 shrink-0 scrollbar-thin"
                 style={{
-                  height: employeeListViewportPx(employees.length),
-                  maxHeight: employeeListViewportPx(employees.length),
+                  height: employeeListViewportPx(rosterLoading ? VISIBLE_EMPLOYEE_COUNT : employees.length),
+                  maxHeight: employeeListViewportPx(rosterLoading ? VISIBLE_EMPLOYEE_COUNT : employees.length),
                 }}
               >
-            {employees.length === 0 ? (
+            {rosterLoading ? (
+              [0, 1].map((i) => (
+                <div key={i} className="rounded-xl border border-rose-100 bg-white p-3 space-y-2.5 shrink-0" style={{ height: EMPLOYEE_CARD_HEIGHT_PX - 10 }}>
+                  <div className="flex items-center gap-2">
+                    <SkeletonBlock className="h-8 w-8 rounded-lg" />
+                    <div className="space-y-1.5 flex-1">
+                      <SkeletonBlock className="block h-3 w-1/2" />
+                      <SkeletonBlock className="block h-2 w-1/3" />
+                    </div>
+                  </div>
+                  <SkeletonBlock className="block h-4 w-20" />
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[0, 1, 2, 3].map((j) => <SkeletonBlock key={j} className="block h-8 w-full" />)}
+                  </div>
+                </div>
+              ))
+            ) : employees.length === 0 ? (
               <p className="text-sm text-slate-400 text-center py-8">No team members loaded</p>
             ) : (
               employees.map((emp) => {

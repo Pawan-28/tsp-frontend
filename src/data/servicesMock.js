@@ -9,6 +9,57 @@ export const SERVICE_CATEGORIES = [
   { id: "dev", label: "Custom Dev" },
 ];
 
+/** Category labels for ids that are stored lowercase/abbreviated in the DB. */
+const CATEGORY_LABEL_OVERRIDES = {
+  general: "General Services",
+  leadgen: "Lead Gen",
+  crm: "CRM & Ops",
+  ai: "AI Solutions",
+  dev: "Custom Dev",
+};
+
+export function formatServiceCategoryLabel(category) {
+  const raw = String(category || "").trim();
+  if (!raw) return "General Services";
+  const key = raw.toLowerCase();
+  if (CATEGORY_LABEL_OVERRIDES[key]) return CATEGORY_LABEL_OVERRIDES[key];
+  if (raw === key) return raw.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return raw;
+}
+
+/** Category filter options derived from the services that are actually in the catalog (plus "All"). */
+export function deriveServiceCategoryOptions(services = []) {
+  const seen = new Map();
+  services.forEach((s) => {
+    const id = String(s?.category || "").trim();
+    if (id && !seen.has(id)) seen.set(id, formatServiceCategoryLabel(id));
+  });
+  const options = [...seen.entries()]
+    .map(([id, label]) => ({ id, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return [{ id: "all", label: "Category: All" }, ...options];
+}
+
+/** True when a description is empty or an auto-generated / throwaway placeholder (not real copy). */
+export function isPlaceholderDescription(description, name = "") {
+  const text = String(description ?? "").trim();
+  if (!text) return true;
+  if (/^auto-created service offering for\b/i.test(text)) return true;
+  if (/^service catalog offering for\b/i.test(text)) return true;
+  if (text.length <= 3) return true;
+  if (name && text.toLowerCase() === String(name).trim().toLowerCase()) return true;
+  return false;
+}
+
+/** True when the service has a created date within the last `days` days (false when no date is available). */
+export function isRecentService(service, days = 14) {
+  const raw = service?.createdAt || service?.created_at;
+  if (!raw) return false;
+  const t = new Date(raw).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < days * 24 * 60 * 60 * 1000;
+}
+
 export const SERVICE_STATUSES = [
   { id: "all", label: "Status: All" },
   { id: "ACTIVE", label: "Active" },

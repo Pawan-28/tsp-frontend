@@ -7,6 +7,7 @@ import EmployeeLayout from "./employee/layouts/EmployeeLayout.jsx";
 import PageLoader from "./components/PageLoader.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
+import { useRouteDocumentTitle } from "./lib/pageTitle.js";
 
 const Login = lazy(() => import("./pages/Login.jsx"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword.jsx"));
@@ -84,9 +85,15 @@ function EmployeeHome() {
   return <EmployeeDashboard />;
 }
 
+function RouteTitle() {
+  useRouteDocumentTitle();
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <RouteTitle />
       <AuthProvider>
         <Toaster position="top-right" gutter={12} containerStyle={{ top: 16, right: 16 }} toastOptions={EMP_TOAST_OPTIONS} />
         <Suspense fallback={<PageLoader />}>

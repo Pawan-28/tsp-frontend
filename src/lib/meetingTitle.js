@@ -63,7 +63,8 @@ export function resolveLeadServiceName(lead) {
   const candidates = [lead.service, lead.requirements, lead.serviceName, lead.service_name];
   for (const c of candidates) {
     const cleaned = cleanServiceName(c);
-    if (cleaned) return cleaned;
+    // A bare service code (e.g. "SRV-001") is an id, not a name — never show it as the service.
+    if (cleaned && !/^SRV-\d+$/i.test(cleaned)) return cleaned;
   }
   return "";
 }

@@ -141,6 +141,13 @@ export function leadFromForm(raw) {
   };
 }
 
+/** The one "hot lead" definition — Pipeline summary and Leads Assign must agree on it. */
+export function isHotLead(lead) {
+  if (!lead) return false;
+  const temp = String(lead.temperature || lead.status || "").toLowerCase();
+  return lead.priority === "HOT" || temp.includes("hot");
+}
+
 export function getPipelineSummary(leads) {
   const list = Array.isArray(leads) ? leads.filter(Boolean) : [];
   const total = list.length;
@@ -149,7 +156,7 @@ export function getPipelineSummary(leads) {
   let cold = 0;
   for (const l of list) {
     const temp = String(l.temperature || l.status || "").toLowerCase();
-    if (l.priority === "HOT" || temp.includes("hot")) hot += 1;
+    if (isHotLead(l)) hot += 1;
     else if (l.priority === "COLD" || temp.includes("cold")) cold += 1;
     else warm += 1;
   }

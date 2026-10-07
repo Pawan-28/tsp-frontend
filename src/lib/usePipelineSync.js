@@ -145,9 +145,11 @@ export function usePipelineSync({
   const sk = scopeKey(scope, employeeId);
   // Employee board: the selected Today/Week/Month/Custom period is sent to the
   // backend so the API returns only that period's calls/meetings/stats.
-  // Admin board keeps the original single month fetch + client-side slicing.
-  const fetchPeriodQuery = scope === "employee" ? boardPeriodQuery(period) : `period=${MASTER_PERIOD}`;
-  const cacheKey = scope === "employee" ? `${sk}|${fetchPeriodQuery}` : sk;
+  // Admin board keeps the original single month fetch + client-side slicing for Today/Week/Month, but a
+  // Yesterday / Custom range is fetched exactly (it can fall outside the current month).
+  const exactFetch = scope === "employee" || Boolean(parseCustomPeriod(period));
+  const fetchPeriodQuery = exactFetch ? boardPeriodQuery(period) : `period=${MASTER_PERIOD}`;
+  const cacheKey = exactFetch ? `${sk}|${fetchPeriodQuery}` : sk;
   const cached = masterCache.get(cacheKey);
   const attachRef = useRef(attachLeads);
   attachRef.current = attachLeads;
@@ -155,7 +157,8 @@ export function usePipelineSync({
   // The board is stored together with the cache key (scope + period) it was loaded for, so a board for
   // one period can never be shown — or cached — under another (e.g. Today's calls under "Week").
   const [masterState, setMasterState] = useState(() => ({ key: cacheKey, board: cached?.board ?? emptyBoard() }));
-  const monthKey = scope === "employee" ? `${sk}|period=month` : null;
+  // Superset board to show (sliced to the period) while an exact fetch is still loading.
+  const monthKey = scope === "employee" ? `${sk}|period=month` : (exactFetch ? sk : null);
   const master = masterState.key === cacheKey
     ? masterState.board
     // Period just changed and its board isn't loaded yet: use the cached board for it, else the cached

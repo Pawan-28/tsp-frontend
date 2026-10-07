@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Calculator, Calendar, Target, Users, Kanban, Award,
   Clock, Phone, TrendingUp, MessageSquare, Repeat, Mail, Tag, Download,
@@ -11,7 +11,6 @@ import { GlassCard, Drawer, Badge } from "../components/Primitives.jsx";
 import {
   PRIORITY_BADGE,
   formatPipelineValue,
-  timeAgoShort,
 } from "../data/pipelineMock.js";
 import { useIsMobile } from "../hooks/use-mobile.tsx";
 import toast from "react-hot-toast";
@@ -20,7 +19,7 @@ import { apiLeadToEmployee } from "../lib/leadSync.js";
 import { useEmployeeKraMetrics } from "../lib/useEmployeeKraMetrics.js";
 import { useEmployeeCompetencyScores } from "../lib/useEmployeeCompetencyScores.js";
 import { CALL_CONVERSATION_LABEL } from "../lib/callMetrics.js";
-import { KRA_PERIODS, kraPeriodLabel } from "../lib/kraPeriod.js";
+import { KRA_PERIODS, kraPeriodLabel, isTimestampInKraPeriod, computeLeadKraForPeriod } from "../lib/kraPeriod.js";
 import { CustomSelect } from "../components/CustomSelect.jsx";
 import { downloadEmployeeIncentiveReport } from "../lib/incentiveReportExport.js";
 import {
@@ -29,16 +28,27 @@ import {
   resolveIncentiveSlabRate,
   DEFAULT_INCENTIVE_SETTINGS,
 } from "../lib/incentiveCalculator.js";
+import { formatRelativeAge } from "../lib/relativeAge.js";
+import { roleLabel } from "../lib/roleLabel.js";
+import { formatINR } from "../lib/indianFormat.js";
+import { kpiWeightsToIncentiveRows, validateIncentiveConfig } from "../lib/incentiveSettings.js";
 
-const MONTH_OPTIONS = [
-  { value: "2026-07", label: "July, 2026" },
-  { value: "2026-06", label: "June, 2026" },
-  { value: "2026-05", label: "May, 2026" },
-  { value: "2026-04", label: "April, 2026" },
-  { value: "2026-03", label: "March, 2026" },
-  { value: "2026-02", label: "February, 2026" },
-  { value: "2026-01", label: "January, 2026" },
-];
+const MONTH_OPTION_COUNT = 12;
+
+function monthValueOf(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Current month first, then the previous 11 months. */
+function buildMonthOptions(now = new Date()) {
+  return Array.from({ length: MONTH_OPTION_COUNT }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    return {
+      value: monthValueOf(d),
+      label: `${d.toLocaleString("en", { month: "long" })}, ${d.getFullYear()}`,
+    };
+  });
+}
 
 const LEAD_TABS = ["Converted", "Qualified", "Un-Qualified", "Not Interested"];
 
@@ -76,8 +86,8 @@ function readLeadText(lead, ...keys) {
 
 /** Map employee/team lead rows to incentive Lead Status tabs (synced from employee panel). */
 function classifyIncentiveLeadTab(lead) {
-  const stage = readLeadText(lead, "pipeline_stage", "pipelineStage", "stage");
-  const status = readLeadText(lead, "status", "employeeStatus");
+  const stage = readLeadText(lead, "pipeline_stage", "pipelineStage", "stage").replace(/_/g, " ");
+  const status = readLeadText(lead, "status", "employeeStatus").replace(/_/g, " ");
   const temp = readLeadText(lead, "temperature");
 
   if (
@@ -164,9 +174,18 @@ function buildLeadStatusSnapshot(leads, monthValue, weekRanges) {
 function mapTeamLeadToStatusCardWithWeek(lead, tab, employee, monthLabel, weekRanges, monthValue) {
   const mapped = apiLeadToEmployee(lead);
   const updatedAt = lead.updated_at || lead.updatedAt || lead.created_at || lead.createdAt;
-  let weekIdx = getLeadWeekIndex(updatedAt, monthValue);
-  if (weekIdx < 0) weekIdx = 0;
-  const weekMeta = weekRanges[weekIdx] || weekRanges[0] || { key: "W1", label: "Week 1", range: "—" };
+  const weekIdx = getLeadWeekIndex(updatedAt, monthValue);
+  // A lead updated outside the selected month must not be pinned to "Week 1" of it - show its real date.
+  const updatedDate = updatedAt ? new Date(updatedAt) : null;
+  const weekMeta = weekIdx >= 0
+    ? (weekRanges[weekIdx] || weekRanges[0] || { key: "W1", label: "Week 1", range: "—" })
+    : {
+        key: "",
+        label: "",
+        range: updatedDate && !Number.isNaN(updatedDate.getTime())
+          ? updatedDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+          : "—",
+      };
 
   return {
     id: String(mapped.id ?? lead.id),
@@ -225,9 +244,9 @@ function LeadStatusCard({ lead, onClick }) {
       </div>
       <div className="flex items-center justify-between pt-1 border-t border-rose-50">
         <span className="text-[10px] font-black text-rose-700 tabular-nums">{formatPipelineValue(lead.value)}</span>
-        <span className="text-[8px] font-medium text-slate-400">{timeAgoShort(lead.updatedAt)}</span>
+        <span className="text-[8px] font-medium text-slate-400">{formatRelativeAge(lead.updatedAt)}</span>
       </div>
-      <p className="text-[8px] text-slate-400 mt-1 truncate">{lead.pipelineStage || lead.week} · {lead.weekRange}</p>
+      <p className="text-[8px] text-slate-400 mt-1 truncate">{lead.pipelineStage || lead.week || "—"} · {lead.weekRange}</p>
     </button>
   );
 }
@@ -259,12 +278,12 @@ function LeadStatusDetailDrawer({ open, onClose, lead, monthLabel }) {
 
         <div className="grid grid-cols-2 gap-2.5">
           {[
-            { label: "Week", value: `${lead.week} · ${lead.weekRange}` },
+            { label: lead.week ? "Week" : "Updated on", value: lead.week ? `${lead.week} · ${lead.weekRange}` : lead.weekRange },
             { label: "Month", value: lead.month || monthLabel },
             { label: "Service", value: lead.service },
             { label: "Source", value: lead.source },
             { label: "Owner", value: lead.owner },
-            { label: "Last Update", value: timeAgoShort(lead.updatedAt) },
+            { label: "Last Update", value: formatRelativeAge(lead.updatedAt) },
           ].map((row) => (
             <div key={row.label} className="rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2">
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{row.label}</p>
@@ -316,9 +335,14 @@ function pct(actual, target) {
 }
 
 function formatCash(val) {
-  const v = getSafeNum(val);
-  if (v >= 1000) return `₹${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}K`;
-  return `₹${v.toLocaleString()}`;
+  return formatINR(getSafeNum(val));
+}
+
+/** Competency / weight source label under the performance card. */
+function withIncentiveLabel(row) {
+  return row.key === "calls"
+    ? { ...row, label: `Call Conversations (${CALL_CONVERSATION_LABEL})` }
+    : row;
 }
 
 function getWeekRanges(monthValue) {
@@ -422,6 +446,7 @@ const STATUS_PILL_CLASS = {
 };
 
 function MetricTile({ label, value, score, icon: Icon, suffix = "%" }) {
+  const scored = score != null;
   const barPct = Math.min(100, getSafeNum(score));
   const displayValue = suffix === "%" && typeof value === "number" ? `${value}%` : value;
 
@@ -436,10 +461,12 @@ function MetricTile({ label, value, score, icon: Icon, suffix = "%" }) {
       <div className="mt-2">
         <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wide truncate">{label}</p>
         <div className="mt-1.5 h-1 rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-rose-500 to-rose-600 transition-all duration-500"
-            style={{ width: `${barPct}%` }}
-          />
+          {scored && (
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-rose-500 to-rose-600 transition-all duration-500"
+              style={{ width: `${barPct}%` }}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -509,7 +536,7 @@ function buildBlankTeammate(emp) {
   return {
     id: emp.id,
     name: emp.name,
-    role: emp.role || emp.department || "Sales",
+    role: roleLabel(emp.role || emp.department, "Sales"),
     team: emp.department || "Sales & Growth",
     status: "PENDING",
     baseSalary: emp.salary || 0,
@@ -554,7 +581,8 @@ export default function Incentives() {
   const [teammates, setTeammates] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
-  const [selectedMonth, setSelectedMonth] = useState("2026-07");
+  const monthOptions = useMemo(() => buildMonthOptions(), []);
+  const [selectedMonth, setSelectedMonth] = useState(() => monthValueOf(new Date()));
   const [kraPeriod, setKraPeriod] = useState("month");
   const [leadTab, setLeadTab] = useState("Converted");
   const [activeLead, setActiveLead] = useState(null);
@@ -563,7 +591,12 @@ export default function Incentives() {
   const [calcDraft, setCalcDraft] = useState(null);
   const [calcResult, setCalcResult] = useState(null);
   const [incentiveSettings, setIncentiveSettings] = useState(DEFAULT_INCENTIVE_SETTINGS);
+  // Where the metric weights / targets came from (saved Settings config vs built-in defaults).
+  const [weightSource, setWeightSource] = useState({ fromSettings: false, version: null, edited: false });
+  const weightsEditedRef = useRef(false);
+  const settingsRowsRef = useRef(DEFAULT_INCENTIVE_METRICS.map((r) => ({ ...r })));
   const [employeeLeads, setEmployeeLeads] = useState([]);
+  const [employeeLeadsOwner, setEmployeeLeadsOwner] = useState(null);
   const [loadingEmployeeLeads, setLoadingEmployeeLeads] = useState(false);
   const { metrics: kraMetrics } = useEmployeeKraMetrics(selectedId, {
     enabled: Boolean(selectedId),
@@ -589,6 +622,16 @@ export default function Incentives() {
             ? incData.incentiveSlabs
             : DEFAULT_INCENTIVE_SETTINGS.incentiveSlabs,
         });
+        // KPI weights come from the saved Settings config; defaults only when Settings is empty.
+        const { rows: weightRows, source: weightRowsSource } = kpiWeightsToIncentiveRows(incData.kpiWeights);
+        const settingsRows = weightRows.map(withIncentiveLabel);
+        settingsRowsRef.current = settingsRows;
+        if (!weightsEditedRef.current) setKraRows(settingsRows.map((r) => ({ ...r })));
+        setWeightSource((prev) => ({
+          ...prev,
+          fromSettings: incData.settingsSource === "settings" && weightRowsSource === "settings",
+          version: incData.settingsVersion || null,
+        }));
         if (incData.teammates?.length) {
           const mapped = incData.teammates.map((t) => ({
             ...buildBlankTeammate(t),
@@ -699,39 +742,11 @@ export default function Incentives() {
     return () => { cancelled = true; };
   }, [teammateIdsKey, selectedMonth, kraPeriod, loadingEmployees]);
 
-  // Sync other KRA metrics for the selected employee
-  useEffect(() => {
-    if (!selectedId || !kraMetrics) return;
-    setTeammates((prev) =>
-      prev.map((t) =>
-        t.id === selectedId
-          ? {
-              ...t,
-              callsCompleted: kraMetrics.calls5Min,
-              qualifiedLeads: kraMetrics.qualified,
-              meetingsScheduled: kraMetrics.meetings,
-              cashCollected: kraMetrics.cash,
-              pickupRate: kraMetrics.pickupRate ?? t.pickupRate,
-              responseTimeMin:
-                kraMetrics.avgDurationSec != null
-                  ? Math.round((kraMetrics.avgDurationSec / 60) * 10) / 10
-                  : t.responseTimeMin,
-              conversionRate: kraMetrics.totalLeads
-                ? Math.round((kraMetrics.converted / kraMetrics.totalLeads) * 1000) / 10
-                : t.conversionRate,
-              qualificationRate: kraMetrics.totalLeads
-                ? Math.min(100, Math.round((kraMetrics.qualified / kraMetrics.totalLeads) * 100))
-                : t.qualificationRate,
-            }
-          : t,
-      ),
-    );
-  }, [selectedId, selectedMonth, kraPeriod, kraMetrics]);
-
   // Sync real leads from employee panel (same source as Team Management)
   useEffect(() => {
     if (!selectedId) {
       setEmployeeLeads([]);
+      setEmployeeLeadsOwner(null);
       return;
     }
 
@@ -747,8 +762,12 @@ export default function Incentives() {
         if (cancelled || !data?.success) return;
         const leads = Array.isArray(data.leads) ? data.leads : [];
         setEmployeeLeads(leads);
+        setEmployeeLeadsOwner(selectedId);
       } catch {
-        if (!cancelled) setEmployeeLeads([]);
+        if (!cancelled) {
+          setEmployeeLeads([]);
+          setEmployeeLeadsOwner(selectedId);
+        }
       } finally {
         if (!cancelled) setLoadingEmployeeLeads(false);
       }
@@ -756,6 +775,66 @@ export default function Incentives() {
 
     return () => { cancelled = true; };
   }, [selectedId]);
+
+  // One lead list drives BOTH the Lead Status panel and the KRA numbers: the selected employee's
+  // leads that fall inside the selected month (or Today / This week).
+  const kraMonthOption = kraPeriod === "month" ? selectedMonth : null;
+  const ownedLeads = useMemo(
+    () => (employeeLeadsOwner === selectedId ? employeeLeads : []),
+    [employeeLeads, employeeLeadsOwner, selectedId],
+  );
+  const periodLeads = useMemo(
+    () => ownedLeads.filter((lead) =>
+      isTimestampInKraPeriod(
+        lead.updated_at || lead.updatedAt || lead.created_at,
+        kraPeriod,
+        { month: kraMonthOption },
+      ),
+    ),
+    [ownedLeads, kraPeriod, kraMonthOption],
+  );
+  const periodStats = useMemo(() => {
+    const leadKra = computeLeadKraForPeriod(ownedLeads, kraPeriod, { month: kraMonthOption });
+    return {
+      total: periodLeads.length,
+      qualified: leadKra.qualified,
+      meetings: leadKra.meetings,
+      converted: periodLeads.filter((lead) => classifyIncentiveLeadTab(lead) === "Converted").length,
+    };
+  }, [ownedLeads, periodLeads, kraPeriod, kraMonthOption]);
+  const leadsReady = employeeLeadsOwner === selectedId;
+
+  // Sync KRA metrics for the selected employee (calls + cash from the API, lead counts from the lead list)
+  const kraMetricsPeriodKey = kraMetrics?.periodKey;
+  useEffect(() => {
+    if (!selectedId || !kraMetrics) return;
+    // ignore metrics that still belong to the previous employee / month
+    if (kraMetrics.employeeId !== selectedId || kraMetricsPeriodKey !== `${kraPeriod}|${kraMonthOption || ""}`) return;
+    setTeammates((prev) =>
+      prev.map((t) =>
+        t.id === selectedId
+          ? {
+              ...t,
+              callsCompleted: kraMetrics.calls5Min,
+              qualifiedLeads: leadsReady ? periodStats.qualified : kraMetrics.qualified,
+              meetingsScheduled: leadsReady ? periodStats.meetings : kraMetrics.meetings,
+              cashCollected: kraMetrics.cash,
+              pickupRate: kraMetrics.pickupRate ?? t.pickupRate,
+              responseTimeMin:
+                kraMetrics.avgDurationSec != null
+                  ? Math.round((kraMetrics.avgDurationSec / 60) * 10) / 10
+                  : t.responseTimeMin,
+              conversionRate: periodStats.total
+                ? Math.round((periodStats.converted / periodStats.total) * 1000) / 10
+                : 0,
+              qualificationRate: periodStats.total
+                ? Math.min(100, Math.round((periodStats.qualified / periodStats.total) * 100))
+                : 0,
+            }
+          : t,
+      ),
+    );
+  }, [selectedId, selectedMonth, kraPeriod, kraMonthOption, kraMetrics, kraMetricsPeriodKey, periodStats, leadsReady]);
 
   const selected = useMemo(
     () => teammates.find((t) => t.id === selectedId) || teammates[0],
@@ -765,7 +844,7 @@ export default function Incentives() {
   const employeeOptions = teammates.map((t) => ({
     value: String(t.id),
     label: t.name,
-    subtitle: t.department || t.team || t.role,
+    subtitle: roleLabel(t.department || t.team || t.role),
   }));
   const weekRanges = useMemo(() => getWeekRanges(selectedMonth), [selectedMonth]);
   const totalKraWeight = useMemo(() => kraRows.reduce((s, r) => s + getSafeNum(r.weight), 0), [kraRows]);
@@ -788,7 +867,8 @@ export default function Incentives() {
   const serviceMetrics = useMemo(() => {
     if (!selected) return [];
     return [
-      { label: "Response Time", shortLabel: "Response", value: `${selected.responseTimeMin} min`, score: Math.max(0, 100 - selected.responseTimeMin * 20), icon: Clock, suffix: "" },
+      // Informational only (score: null): a shorter or longer call is not automatically better, so it gets no bar and is left out of the average.
+      { label: "Avg Call Duration", shortLabel: "Call Dur.", value: `${selected.responseTimeMin} min`, score: null, icon: Clock, suffix: "" },
       { label: "Pickup Rate", shortLabel: "Pickup", value: selected.pickupRate, score: selected.pickupRate, icon: Phone },
       { label: "Qualification Rate", shortLabel: "Qualify", value: Math.min(99, selected.qualificationRate), score: Math.min(100, selected.qualificationRate), icon: Target },
       { label: "Objection Handling", shortLabel: "Objection", value: selected.objectionHandling, score: selected.objectionHandling, icon: MessageSquare },
@@ -797,15 +877,22 @@ export default function Incentives() {
     ];
   }, [selected]);
 
-  const monthLabel = MONTH_OPTIONS.find((m) => m.value === selectedMonth)?.label ?? selectedMonth;
+  const monthLabel = monthOptions.find((m) => m.value === selectedMonth)?.label ?? selectedMonth;
+  const periodLabel = kraPeriod === "month" ? monthLabel : kraPeriodLabel(kraPeriod);
 
   const leadSnapshot = useMemo(() => {
     if (!selected) return { leadStatus: {}, weeklyLeads: {} };
-    if (employeeLeads.length) {
-      return buildLeadStatusSnapshot(employeeLeads, selectedMonth, weekRanges);
+    if (periodLeads.length) {
+      return buildLeadStatusSnapshot(periodLeads, selectedMonth, weekRanges);
     }
     return getLeadSnapshot();
-  }, [selected, selectedMonth, weekRanges, employeeLeads]);
+  }, [selected, selectedMonth, weekRanges, periodLeads]);
+
+  // Header total = sum of every status tab (not just the active one)
+  const leadStatusTotal = useMemo(
+    () => LEAD_TABS.reduce((sum, tab) => sum + (leadSnapshot.leadStatus?.[tab] ?? 0), 0),
+    [leadSnapshot],
+  );
 
   const leadChartData = useMemo(() => {
     const values = leadSnapshot.weeklyLeads?.[leadTab] || [0, 0, 0, 0];
@@ -817,16 +904,11 @@ export default function Incentives() {
     }));
   }, [leadSnapshot, leadTab, weekRanges]);
 
-  const leadChartTotal = useMemo(
-    () => leadSnapshot.leadStatus?.[leadTab] ?? leadChartData.reduce((s, d) => s + d.count, 0),
-    [leadSnapshot, leadTab, leadChartData],
-  );
-
   const filteredLeads = useMemo(() => {
     if (!selected) return [];
-    if (employeeLeads.length) {
+    if (periodLeads.length) {
       return buildRealFilteredLeads(
-        employeeLeads,
+        periodLeads,
         leadTab,
         selected,
         monthLabel,
@@ -835,14 +917,15 @@ export default function Incentives() {
       );
     }
     return [];
-  }, [employeeLeads, leadTab, selected, monthLabel, weekRanges, selectedMonth]);
+  }, [periodLeads, leadTab, selected, monthLabel, weekRanges, selectedMonth]);
 
-  const avgServiceScore = useMemo(
-    () => (serviceMetrics.length
-      ? Math.round(serviceMetrics.reduce((sum, m) => sum + Math.min(100, getSafeNum(m.score)), 0) / serviceMetrics.length)
-      : 0),
-    [serviceMetrics],
-  );
+  // Average of the scored KPIs only (informational tiles such as Avg Call Duration have score: null).
+  const avgServiceScore = useMemo(() => {
+    const scored = serviceMetrics.filter((m) => m.score != null);
+    return scored.length
+      ? Math.round(scored.reduce((sum, m) => sum + Math.min(100, getSafeNum(m.score)), 0) / scored.length)
+      : 0;
+  }, [serviceMetrics]);
 
   const radarData = useMemo(
     () => selected ? Object.entries(liveCompetency).map(([skill, score]) => ({ skill, score })) : [],
@@ -856,19 +939,27 @@ export default function Incentives() {
     [radarData],
   );
 
+  // No AI-scored calls yet -> every score is 0; strongest / needs-focus would be meaningless.
+  const hasCompetencyData = useMemo(() => radarData.some((d) => d.score > 0), [radarData]);
+
   const topCompetency = useMemo(
-    () => [...radarData].sort((a, b) => b.score - a.score)[0],
-    [radarData],
+    () => (hasCompetencyData ? [...radarData].sort((a, b) => b.score - a.score)[0] : null),
+    [radarData, hasCompetencyData],
   );
 
-  const weakestCompetency = useMemo(
-    () => [...radarData].sort((a, b) => a.score - b.score)[0],
-    [radarData],
-  );
+  // Never the same skill as the strongest one; hidden when every skill scores the same.
+  const weakestCompetency = useMemo(() => {
+    if (!hasCompetencyData || !topCompetency) return null;
+    return (
+      [...radarData]
+        .sort((a, b) => a.score - b.score)
+        .find((d) => d.skill !== topCompetency.skill && d.score < topCompetency.score) || null
+    );
+  }, [radarData, hasCompetencyData, topCompetency]);
 
   const focusSkills = useMemo(
-    () => radarData.filter((d) => d.score < 80).sort((a, b) => a.score - b.score),
-    [radarData],
+    () => (hasCompetencyData ? radarData.filter((d) => d.score < 80).sort((a, b) => a.score - b.score) : []),
+    [radarData, hasCompetencyData],
   );
 
   const weightedPerformance = useMemo(
@@ -937,8 +1028,21 @@ export default function Incentives() {
 
   const updateKraWeight = (key, val) => {
     const w = Math.max(0, Math.min(100, getSafeNum(val)));
+    weightsEditedRef.current = true;
+    setWeightSource((prev) => (prev.edited ? prev : { ...prev, edited: true }));
     setKraRows((prev) => prev.map((r) => (r.key === key ? { ...r, weight: w } : r)));
   };
+
+  const resetKraWeights = () => {
+    weightsEditedRef.current = false;
+    setWeightSource((prev) => ({ ...prev, edited: false }));
+    setKraRows(settingsRowsRef.current.map((r) => ({ ...r })));
+  };
+
+  const weightSourceLabel = weightSource.fromSettings
+    ? `Settings${weightSource.version ? ` (${weightSource.version})` : ""}`
+    : "built-in defaults (nothing saved in Settings yet)";
+  const settingsIssue = validateIncentiveConfig(incentiveSettings).messages[0] || null;
 
   const updateDraft = (field, val) => {
     if (field === "manualIncentive") {
@@ -966,11 +1070,10 @@ export default function Incentives() {
   }, [calcDraft, selected, calcResult, weightedPerformance, kraRows, incentiveSettings]);
 
   const reportLeads = useMemo(() => {
-    if (!selected || !employeeLeads.length) return [];
-    return employeeLeads
+    if (!selected || !periodLeads.length) return [];
+    return periodLeads
       .map((lead) => {
         const tab = classifyIncentiveLeadTab(lead);
-        const mapped = apiLeadToEmployee(lead);
         return mapTeamLeadToStatusCardWithWeek(
           lead,
           tab,
@@ -981,7 +1084,7 @@ export default function Incentives() {
         );
       })
       .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-  }, [selected, employeeLeads, monthLabel, weekRanges, selectedMonth]);
+  }, [selected, periodLeads, monthLabel, weekRanges, selectedMonth]);
 
   const buildReportPayload = () => ({
     employee: selected,
@@ -1053,7 +1156,7 @@ export default function Incentives() {
               label="Month"
               value={selectedMonth}
               onChange={handleMonthChange}
-              options={MONTH_OPTIONS}
+              options={monthOptions}
               icon={Calendar}
               compact={isMobile}
             />
@@ -1089,7 +1192,7 @@ export default function Incentives() {
 
         <div className="mt-2.5 sm:mt-3 pt-2.5 sm:pt-3 border-t border-rose-50 min-w-0 shrink-0">
           <p className="text-[10px] sm:text-[11px] font-semibold text-slate-700 truncate">
-            {selected.name} · {selected.role}
+            {selected.name} · {roleLabel(selected.role)}
           </p>
           <p className="text-[10px] text-slate-500 mt-0.5 truncate">
             {selected.team} · {monthLabel}
@@ -1129,7 +1232,7 @@ export default function Incentives() {
                       : "bg-white border-slate-200/80 text-slate-555 hover:border-rose-200"
                   }`}
                 >
-                  {p.label}
+                  {p.id === "month" && selectedMonth !== monthOptions[0].value ? monthLabel : p.label}
                 </button>
               ))}
             </div>
@@ -1139,6 +1242,28 @@ export default function Incentives() {
             {insightRows.map((row) => (
               <IncentiveMetricRow key={row.key} row={row} onWeightChange={updateKraWeight} />
             ))}
+          </div>
+
+          <div className="mt-2 space-y-1 text-[10px] leading-snug">
+            <p className="text-slate-500">
+              Weights &amp; targets from <span className="font-semibold text-slate-700">{weightSourceLabel}</span>
+              {weightSource.edited && (
+                <>
+                  {" "}· edited here (not saved){" "}
+                  <button type="button" onClick={resetKraWeights} className="font-bold text-rose-700 hover:underline">
+                    Reset to Settings
+                  </button>
+                </>
+              )}
+            </p>
+            {totalKraWeight !== 100 && (
+              <p className="text-rose-600 font-semibold">
+                Metric weights total {totalKraWeight}% - they must add up to 100%. Change them in Settings, KPI Weightages.
+              </p>
+            )}
+            {settingsIssue && (
+              <p className="text-amber-700 font-semibold">Settings issue: {settingsIssue}</p>
+            )}
           </div>
 
           <div className="mt-auto pt-3 border-t border-rose-50 flex flex-wrap items-center justify-between gap-3">
@@ -1207,14 +1332,14 @@ export default function Incentives() {
             <div className="min-w-0">
               <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Lead Status</h3>
               <p className="text-[10px] text-slate-500 mt-0.5 truncate">
-                {selected.name} · {monthLabel}
-                {employeeLeads.length > 0 && (
-                  <span className="text-emerald-600 font-semibold"> · {employeeLeads.length} synced</span>
+                {selected.name} · {periodLabel}
+                {periodLeads.length > 0 && (
+                  <span className="text-emerald-600 font-semibold"> · {periodLeads.length} synced</span>
                 )}
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[10px] font-bold text-slate-600 tabular-nums">{leadChartTotal} total</span>
+              <span className="text-[10px] font-bold text-slate-600 tabular-nums">{leadStatusTotal} total</span>
               <Kanban className="w-4 h-4 text-rose-500/70" />
             </div>
           </div>
@@ -1261,8 +1386,8 @@ export default function Incentives() {
             ) : filteredLeads.length === 0 ? (
               <div className="min-h-[80px] rounded-lg border border-dashed border-rose-200 bg-white/60 flex items-center justify-center px-3 text-center">
                 <p className="text-[10px] text-slate-400">
-                  No {leadTab.toLowerCase()} leads for {selected.name}
-                  {employeeLeads.length > 0 ? ` (${employeeLeads.length} total synced)` : ""}
+                  No {leadTab.toLowerCase()} leads for {selected.name} in {periodLabel}
+                  {ownedLeads.length > periodLeads.length ? ` (${ownedLeads.length - periodLeads.length} more outside this period)` : ""}
                 </p>
               </div>
             ) : (
@@ -1348,18 +1473,29 @@ export default function Incentives() {
             </div>
           </div>
 
-          <div className="mt-2.5 grid grid-cols-2 gap-2 shrink-0">
-            <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-2.5">
-              <p className="text-[8px] font-bold text-emerald-700 uppercase tracking-wide">Strongest</p>
-              <p className="text-[10px] font-semibold text-slate-800 mt-1 truncate">{topCompetency?.skill}</p>
-              <p className="text-base font-black text-emerald-700 tabular-nums leading-none mt-1">{topCompetency?.score}%</p>
+          {!hasCompetencyData ? (
+            <div className="mt-2.5 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-3 text-center shrink-0">
+              <p className="text-[11px] font-semibold text-slate-600">No competency data yet</p>
+              <p className="text-[9px] text-slate-400 mt-0.5">
+                Scores appear once this employee's calls are AI-scored for {periodLabel}.
+              </p>
             </div>
-            <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-2.5">
-              <p className="text-[8px] font-bold text-amber-700 uppercase tracking-wide">Needs Focus</p>
-              <p className="text-[10px] font-semibold text-slate-800 mt-1 truncate">{weakestCompetency?.skill}</p>
-              <p className="text-base font-black text-amber-700 tabular-nums leading-none mt-1">{weakestCompetency?.score}%</p>
+          ) : (
+            <div className={`mt-2.5 grid gap-2 shrink-0 ${weakestCompetency ? "grid-cols-2" : "grid-cols-1"}`}>
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-2.5">
+                <p className="text-[8px] font-bold text-emerald-700 uppercase tracking-wide">Strongest</p>
+                <p className="text-[10px] font-semibold text-slate-800 mt-1 truncate">{topCompetency.skill}</p>
+                <p className="text-base font-black text-emerald-700 tabular-nums leading-none mt-1">{topCompetency.score}%</p>
+              </div>
+              {weakestCompetency && (
+                <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-2.5">
+                  <p className="text-[8px] font-bold text-amber-700 uppercase tracking-wide">Needs Focus</p>
+                  <p className="text-[10px] font-semibold text-slate-800 mt-1 truncate">{weakestCompetency.skill}</p>
+                  <p className="text-base font-black text-amber-700 tabular-nums leading-none mt-1">{weakestCompetency.score}%</p>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           {focusSkills.length > 0 && (
             <div className="mt-2 rounded-lg border border-rose-100 bg-rose-50/30 p-2.5 shrink-0">
@@ -1380,15 +1516,15 @@ export default function Incentives() {
 
           <div className="mt-auto pt-2.5 border-t border-rose-50 flex items-center justify-between gap-2">
             <p className="text-[9px] text-slate-500 leading-snug min-w-0">
-              Avg score <span className="font-black text-rose-800 tabular-nums">{avgCompetency}%</span>
+              Avg score <span className="font-black text-rose-800 tabular-nums">{hasCompetencyData ? `${avgCompetency}%` : "-"}</span>
               {topCompetency && (
                 <>
                   {" "}· Strongest: <span className="font-semibold text-slate-700">{topCompetency.skill}</span>
                 </>
               )}
             </p>
-            <span className="text-[10px] font-bold text-emerald-700 shrink-0 tabular-nums">
-              {avgCompetency >= 80 ? "Above target" : "Needs coaching"}
+            <span className={`text-[10px] font-bold shrink-0 tabular-nums ${hasCompetencyData ? "text-emerald-700" : "text-slate-400"}`}>
+              {!hasCompetencyData ? "No data yet" : avgCompetency >= 80 ? "Above target" : "Needs coaching"}
             </span>
           </div>
         </GlassCard>
@@ -1412,7 +1548,7 @@ export default function Incentives() {
           <div className="space-y-5">
             <div className="rounded-xl bg-rose-50/60 border border-rose-100 p-3 text-xs text-slate-600">
               <p className="font-semibold text-slate-800">{selected.name}</p>
-              <p className="mt-0.5">{selected.role} · {selected.team}</p>
+              <p className="mt-0.5">{roleLabel(selected.role)} · {selected.team}</p>
               <p className="mt-1 text-slate-500">{monthLabel} · Status: {selected.status}</p>
             </div>
 
@@ -1420,7 +1556,7 @@ export default function Incentives() {
               <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">Performance Inputs</h4>
               <div className="space-y-3">
                 <div>
-                  <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block mb-1">Base Salary ($)</label>
+                  <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block mb-1">Base Salary (₹)</label>
                   <input
                     type="number"
                     value={calcDraft.baseSalary}

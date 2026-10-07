@@ -6,18 +6,18 @@ import {
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
-  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import toast from "react-hot-toast";
 import { GlassCard, Badge } from "../../components/Primitives.jsx";
 import {
-  getAllServices, SERVICE_CATEGORIES, SERVICE_STATUSES, SERVICE_PRICING_SORT,
-  formatServiceMoney, formatServicePriceLabel, serviceBadgeTone,
+  getAllServices, SERVICE_STATUSES, SERVICE_PRICING_SORT,
+  formatServicePriceLabel, serviceBadgeTone,
+  deriveServiceCategoryOptions, isPlaceholderDescription, isRecentService,
 } from "../../data/servicesMock.js";
 import { apiGet, apiPost, apiDelete, invalidateCache } from "../../lib/api.js";
-import { formatIndianNumber } from "../../lib/indianFormat.js";
+import { formatIndianNumber, formatINR } from "../../lib/indianFormat.js";
 import { getAdminCrmHeaders } from "../../lib/crmContext.js";
-import { cleanServiceName, extractLeadService, leadBelongsToService } from "../../lib/servicesRegistry.js";
 import AddServiceDrawer from "./AddServiceDrawer.jsx";
 
 const ICON_MAP = {
@@ -38,14 +38,45 @@ function normalizeCatalogService(service = {}) {
     price: "",
     ...service,
   };
+  // `revenue` from the API is the sum of leads' expected_revenue (pipeline value), not realised revenue.
+  const pipelineValue = Number(merged.pipelineValue ?? merged.revenue) || 0;
   return {
     ...merged,
-    tags: Array.isArray(merged.tags) ? merged.tags : [],
+    // "NEW SERVICE" is a creation-time tag: only keep it while the service is actually new.
+    tags: (Array.isArray(merged.tags) ? merged.tags : []).filter(
+      (t) => String(t).trim().toUpperCase() !== "NEW SERVICE" || isRecentService(merged),
+    ),
     clients: Number(merged.clients) || 0,
+    pipelineValue,
+    converted: Number(merged.converted) || 0,
+    leads: Number(merged.leads) || 0,
     priceNum: Number(merged.priceNum) || 0,
     badge: merged.badge || "ACTIVE",
     icon: merged.icon || "bot",
   };
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function monthLabel(key, withYear = true) {
+  const [y, m] = String(key).split("-");
+  const name = MONTH_SHORT[Number(m) - 1] || key;
+  return withYear ? `${name} ${y}` : name;
+}
+
+/** Fills months with no data between the first and last month so the x-axis is continuous (zeros are real). */
+function fillMonthGaps(rows) {
+  if (!rows.length) return [];
+  const byKey = new Map(rows.map((r) => [r.month, r]));
+  const [sy, sm] = rows[0].month.split("-").map(Number);
+  const [ey, em] = rows[rows.length - 1].month.split("-").map(Number);
+  const out = [];
+  for (let y = sy, m = sm; y < ey || (y === ey && m <= em); m += 1) {
+    if (m > 12) { m = 1; y += 1; }
+    const key = `${y}-${String(m).padStart(2, "0")}`;
+    out.push(byKey.get(key) || { month: key, leads: 0, pipelineValue: 0 });
+  }
+  return out;
 }
 
 function ChartCardHeader({ title, subtitle }) {
@@ -60,6 +91,8 @@ function ChartCardHeader({ title, subtitle }) {
 export default function ServicesDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [catalog, setCatalog] = useState([]);
+  const [monthlySeries, setMonthlySeries] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
@@ -69,40 +102,17 @@ export default function ServicesDashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [dataRes, leadsRes] = await Promise.allSettled([
-          apiGet("/api/services", { headers: getAdminCrmHeaders(), skipCache: true, cacheTtl: 0 }),
-          apiGet("/api/v1/leads?limit=500&page=1", { headers: getAdminCrmHeaders() }),
-        ]);
-        
-        let services = dataRes.status === "fulfilled" && dataRes.value?.services?.length
-          ? dataRes.value.services
-          : getAllServices();
-          
-        let leads = leadsRes.status === "fulfilled"
-          ? (Array.isArray(leadsRes.value) ? leadsRes.value : (leadsRes.value?.data || leadsRes.value?.leads || []))
-          : [];
-
-        const mergedServices = [...services];
-
-        if (leads.length > 0) {
-          mergedServices.forEach((svc) => {
-            const svcName = svc.name;
-            const matching = leads.filter((l) => leadBelongsToService(l, svcName));
-            if (matching.length > 0) {
-              svc.leads = matching.length;
-              svc.converted = matching.filter((l) => 
-                String(l.status || "").toLowerCase().includes("converted") || 
-                String(l.status || "").toLowerCase().includes("payment")
-              ).length;
-              svc.revenue = matching.reduce((acc, l) => acc + (Number(l.expectedRevenue || l.expected_revenue) || 0), 0);
-              svc.convRate = svc.leads > 0 ? Math.round((svc.converted / svc.leads) * 100) : 0;
-            }
-          });
-        }
-
-        setCatalog(mergedServices.map(normalizeCatalogService));
+        // The API already computes leads / closed deals / pipeline value per service across ALL leads and a
+        // real month-by-month series, so the cards and both charts read from the same payload.
+        const data = await apiGet("/api/services", { headers: getAdminCrmHeaders(), skipCache: true, cacheTtl: 0 });
+        const services = data?.services?.length ? data.services : getAllServices();
+        setCatalog(services.map(normalizeCatalogService));
+        setMonthlySeries(Array.isArray(data?.revenueByMonth) ? data.revenueByMonth : []);
       } catch {
         setCatalog(getAllServices().map(normalizeCatalogService));
+        setMonthlySeries([]);
+      } finally {
+        setLoaded(true);
       }
     })();
   }, []);
@@ -121,30 +131,36 @@ export default function ServicesDashboard() {
   }, [salesDistribution]);
 
   const salesWithPct = useMemo(() => {
-    return salesDistribution.map((item) => ({
-      ...item,
-      pct: salesTotal ? Math.round((item.sales / salesTotal) * 100) : 0,
-    }));
+    return salesDistribution
+      .filter((item) => item.sales > 0)
+      .map((item) => ({
+        ...item,
+        pct: salesTotal ? Math.round((item.sales / salesTotal) * 100) : 0,
+      }))
+      .sort((a, b) => b.sales - a.sales);
   }, [salesDistribution, salesTotal]);
 
-  const topSalesLine = useMemo(() => {
-    if (!salesWithPct.length) return null;
-    return [...salesWithPct].sort((a, b) => b.sales - a.sales)[0];
-  }, [salesWithPct]);
+  const topSalesLine = salesWithPct[0] || null;
 
+  const pipelineTotal = useMemo(() => catalog.reduce((sum, s) => sum + (s.pipelineValue || 0), 0), [catalog]);
+
+  // Real monthly series (pipeline value = expected revenue of leads created that month, for catalog services).
   const revenueTrajectory = useMemo(
-    () => catalog.map((s, i) => ({ period: `S${i + 1}`, revenue: Number(s.revenue) || 0, name: s.name })),
-    [catalog],
+    () => fillMonthGaps(monthlySeries).map((row) => ({
+      period: monthLabel(row.month, false),
+      label: monthLabel(row.month),
+      revenue: Number(row.pipelineValue) || 0,
+      leads: Number(row.leads) || 0,
+    })),
+    [monthlySeries],
   );
 
   const revenueStats = useMemo(() => {
-    const values = revenueTrajectory.map((d) => d.revenue);
-    if (!values.length) return { start: 0, peak: 0, latest: 0, growth: 0 };
-    const start = values[0];
-    const peak = Math.max(...values);
-    const latest = values[values.length - 1];
-    const growth = start ? Math.round(((latest - start) / start) * 100) : 0;
-    return { start, peak, latest, growth };
+    if (!revenueTrajectory.length) return null;
+    const peakRow = revenueTrajectory.reduce((best, row) => (row.revenue > best.revenue ? row : best), revenueTrajectory[0]);
+    const first = revenueTrajectory[0];
+    const latest = revenueTrajectory[revenueTrajectory.length - 1];
+    return { peakRow, first, latest };
   }, [revenueTrajectory]);
 
   const openAddService = () => setAddOpen(true);
@@ -172,6 +188,7 @@ export default function ServicesDashboard() {
         const data = await apiGet("/api/services", { skipCache: true, cacheTtl: 0 });
         if (data.services?.length) setCatalog(data.services.map(normalizeCatalogService));
         else setCatalog([]);
+        setMonthlySeries(Array.isArray(data?.revenueByMonth) ? data.revenueByMonth : []);
         toast.success(`${newService.name} saved to catalog`);
       } catch {
         toast.error("Could not save service — API unavailable");
@@ -186,6 +203,12 @@ export default function ServicesDashboard() {
   useEffect(() => {
     if (searchParams.get("action") === "addService") setAddOpen(true);
   }, [searchParams]);
+
+  const categoryOptions = useMemo(() => deriveServiceCategoryOptions(catalog), [catalog]);
+
+  useEffect(() => {
+    if (category !== "all" && !categoryOptions.some((o) => o.id === category)) setCategory("all");
+  }, [category, categoryOptions]);
 
   const filtered = useMemo(() => {
     let list = catalog.filter((s) => {
@@ -208,64 +231,77 @@ export default function ServicesDashboard() {
         <GlassCard className="p-3.5 sm:p-4 flex flex-col min-h-[260px]">
           <ChartCardHeader
             title="Sales Distribution"
-            subtitle="Closed deals by service line"
+            subtitle="Closed deals (converted / won / payment complete) by service line"
           />
-          <div className="flex-1 flex items-center gap-3 sm:gap-4 min-h-[168px]">
-            <div className="relative w-[132px] h-[132px] shrink-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={salesWithPct}
-                    dataKey="sales"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={40}
-                    outerRadius={58}
-                    paddingAngle={2}
-                    stroke="none"
-                  >
-                    {salesWithPct.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" fill="#881337" fontSize={16} fontWeight="800">
-                    {salesTotal.toLocaleString()}
-                  </text>
-                  <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" fill="#94a3b8" fontSize={8} fontWeight="600">
-                    Total Sales
-                  </text>
-                  <Tooltip
-                    formatter={(val, _name, props) => [
-                      `${val.toLocaleString()} sales · ${props.payload.pct}%`,
-                      props.payload.name,
-                    ]}
-                    contentStyle={{ borderRadius: 10, border: "1px solid #fecdd3", fontSize: 10, padding: "6px 10px" }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+          {salesTotal > 0 ? (
+            <div className="flex-1 flex items-center gap-3 sm:gap-4 min-h-[168px]">
+              <div className="relative w-[132px] h-[132px] shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={salesWithPct}
+                      dataKey="sales"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={40}
+                      outerRadius={58}
+                      paddingAngle={2}
+                      stroke="none"
+                    >
+                      {salesWithPct.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" fill="#881337" fontSize={16} fontWeight="800">
+                      {salesTotal.toLocaleString()}
+                    </text>
+                    <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" fill="#94a3b8" fontSize={8} fontWeight="600">
+                      Closed deals
+                    </text>
+                    <Tooltip
+                      formatter={(val, _name, props) => [
+                        `${val.toLocaleString()} closed · ${props.payload.pct}%`,
+                        props.payload.name,
+                      ]}
+                      contentStyle={{ borderRadius: 10, border: "1px solid #fecdd3", fontSize: 10, padding: "6px 10px" }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
 
-            <div className="flex-1 min-w-0 space-y-1.5">
-              {salesWithPct.map((item) => (
-                <div key={item.name} className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />
-                    <span className="text-[10px] font-semibold text-slate-700 truncate">{item.name}</span>
+              <div className="flex-1 min-w-0 space-y-1.5">
+                {salesWithPct.map((item) => (
+                  <div key={item.name} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="w-2 h-2 rounded-full shrink-0" style={{ background: item.color }} />
+                      <span className="text-[10px] font-semibold text-slate-700 truncate">{item.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[10px] font-bold text-slate-500 tabular-nums">{item.sales.toLocaleString()}</span>
+                      <span className="text-[10px] font-black text-rose-800 tabular-nums w-8 text-right">{item.pct}%</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] font-bold text-slate-500 tabular-nums">{item.sales.toLocaleString()}</span>
-                    <span className="text-[10px] font-black text-rose-800 tabular-nums w-8 text-right">{item.pct}%</span>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex-1 min-h-[168px] grid place-items-center text-center px-4">
+              <div>
+                <p className="text-xs font-bold text-slate-700">No closed deals yet</p>
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug max-w-[240px] mx-auto">
+                  {loaded && catalog.length
+                    ? `${formatIndianNumber(catalog.reduce((n, s) => n + s.leads, 0))} leads are in the pipeline across ${catalog.length} service${catalog.length === 1 ? "" : "s"}; none are converted or won yet.`
+                    : "Closed deals will appear here once leads convert."}
+                </p>
+              </div>
+            </div>
+          )}
           {topSalesLine && (
             <p className="text-[9px] text-slate-500 pt-2.5 mt-2 border-t border-rose-50 leading-snug">
               <span className="font-semibold text-slate-700">{topSalesLine.name}</span>
-              {" "}leads with{" "}
-              <span className="font-black text-rose-800 tabular-nums">{topSalesLine.sales.toLocaleString()} sales</span>
-              {" "}({topSalesLine.pct}% of catalog).
+              {" "}has the most closed deals:{" "}
+              <span className="font-black text-rose-800 tabular-nums">{topSalesLine.sales.toLocaleString()}</span>
+              {" "}({topSalesLine.pct}% of {salesTotal.toLocaleString()} closed).
             </p>
           )}
         </GlassCard>
@@ -273,68 +309,104 @@ export default function ServicesDashboard() {
         <GlassCard className="p-3.5 sm:p-4 flex flex-col min-h-[260px]">
           <ChartCardHeader
             title="Revenue Trajectory"
-            subtitle="Catalog revenue trend (₹ lakh)"
+            subtitle="Pipeline value by month: expected revenue of leads added to catalog services (not realised revenue)"
           />
 
-
-
-          <div className="flex-1 min-h-[148px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={revenueTrajectory.length ? revenueTrajectory : [{ period: "—", revenue: 0 }]}
-                margin={{ top: 6, right: 8, left: 0, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="revenueTrajGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#be123c" stopOpacity={0.22} />
-                    <stop offset="100%" stopColor="#be123c" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="#fff1f2" vertical={false} strokeDasharray="4 4" />
-                <XAxis
-                  dataKey="period"
-                  axisLine={{ stroke: "#fecdd3" }}
-                  tickLine={false}
-                  tick={{ fill: "#94a3b8", fontSize: 8, fontWeight: 600 }}
-                  interval={0}
-                />
-                <YAxis
-                  domain={[0, 20]}
-                  ticks={[1, 5, 20]}
-                  width={48}
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "#64748b", fontSize: 8, fontWeight: 600 }}
-                  tickFormatter={(v) => (v === 1 ? "1 Lakh" : `${v} lakh`)}
-                />
-                <Tooltip
-                  cursor={{ stroke: "#fda4af", strokeWidth: 1, strokeDasharray: "4 4" }}
-                  contentStyle={{ borderRadius: 10, border: "1px solid #fecdd3", fontSize: 10, padding: "6px 10px" }}
-                  labelFormatter={(_, items) => {
-                    const row = items?.[0]?.payload;
-                    return row ? `${row.period} · ${row.label}` : "";
-                  }}
-                  formatter={(val) => [`₹${val}L`, "Revenue"]}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="#be123c"
-                  strokeWidth={2.5}
-                  fill="url(#revenueTrajGrad)"
-                  dot={{ r: 3, fill: "#be123c", stroke: "#fff", strokeWidth: 1.5 }}
-                  activeDot={{ r: 5, fill: "#be123c", stroke: "#fff", strokeWidth: 2 }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-[9px] text-slate-500 pt-2 border-t border-rose-50 leading-snug">
-            Revenue peaked at{" "}
-            <span className="font-black text-rose-800 tabular-nums">₹{revenueStats.peak}L</span>
-            {" "}in the latest period — up from{" "}
-            <span className="font-black text-rose-800 tabular-nums">₹{revenueStats.start}L</span>
-            {" "}at cycle start.
-          </p>
+          {revenueTrajectory.length > 0 && revenueStats ? (
+            <>
+              <div className="flex-1 min-h-[148px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  {revenueTrajectory.length <= 2 ? (
+                    <BarChart data={revenueTrajectory} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid stroke="#fff1f2" vertical={false} strokeDasharray="4 4" />
+                      <XAxis
+                        dataKey="period"
+                        axisLine={{ stroke: "#fecdd3" }}
+                        tickLine={false}
+                        tick={{ fill: "#94a3b8", fontSize: 8, fontWeight: 600 }}
+                        interval={0}
+                      />
+                      <YAxis
+                        width={52}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: "#64748b", fontSize: 8, fontWeight: 600 }}
+                        tickFormatter={(v) => formatINR(v)}
+                      />
+                      <Tooltip
+                        cursor={{ fill: "#fff1f2" }}
+                        contentStyle={{ borderRadius: 10, border: "1px solid #fecdd3", fontSize: 10, padding: "6px 10px" }}
+                        labelFormatter={(_, items) => items?.[0]?.payload?.label || ""}
+                        formatter={(val, _name, props) => [`${formatINR(val)} · ${props.payload.leads} leads`, "Pipeline value"]}
+                      />
+                      <Bar dataKey="revenue" fill="#be123c" radius={[4, 4, 0, 0]} maxBarSize={48} />
+                    </BarChart>
+                  ) : (
+                    <AreaChart data={revenueTrajectory} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="revenueTrajGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#be123c" stopOpacity={0.22} />
+                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#fff1f2" vertical={false} strokeDasharray="4 4" />
+                      <XAxis
+                        dataKey="period"
+                        axisLine={{ stroke: "#fecdd3" }}
+                        tickLine={false}
+                        tick={{ fill: "#94a3b8", fontSize: 8, fontWeight: 600 }}
+                        interval={0}
+                      />
+                      <YAxis
+                        width={52}
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: "#64748b", fontSize: 8, fontWeight: 600 }}
+                        tickFormatter={(v) => formatINR(v)}
+                      />
+                      <Tooltip
+                        cursor={{ stroke: "#fda4af", strokeWidth: 1, strokeDasharray: "4 4" }}
+                        contentStyle={{ borderRadius: 10, border: "1px solid #fecdd3", fontSize: 10, padding: "6px 10px" }}
+                        labelFormatter={(_, items) => items?.[0]?.payload?.label || ""}
+                        formatter={(val, _name, props) => [`${formatINR(val)} · ${props.payload.leads} leads`, "Pipeline value"]}
+                      />
+                      <Area
+                        type="linear"
+                        dataKey="revenue"
+                        stroke="#be123c"
+                        strokeWidth={2.5}
+                        fill="url(#revenueTrajGrad)"
+                        dot={{ r: 3, fill: "#be123c", stroke: "#fff", strokeWidth: 1.5 }}
+                        activeDot={{ r: 5, fill: "#be123c", stroke: "#fff", strokeWidth: 2 }}
+                      />
+                    </AreaChart>
+                  )}
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[9px] text-slate-500 pt-2 border-t border-rose-50 leading-snug">
+                Pipeline value peaked at{" "}
+                <span className="font-black text-rose-800 tabular-nums">{formatINR(revenueStats.peakRow.revenue)}</span>
+                {" "}in {revenueStats.peakRow.label}
+                {revenueTrajectory.length > 1 && revenueStats.latest.label !== revenueStats.peakRow.label && (
+                  <>
+                    {"; "}latest month ({revenueStats.latest.label}):{" "}
+                    <span className="font-black text-rose-800 tabular-nums">{formatINR(revenueStats.latest.revenue)}</span>
+                  </>
+                )}
+                {". "}Total across catalog:{" "}
+                <span className="font-black text-rose-800 tabular-nums">{formatINR(pipelineTotal)}</span>.
+              </p>
+            </>
+          ) : (
+            <div className="flex-1 min-h-[148px] grid place-items-center text-center px-4">
+              <div>
+                <p className="text-xs font-bold text-slate-700">No revenue history yet</p>
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug max-w-[240px] mx-auto">
+                  Monthly pipeline value appears once leads with an expected revenue are linked to a service.
+                </p>
+              </div>
+            </div>
+          )}
         </GlassCard>
       </div>
 
@@ -358,7 +430,7 @@ export default function ServicesDashboard() {
                 onChange={(e) => setCategory(e.target.value)}
                 className="h-10 px-3 rounded-xl border border-rose-100 bg-white text-xs font-bold text-rose-800 outline-none focus:border-rose-400"
               >
-                {SERVICE_CATEGORIES.map((o) => (
+                {categoryOptions.map((o) => (
                   <option key={o.id} value={o.id}>{o.label}</option>
                 ))}
               </select>
@@ -389,14 +461,6 @@ export default function ServicesDashboard() {
               >
                 <Download className="w-3.5 h-3.5" />
                 Export Reports
-              </button>
-              <button
-                type="button"
-                onClick={openAddService}
-                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-rose-700 text-white text-xs font-bold hover:bg-rose-800 whitespace-nowrap"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Service
               </button>
             </div>
           </div>
@@ -436,7 +500,11 @@ export default function ServicesDashboard() {
                     </span>
                   )}
                 </div>
-                <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 flex-1 leading-relaxed">{service.description}</p>
+                {isPlaceholderDescription(service.description, service.name) ? (
+                  <p className="text-[10px] text-slate-400 italic mt-1 line-clamp-2 flex-1 leading-relaxed">No description yet</p>
+                ) : (
+                  <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 flex-1 leading-relaxed">{service.description}</p>
+                )}
                 <div className="flex flex-wrap gap-1 mt-2">
                   {service.tags.map((tag) => (
                     <span key={tag} className="text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
@@ -446,8 +514,8 @@ export default function ServicesDashboard() {
                 </div>
                 <div className="grid grid-cols-3 gap-1.5 mt-3 pt-2.5 border-t border-rose-50">
                   {[
-                    ["Revenue", formatServiceMoney(service.revenue)],
-                    ["Clients", String(service.clients)],
+                    ["Pipeline", formatINR(service.pipelineValue)],
+                    ["Closed", formatIndianNumber(service.converted)],
                     ["Leads", service.leads >= 1000 ? `${(service.leads / 1000).toFixed(1)}k` : formatIndianNumber(service.leads)],
                   ].map(([label, val]) => (
                     <div key={label}>

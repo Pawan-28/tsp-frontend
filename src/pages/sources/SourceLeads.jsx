@@ -4,6 +4,7 @@ import {
   Search, ClipboardList, CheckCircle2, IndianRupee, ChevronLeft, ChevronRight as ChevronRightIcon,
 } from "lucide-react";
 import { GlassCard, StatCard, Badge } from "../../components/Primitives.jsx";
+import { SkeletonBlock } from "../../components/Skeleton.jsx";
 import { apiGet } from "../../lib/api.js";
 import { fetchAllLeads } from "../../lib/leadSync.js";
 import { getAdminCrmHeaders } from "../../lib/crmContext.js";
@@ -71,7 +72,7 @@ export default function SourceLeads() {
     (async () => {
       setLoading(true);
       try {
-        const items = await fetchAllLeads(apiGet, { headers: getAdminCrmHeaders() });
+        const items = await fetchAllLeads(apiGet, { headers: getAdminCrmHeaders(), pageSize: 2500 });
         if (!cancelled) {
           const marketing = filterLeadsForSourceDashboard(items);
           const filtered = filterLeadsBySourceKey(marketing, decodedKey);
@@ -105,8 +106,31 @@ export default function SourceLeads() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <p className="text-sm text-slate-400">Loading {sourceLabel} leads…</p>
+      <div className="space-y-4 page-shell min-w-0" role="status" aria-label={`Loading ${sourceLabel} leads`}>
+        <GlassCard className="p-4">
+          <Link to="/sources" className="text-[10px] font-bold text-rose-600 hover:underline">← Sources</Link>
+          <h1 className="text-lg font-black text-slate-900 mt-1">{sourceLabel}</h1>
+          <p className="text-[11px] text-slate-500">Loading {sourceLabel} leads…</p>
+        </GlassCard>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {[0, 1, 2, 3].map((i) => (
+            <GlassCard key={i} className="p-3.5 sm:p-4 min-h-[96px] !bg-white !border-slate-200/80 space-y-3">
+              <SkeletonBlock className="block h-2.5 w-20" />
+              <SkeletonBlock className="block h-6 w-16" />
+            </GlassCard>
+          ))}
+        </div>
+        <GlassCard className="p-4 space-y-3">
+          <SkeletonBlock className="block h-10 w-full rounded-xl" />
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="flex items-center gap-3">
+              <SkeletonBlock className="h-3.5 w-1/4" />
+              <SkeletonBlock className="h-3.5 w-1/6" />
+              <SkeletonBlock className="h-3.5 w-1/5" />
+              <SkeletonBlock className="h-3.5 w-1/6" />
+            </div>
+          ))}
+        </GlassCard>
       </div>
     );
   }

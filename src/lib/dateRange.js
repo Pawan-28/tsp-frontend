@@ -79,3 +79,41 @@ export function getDateBounds(preset, fromDate = "", toDate = "") {
     end: formatLocalYMD(monthEnd),
   };
 }
+
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function isDateKey(v) {
+  if (typeof v !== "string" || !DATE_KEY_RE.test(v)) return false;
+  const [y, m, d] = v.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+}
+
+/** A custom range is usable only when BOTH dates are valid YYYY-MM-DD and From <= To. */
+export function isValidCustomRange(from, to) {
+  return isDateKey(from) && isDateKey(to) && from <= to;
+}
+
+/** Why a draft custom range cannot be applied (null when it can). */
+export function customRangeError(from, to) {
+  if (!from && !to) return "Select both a From and a To date.";
+  if (!from) return "Select a From date.";
+  if (!to) return "Select a To date.";
+  if (!isDateKey(from) || !isDateKey(to)) return "Enter valid dates.";
+  if (from > to) return "From date must be on or before the To date.";
+  return null;
+}
+
+/** "1 Oct – 6 Oct 2026" (or "1 Oct 2026" for a single day). `withYear=false` drops the year (compact pills). */
+export function formatRangeLabel(from, to, withYear = true) {
+  if (!isDateKey(from) || !isDateKey(to)) return "";
+  const fmt = (key, y) => {
+    const [yy, mm, dd] = key.split("-").map(Number);
+    return `${dd} ${MONTH_SHORT[mm - 1]}${y ? ` ${yy}` : ""}`;
+  };
+  if (from === to) return fmt(from, withYear);
+  const sameYear = from.slice(0, 4) === to.slice(0, 4);
+  if (!withYear) return `${fmt(from, false)} – ${fmt(to, false)}`;
+  return `${fmt(from, !sameYear)} – ${fmt(to, true)}`;
+}

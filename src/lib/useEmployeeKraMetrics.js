@@ -82,6 +82,9 @@ export function useEmployeeKraMetrics(employeeId, options = {}) {
         totalLeads: leads.length,
         cash: cashRes?.cashCollected ?? 0,
         periodLabel: callyzerRes?.label || cashRes?.label || "",
+        // lets consumers ignore metrics that still belong to the previous employee / period
+        employeeId: Number(employeeId),
+        periodKey: `${period}|${month || ""}`,
       });
     } finally {
       if (!silent) setLoading(false);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Save, Bot, Database, Target, Briefcase, Code, Plus, Trash2,
@@ -7,7 +7,7 @@ import {
 import toast from "react-hot-toast";
 import { GlassCard, Badge } from "../../components/Primitives.jsx";
 import {
-  SERVICE_CATEGORIES, formatServicePriceLabel,
+  deriveServiceCategoryOptions, formatServiceCategoryLabel, formatServicePriceLabel,
 } from "../../data/servicesMock.js";
 import { apiGet, apiPost } from "../../lib/api.js";
 import { getAdminCrmHeaders } from "../../lib/crmContext.js";
@@ -28,7 +28,6 @@ const TABS = [
   "Features & Workflow",
 ];
 
-const CATEGORY_OPTIONS = SERVICE_CATEGORIES.filter((c) => c.id !== "all");
 const BADGE_OPTIONS = ["ACTIVE", "POPULAR", "ENTERPRISE"];
 const STATUS_OPTIONS = ["ACTIVE", "PAUSED", "DRAFT"];
 
@@ -103,6 +102,17 @@ export default function ServiceEdit() {
   const [draft, setDraft] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [distributing, setDistributing] = useState(false);
+  // Category choices come from the services actually in the catalog (not template leftovers).
+  const [catalogServices, setCatalogServices] = useState([]);
+  const categoryOptions = useMemo(() => {
+    const opts = deriveServiceCategoryOptions(catalogServices).filter((o) => o.id !== "all");
+    // Keep the service's own category selectable even when no other service uses it.
+    const current = String(draft?.category || "").trim();
+    if (current && !opts.some((o) => o.id === current)) {
+      opts.push({ id: current, label: formatServiceCategoryLabel(current) });
+    }
+    return opts;
+  }, [catalogServices, draft?.category]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +136,7 @@ export default function ServiceEdit() {
         ]);
         const found = (svcRes?.services || []).find((s) => String(s.id) === String(serviceId)) || null;
         if (!cancelled) {
+          setCatalogServices(svcRes?.services || []);
           setService(found);
           setDraft(initDraft(found));
           setEmployees(Array.isArray(empRes) ? empRes : []);
@@ -358,12 +369,12 @@ export default function ServiceEdit() {
                     <select
                       value={draft.category}
                       onChange={(e) => {
-                        const opt = CATEGORY_OPTIONS.find((c) => c.id === e.target.value);
+                        const opt = categoryOptions.find((c) => c.id === e.target.value);
                         patch({ category: e.target.value, categoryLabel: opt?.label?.replace(/^Category: /, "") || e.target.value });
                       }}
                       className={inputClass}
                     >
-                      {CATEGORY_OPTIONS.map((c) => (
+                      {categoryOptions.map((c) => (
                         <option key={c.id} value={c.id}>{c.label.replace(/^Category: /, "")}</option>
                       ))}
                     </select>

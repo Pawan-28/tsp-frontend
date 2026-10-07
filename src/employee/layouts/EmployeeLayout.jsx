@@ -1,4 +1,5 @@
-import { useState, Component } from "react";
+import { useState, useRef, Component } from "react";
+import { useDismissable } from "../../hooks/useDismissable.js";
 import { Outlet, useOutletContext, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Plus, Phone, Calendar, CheckSquare, MessageSquare } from "lucide-react";
@@ -51,6 +52,8 @@ export default function EmployeeLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const fabRef = useRef(null);
+  useDismissable({ open: fabOpen, onDismiss: () => setFabOpen(false), refs: [fabRef] });
   const navigate = useNavigate();
 
   const quickActions = [
@@ -74,7 +77,7 @@ export default function EmployeeLayout() {
         <div className="flex-1 min-w-0 flex flex-col max-w-full overflow-x-clip">
           <EmployeeTopbar onMenu={() => setSidebarOpen(true)} />
 
-          <main className="flex-1 bg-white text-slate-900 p-3 sm:p-4 md:p-6 lg:p-8 xl:px-10 pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))] lg:pb-8 page-shell overflow-x-clip relative">
+          <main className="flex-1 bg-white text-slate-900 p-3 sm:p-4 md:p-6 lg:p-8 xl:px-10 pb-[calc(9.5rem+env(safe-area-inset-bottom,0px))] lg:pb-8 page-shell overflow-x-clip relative">
             <EmployeeRouteErrorBoundary>
               <Outlet context={{ toast: (msg, type = "success") => (type === "error" ? toast.error(msg) : toast.success(msg)) }} />
             </EmployeeRouteErrorBoundary>
@@ -82,7 +85,7 @@ export default function EmployeeLayout() {
 
           <EmployeeMobileNav />
 
-          <div className="relative">
+          <div className="relative" ref={fabRef}>
             <button
               type="button"
               onClick={() => setFabOpen(!fabOpen)}

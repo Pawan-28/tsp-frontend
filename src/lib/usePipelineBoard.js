@@ -232,15 +232,29 @@ export function usePipelineBoard({
   };
 }
 
+/** "Show more" reveals this many extra cards per click (rendering thousands at once freezes the board). */
+export const KANBAN_SHOW_MORE_STEP = 100;
+
+/**
+ * Max cards rendered for a column. `expanded` is `false` (initial cap), `true` (everything — kept for
+ * callers that expand fully), or a number = extra cards revealed on top of the initial cap.
+ */
+function kanbanColumnLimit(expanded) {
+  if (expanded === true) return Infinity;
+  const extra = Number(expanded);
+  return MAX_KANBAN_COLUMN_CARDS + (Number.isFinite(extra) && extra > 0 ? extra : 0);
+}
+
 /** Slice column cards for render — full count still shown in column header. */
 export function visibleKanbanColumnLeads(columnLeads = [], expanded = false) {
   const list = Array.isArray(columnLeads) ? columnLeads : [];
-  if (expanded || list.length <= MAX_KANBAN_COLUMN_CARDS) return list;
-  return list.slice(0, MAX_KANBAN_COLUMN_CARDS);
+  const limit = kanbanColumnLimit(expanded);
+  if (list.length <= limit) return list;
+  return list.slice(0, limit);
 }
 
 export function hiddenKanbanColumnCount(columnLeads = [], expanded = false) {
   const list = Array.isArray(columnLeads) ? columnLeads : [];
-  if (expanded || list.length <= MAX_KANBAN_COLUMN_CARDS) return 0;
-  return list.length - MAX_KANBAN_COLUMN_CARDS;
+  const limit = kanbanColumnLimit(expanded);
+  return list.length <= limit ? 0 : list.length - limit;
 }

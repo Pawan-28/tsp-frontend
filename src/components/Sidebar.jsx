@@ -1,18 +1,6 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import {
-  LayoutDashboard,
-  FileText,
-  GitBranch,
-  Kanban,
-  Users,
-  Coins,
-  Settings,
-  BookUser,
-  ClipboardList,
-  Package,
-  LogOut,
-} from "lucide-react";
+import { History } from "lucide-react";
 import { SidebarContext } from "../context/SidebarContext.js";
 import { useAdmin } from "../context/AdminContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -28,20 +16,12 @@ import {
   SidebarFooter,
 } from "./LightSidebar.jsx";
 import TSPublicationDoodleLogo from "./TSPublicationDoodleLogo.jsx";
-import AdminDoodleAvatar from "./AdminDoodleAvatar.jsx";
+import Avatar from "./Avatar.jsx";
+import { useDismissable } from "../hooks/useDismissable.js";
+import { openHeaderPopover } from "../hooks/useHeaderPopover.js";
+import { ADMIN_NAV_ITEMS, ADMIN_QUICK_ACTIONS } from "../lib/adminNav.js";
 
-const items = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/sop", label: "SOP Management", icon: FileText },
-  { to: "/sales", label: "Sales Funnel", icon: GitBranch },
-  { to: "/pipeline", label: "Pipeline", icon: Kanban },
-  { to: "/leads", label: "Leads Assign", icon: Users },
-  { to: "/sources", label: "Source", icon: ClipboardList },
-  { to: "/services", label: "Services", icon: Package },
-  { to: "/team", label: "Team Management", icon: BookUser },
-  { to: "/incentives", label: "Incentives", icon: Coins },
-  { to: "/settings", label: "Settings", icon: Settings },
-];
+const items = ADMIN_NAV_ITEMS;
 
 export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) {
   const [hovered, setHovered] = useState(false);
@@ -50,10 +30,13 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
   const navigate = useNavigate();
   const isExpanded = !collapsed || hovered;
 
+  // Esc closes the mobile drawer.
+  useDismissable({ open, onDismiss: onClose, outside: false });
+
   return (
     <SidebarContext.Provider value={{ collapsed: !isExpanded }}>
       {open && (
-        <div onClick={onClose} className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] lg:hidden" />
+        <div onClick={onClose} aria-hidden className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-[2px] lg:hidden" />
       )}
 
       <aside
@@ -95,6 +78,31 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
               </NavLink>
             );
           })}
+
+          {/* Phones only: the header Quick Actions / History buttons live here too. */}
+          <div className="lg:hidden pt-3">
+            <SidebarSectionLabel isExpanded={isExpanded}>Quick actions</SidebarSectionLabel>
+            {ADMIN_QUICK_ACTIONS.map((action) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.label}
+                  type="button"
+                  onClick={() => { onClose(); navigate(`${action.to}${action.search ?? ""}`); }}
+                  className="w-full text-left"
+                >
+                  <SidebarNavItem isActive={false} isExpanded={isExpanded} icon={Icon} label={action.label} />
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => { onClose(); openHeaderPopover("activity"); }}
+              className="w-full text-left"
+            >
+              <SidebarNavItem isActive={false} isExpanded={isExpanded} icon={History} label="Recent Activity" />
+            </button>
+          </div>
         </SidebarNav>
 
         <SidebarFooter>
@@ -104,7 +112,7 @@ export default function Sidebar({ open, onClose, collapsed, onToggleCollapse }) 
             name={admin.fullName}
             role={admin.role}
             title={`${admin.fullName} — ${admin.role}`}
-            avatar={<AdminDoodleAvatar size={32} shape="circle" photoUrl={user?.avatarUrl || admin.avatarUrl} />}
+            avatar={<Avatar size={32} shape="circle" src={user?.avatarUrl || admin.avatarUrl} name={admin.fullName || user?.name} />}
             onSignOut={() => { logout(); onClose(); navigate("/login", { replace: true }); }}
           />
         </SidebarFooter>

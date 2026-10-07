@@ -11,6 +11,41 @@ import { CustomSelect, EmployeeListPicker, colorForName } from "../components/Cu
 import { initialsFromName } from "../lib/adminProfile.js";
 import { apiGet, apiPut } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { roleLabel } from "../lib/roleLabel.js";
+import { formatIndianNumber } from "../lib/indianFormat.js";
+import { PASSWORD_HINT, validateNewPassword } from "../lib/passwordPolicy.js";
+import {
+  defaultKpiWeights,
+  normalizeKpiWeights,
+  validateIncentiveConfig,
+  countConfigChanges,
+  resolveTarget,
+} from "../lib/incentiveSettings.js";
+
+const DRAFT_STORAGE_KEY = "crm-settings-draft-v1";
+
+function readStoredDraft() {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDraft(draft) {
+  try {
+    if (draft) window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    else window.localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    /* storage unavailable - draft just isn't kept */
+  }
+}
+
+/** "₹1,00,000" caption for an amount input. */
+function rupeeCaption(value) {
+  return `₹${formatIndianNumber(Number(value) || 0)}`;
+}
 
 function mapEmployeeToTarget(emp, savedTargets) {
   const saved = Array.isArray(savedTargets)
@@ -19,11 +54,12 @@ function mapEmployeeToTarget(emp, savedTargets) {
   return {
     id: emp.id,
     name: emp.name,
-    team: emp.department || emp.role || "General",
-    calls: Number(saved?.calls ?? emp.call_target ?? 0),
-    leads: Number(saved?.leads ?? emp.qualified_lead_target ?? 0),
-    meetings: Number(saved?.meetings ?? emp.meeting_target ?? 0),
-    revenue: Number(saved?.revenue ?? emp.cash_target ?? 0),
+    team: roleLabel(emp.department || emp.role, "General"),
+    // Same precedence the Incentives page uses: employee record target, then saved Settings value.
+    calls: resolveTarget(emp.call_target, saved?.calls),
+    leads: resolveTarget(emp.qualified_lead_target, saved?.leads),
+    meetings: resolveTarget(emp.meeting_target, saved?.meetings),
+    revenue: resolveTarget(emp.cash_target, saved?.revenue),
   };
 }
 
@@ -43,8 +79,10 @@ const tabs = [
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("targets");
-  const [draftCount, setDraftCount] = useState(2);
   const [currentVersion, setCurrentVersion] = useState("v2.3");
+  // Last loaded/published config - pending edits are a diff against this, never a counter.
+  const [savedSnapshot, setSavedSnapshot] = useState(null);
+  const [storedDraft, setStoredDraft] = useState(null);
 
   // ─── 1. Target Management State ───
   const [employeeTargets, setEmployeeTargets] = useState([]);
@@ -56,12 +94,7 @@ export default function Settings() {
   const [bulkField, setBulkField] = useState("calls");
 
   // ─── 2. KPI Weightages State ───
-  const [kpiWeights, setKpiWeights] = useState([
-    { id: "revenue", label: "Cash Collected / Revenue", weight: 35, enabled: true },
-    { id: "leads", label: "Converted Leads", weight: 25, enabled: true },
-    { id: "meetings", label: "Completed Meetings", weight: 20, enabled: true },
-    { id: "calls", label: "Call Volume Completed", weight: 20, enabled: true },
-  ]);
+  const [kpiWeights, setKpiWeights] = useState(defaultKpiWeights);
 
   // ─── 3. Incentive slabs State ───
   const [incentiveSlabs, setIncentiveSlabs] = useState([
@@ -95,8 +128,9 @@ export default function Settings() {
       toast.error("Please enter your old password");
       return;
     }
-    if (newPassword.length < 6) {
-      toast.error("New password must be at least 6 characters");
+    const passwordError = validateNewPassword(newPassword);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -139,13 +173,31 @@ export default function Settings() {
           setBulkTeam(mergedTargets[0].team);
         }
 
-        if (settingsRes?.kpiWeights?.length) setKpiWeights(settingsRes.kpiWeights);
-        if (settingsRes?.incentiveSlabs?.length) setIncentiveSlabs(settingsRes.incentiveSlabs);
-        if (settingsRes?.baseIncentiveRate != null) setBaseIncentiveRate(settingsRes.baseIncentiveRate);
-        if (settingsRes?.targetBonusAmount != null) setTargetBonusAmount(settingsRes.targetBonusAmount);
-        if (settingsRes?.formulaType) setFormulaType(settingsRes.formulaType);
-        if (settingsRes?.ratingThresholds) setRatingThresholds(settingsRes.ratingThresholds);
+        const loadedKpis = normalizeKpiWeights(settingsRes?.kpiWeights);
+        const loadedSlabs = settingsRes?.incentiveSlabs?.length ? settingsRes.incentiveSlabs : incentiveSlabs;
+        const loadedBase = settingsRes?.baseIncentiveRate != null ? Number(settingsRes.baseIncentiveRate) : baseIncentiveRate;
+        const loadedBonus = settingsRes?.targetBonusAmount != null ? Number(settingsRes.targetBonusAmount) : targetBonusAmount;
+        const loadedFormula = settingsRes?.formulaType || formulaType;
+        const loadedRatings = settingsRes?.ratingThresholds || ratingThresholds;
+
+        setKpiWeights(loadedKpis);
+        setIncentiveSlabs(loadedSlabs);
+        setBaseIncentiveRate(loadedBase);
+        setTargetBonusAmount(loadedBonus);
+        setFormulaType(loadedFormula);
+        setRatingThresholds(loadedRatings);
         if (settingsRes?.currentVersion) setCurrentVersion(settingsRes.currentVersion);
+
+        setSavedSnapshot({
+          employeeTargets: mergedTargets,
+          kpiWeights: loadedKpis,
+          incentiveSlabs: loadedSlabs,
+          baseIncentiveRate: loadedBase,
+          targetBonusAmount: loadedBonus,
+          formulaType: loadedFormula,
+          ratingThresholds: loadedRatings,
+        });
+        setStoredDraft(readStoredDraft());
       } catch {
         setEmployeeTargets([]);
       } finally {
@@ -161,6 +213,43 @@ export default function Settings() {
 
   const isWeightValid = totalKpiWeight === 100;
 
+  // ─── Live Validation: baseline rate + slab ordering ───
+  const incentiveValidation = useMemo(
+    () => validateIncentiveConfig({ baseIncentiveRate, incentiveSlabs }),
+    [baseIncentiveRate, incentiveSlabs],
+  );
+
+  // ─── Pending edits: diff against the last loaded/published config ───
+  const currentConfig = useMemo(
+    () => ({
+      employeeTargets,
+      kpiWeights,
+      incentiveSlabs,
+      baseIncentiveRate,
+      targetBonusAmount,
+      formulaType,
+      ratingThresholds,
+    }),
+    [employeeTargets, kpiWeights, incentiveSlabs, baseIncentiveRate, targetBonusAmount, formulaType, ratingThresholds],
+  );
+  const pendingCount = useMemo(
+    () => (savedSnapshot ? countConfigChanges(savedSnapshot, currentConfig) : 0),
+    [savedSnapshot, currentConfig],
+  );
+  const canSave = pendingCount > 0 && isWeightValid && incentiveValidation.valid;
+  const saveBlockedReason = !isWeightValid
+    ? `KPI weights total ${totalKpiWeight}% - must equal 100%`
+    : !incentiveValidation.valid
+      ? "Fix the highlighted incentive slab errors first"
+      : pendingCount === 0
+        ? "No changes to save"
+        : "";
+
+  const draftDiffersFromLoaded = useMemo(
+    () => Boolean(storedDraft?.config && savedSnapshot && countConfigChanges(savedSnapshot, storedDraft.config) > 0),
+    [storedDraft, savedSnapshot],
+  );
+
   // ─── Selected Target Employee computed details ───
   const activeTargetEmp = useMemo(() => {
     if (!employeeTargets.length) return null;
@@ -174,8 +263,29 @@ export default function Settings() {
 
   // ─── Handlers ───
   const handleSaveDraft = () => {
-    setDraftCount(prev => prev + 1);
-    toast.success("Draft version saved successfully!");
+    if (!canSave) return;
+    const draft = { savedAt: new Date().toISOString(), config: currentConfig };
+    writeStoredDraft(draft);
+    setStoredDraft(draft);
+    toast.success("Draft saved on this device. Publish to apply it to the CRM.");
+  };
+
+  const handleRestoreDraft = () => {
+    if (!storedDraft?.config) return;
+    const cfg = storedDraft.config;
+    setEmployeeTargets(cfg.employeeTargets);
+    setKpiWeights(cfg.kpiWeights);
+    setIncentiveSlabs(cfg.incentiveSlabs);
+    setBaseIncentiveRate(cfg.baseIncentiveRate);
+    setTargetBonusAmount(cfg.targetBonusAmount);
+    setFormulaType(cfg.formulaType);
+    setRatingThresholds(cfg.ratingThresholds);
+    toast.success("Draft restored");
+  };
+
+  const handleDiscardDraft = () => {
+    writeStoredDraft(null);
+    setStoredDraft(null);
   };
 
   const handlePublish = async () => {
@@ -183,21 +293,22 @@ export default function Settings() {
       toast.error("Cannot publish: KPI Weightages must sum to 100%. Current: " + totalKpiWeight + "%");
       return;
     }
+    if (!incentiveValidation.valid) {
+      toast.error(`Cannot publish: ${incentiveValidation.messages[0]}`);
+      return;
+    }
+    if (pendingCount === 0) return;
     const nextVerNum = "v2." + (Number(currentVersion.split(".")[1]) + 1);
     const payload = {
-      employeeTargets,
-      kpiWeights,
-      incentiveSlabs,
-      baseIncentiveRate,
-      targetBonusAmount,
-      formulaType,
-      ratingThresholds,
+      ...currentConfig,
       currentVersion: nextVerNum,
     };
     try {
       await apiPut("/api/settings", payload);
       setCurrentVersion(nextVerNum);
-      setDraftCount(0);
+      setSavedSnapshot(currentConfig);
+      writeStoredDraft(null);
+      setStoredDraft(null);
       toast.success(`Published to database! Rule Engine upgraded to ${nextVerNum}`);
     } catch (err) {
       toast.error(err.message || "Failed to save settings");
@@ -215,7 +326,6 @@ export default function Settings() {
       prev.map(e => (e.team === bulkTeam ? { ...e, [bulkField]: numVal } : e))
     );
 
-    setDraftCount(prev => prev + 1);
     toast.success(`Successfully bulk updated ${bulkField} targets for all ${bulkTeam} employees.`);
   };
 
@@ -263,7 +373,7 @@ export default function Settings() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           tabExtra={(t) =>
-            t.id === "kpis" && !isWeightValid ? (
+            (t.id === "kpis" && !isWeightValid) || (t.id === "incentives" && !incentiveValidation.valid) ? (
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-rose-600 animate-ping" />
             ) : null
           }
@@ -276,7 +386,7 @@ export default function Settings() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           tabExtra={(t) =>
-            t.id === "kpis" && !isWeightValid ? (
+            (t.id === "kpis" && !isWeightValid) || (t.id === "incentives" && !incentiveValidation.valid) ? (
               <span className="absolute right-3 w-2 h-2 rounded-full bg-rose-600 animate-ping" />
             ) : null
           }
@@ -285,10 +395,13 @@ export default function Settings() {
         {/* Right Side Control Panels */}
         <SettingsPanel
           footer={
+            activeTab === "password" ? null : (
             <PanelFooter
               left={
-                <Badge tone={draftCount > 0 ? "warning" : "muted"}>
-                  {draftCount > 0 ? `${draftCount} Pending Edits` : "Buffer Synchronized"}
+                <Badge tone={pendingCount > 0 ? "warning" : "muted"}>
+                  {pendingCount > 0
+                    ? `${pendingCount} Pending Edit${pendingCount === 1 ? "" : "s"}`
+                    : "No Pending Edits"}
                 </Badge>
               }
               actions={
@@ -296,22 +409,40 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={handleSaveDraft}
-                    className="flex-1 sm:flex-initial px-4 py-2 border border-rose-200 hover:border-rose-400 text-[#be123c] rounded-xl text-xs font-bold transition-all shadow-sm bg-white"
+                    disabled={!canSave}
+                    title={saveBlockedReason}
+                    className="flex-1 sm:flex-initial px-4 py-2 border border-rose-200 hover:border-rose-400 text-[#be123c] rounded-xl text-xs font-bold transition-all shadow-sm bg-white disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-rose-200"
                   >
                     Save Draft
                   </button>
                   <button
                     type="button"
                     onClick={handlePublish}
-                    className="flex-1 sm:flex-initial px-4 py-2 bg-[#be123c] hover:bg-[#a20f32] text-white rounded-xl text-xs font-bold transition-all shadow-md active:translate-y-px flex items-center justify-center gap-1.5"
+                    disabled={!canSave}
+                    title={saveBlockedReason}
+                    className="flex-1 sm:flex-initial px-4 py-2 bg-[#be123c] hover:bg-[#a20f32] text-white rounded-xl text-xs font-bold transition-all shadow-md active:translate-y-px flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:translate-y-0 disabled:hover:bg-[#be123c]"
                   >
                     <RefreshCw className="w-3.5 h-3.5" /> Publish Configuration
                   </button>
                 </>
               }
             />
+            )
           }
         >
+              {draftDiffersFromLoaded && activeTab !== "password" && (
+                <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-wrap items-center gap-3">
+                  <span className="text-xs text-amber-800 font-medium flex-1 min-w-0">
+                    A draft saved on this device{storedDraft?.savedAt ? ` (${new Date(storedDraft.savedAt).toLocaleString("en-IN")})` : ""} differs from the published configuration.
+                  </span>
+                  <button type="button" onClick={handleRestoreDraft} className="px-3 py-1 rounded-lg bg-white border border-amber-300 text-[11px] font-bold text-amber-800 hover:bg-amber-100">
+                    Restore draft
+                  </button>
+                  <button type="button" onClick={handleDiscardDraft} className="px-3 py-1 rounded-lg text-[11px] font-bold text-slate-500 hover:text-slate-700">
+                    Discard
+                  </button>
+                </div>
+              )}
               {activeTab === "targets" && (
                 <div className="space-y-6">
                   <div>
@@ -365,7 +496,7 @@ export default function Settings() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Converted Leads Target</label>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Qualified Leads Target</label>
                           <input
                             type="number"
                             value={activeTargetEmp.leads}
@@ -383,13 +514,14 @@ export default function Settings() {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Revenue Collection Target ($)</label>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Revenue Collection Target (₹)</label>
                           <input
                             type="number"
                             value={activeTargetEmp.revenue}
                             onChange={(e) => handleTargetChange("revenue", e.target.value)}
                             className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 text-slate-800 text-xs font-bold outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400"
                           />
+                          <span className="text-[9px] text-slate-400 mt-1 block tabular-nums">{rupeeCaption(activeTargetEmp.revenue)}</span>
                         </div>
                       </div>
                       </>
@@ -420,9 +552,9 @@ export default function Settings() {
                         onChange={setBulkField}
                         options={[
                           { value: "calls", label: "Call Volume" },
-                          { value: "leads", label: "Converted Leads" },
+                          { value: "leads", label: "Qualified Leads" },
                           { value: "meetings", label: "Scheduled Meetings" },
-                          { value: "revenue", label: "Revenue Quota" },
+                          { value: "revenue", label: "Revenue Quota (₹)" },
                         ]}
                         compact
                       />
@@ -455,7 +587,7 @@ export default function Settings() {
                   <div className="flex justify-between items-start">
                     <div>
                       <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider">KPI Rules & Weightages</h3>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">Determine the score weight allocation and status of core metric KPIs</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Score weight allocation for the core KPIs - the Incentives page uses these same metrics and weights</p>
                     </div>
                     {isWeightValid ? (
                       <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
@@ -539,22 +671,32 @@ export default function Settings() {
                       <input
                         type="number"
                         step="0.1"
+                        min="0"
                         value={baseIncentiveRate}
                         onChange={(e) => setBaseIncentiveRate(Number(e.target.value))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-slate-800 text-xs font-bold outline-none"
+                        aria-invalid={Boolean(incentiveValidation.baseError)}
+                        className={`w-full px-3 py-2 border rounded-xl bg-white text-slate-800 text-xs font-bold outline-none ${
+                          incentiveValidation.baseError ? "border-rose-400 ring-1 ring-rose-300" : "border-slate-200"
+                        }`}
                       />
-                      <span className="text-[9px] text-slate-400 mt-1 block">Default rate when target threshold achievements are below bronze levels</span>
+                      {incentiveValidation.baseError ? (
+                        <span className="text-[10px] text-rose-600 font-semibold mt-1 block" role="alert">{incentiveValidation.baseError}</span>
+                      ) : (
+                        <span className="text-[9px] text-slate-400 mt-1 block">Default rate when target threshold achievements are below bronze levels (cannot exceed the Bronze rate)</span>
+                      )}
                     </div>
 
                     <div className="p-4 border border-rose-100/50 rounded-2xl bg-slate-50/40">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Monthly Target Reached Bonus ($)</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Monthly Target Reached Bonus (₹)</label>
                       <input
                         type="number"
                         value={targetBonusAmount}
                         onChange={(e) => setTargetBonusAmount(Number(e.target.value))}
                         className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-slate-800 text-xs font-bold outline-none"
                       />
-                      <span className="text-[9px] text-slate-400 mt-1 block">Standard target achievement cash incentive bonus</span>
+                      <span className="text-[9px] text-slate-400 mt-1 block">
+                        Standard target achievement cash incentive bonus · <span className="font-bold tabular-nums">{rupeeCaption(targetBonusAmount)}</span>
+                      </span>
                     </div>
                   </div>
 
@@ -565,28 +707,45 @@ export default function Settings() {
                       <Badge tone="info">{incentiveSlabs.length} Slabs Configured</Badge>
                     </div>
 
+                    {!incentiveValidation.valid && (
+                      <div className="mb-3 p-3 rounded-2xl bg-rose-50/60 border border-rose-200 flex items-start gap-2.5" role="alert">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div className="text-xs text-rose-700 font-medium space-y-0.5">
+                          <p className="font-bold">Fix these before saving or publishing:</p>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {incentiveValidation.messages.map((m) => <li key={m}>{m}</li>)}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-3">
-                      {incentiveSlabs.map(slab => (
-                        <div key={slab.id} className="p-4 border border-rose-50 rounded-2xl bg-white flex flex-col sm:flex-row items-center gap-4 justify-between">
+                      {incentiveSlabs.map((slab, slabIndex) => {
+                        const slabErrs = incentiveValidation.slabErrors[slab.id ?? slab.tier ?? slabIndex] || [];
+                        return (
+                        <div key={slab.id} className={`p-4 border rounded-2xl bg-white ${slabErrs.length ? "border-rose-300" : "border-rose-50"}`}>
+                         <div className="flex flex-col sm:flex-row items-center gap-4 justify-between">
                           <span className="text-xs font-extrabold text-slate-800 w-24">{slab.tier} Tier</span>
                           <div className="flex flex-1 flex-wrap gap-4 items-center justify-end">
                             <div>
-                              <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Min collection ($)</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Min collection (₹)</span>
                               <input
                                 type="number"
                                 value={slab.min}
                                 onChange={(e) => handleSlabChange(slab.id, "min", e.target.value)}
                                 className="w-28 px-2 py-1 border border-slate-200 rounded-xl bg-slate-50 text-slate-800 text-xs font-bold outline-none"
                               />
+                              <span className="text-[9px] text-slate-400 mt-0.5 block tabular-nums">{rupeeCaption(slab.min)}</span>
                             </div>
                             <div>
-                              <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Max collection ($)</span>
+                              <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Max collection (₹)</span>
                               <input
                                 type="number"
                                 value={slab.max}
                                 onChange={(e) => handleSlabChange(slab.id, "max", e.target.value)}
                                 className="w-28 px-2 py-1 border border-slate-200 rounded-xl bg-slate-50 text-slate-800 text-xs font-bold outline-none"
                               />
+                              <span className="text-[9px] text-slate-400 mt-0.5 block tabular-nums">{rupeeCaption(slab.max)}</span>
                             </div>
                             <div>
                               <span className="text-[9px] font-bold text-slate-400 uppercase block mb-0.5">Commission Rate (%)</span>
@@ -599,8 +758,17 @@ export default function Settings() {
                               />
                             </div>
                           </div>
+                         </div>
+                         {slabErrs.length > 0 && (
+                           <ul className="mt-2 space-y-0.5" role="alert">
+                             {slabErrs.map((m) => (
+                               <li key={m} className="text-[10px] text-rose-600 font-semibold">{m}</li>
+                             ))}
+                           </ul>
+                         )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -740,11 +908,14 @@ export default function Settings() {
                             type="password"
                             value={newPassword}
                             onChange={(e) => setNewPassword(e.target.value)}
-                            placeholder="Enter new password (min. 6 characters)"
+                            placeholder="Enter new password (min. 8 characters)"
                             autoComplete="new-password"
                             className={`${inputClass} pl-9`}
                           />
                         </div>
+                        <p className={`text-[10px] mt-1 ${newPassword && validateNewPassword(newPassword) ? "text-rose-600 font-semibold" : "text-slate-400"}`}>
+                          {newPassword && validateNewPassword(newPassword) ? validateNewPassword(newPassword) : PASSWORD_HINT}
+                        </p>
                       </div>
 
                       <div>

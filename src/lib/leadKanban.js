@@ -434,17 +434,48 @@ export function resolveMeetingKanbanColumn(meeting, now = new Date()) {
   return "meeting_booked";
 }
 
-function placeMeetingsOnKanban(map, placed, allLeads, meetings, period, showLead) {
+/** Last-10-digit phone key, or "" when the number is missing/too short to identify a person. */
+function personPhoneKey(lead) {
+  const key = phoneLast10(lead?.phone || lead?.clientPhone);
+  return key.length >= 10 ? key : "";
+}
+
+/**
+ * One person = one card. CRM imports/webhooks can leave several lead rows for the same phone
+ * (e.g. "Tusharika Ma'am - TSP" #458 Meeting Booked + #1420 Meeting Done, or one stuck in
+ * Not Interested). Each row carries its own manual stage, so without this the same person
+ * is rendered in two columns. The row that wins is the one preferredPhoneMatch picks
+ * (manually staged first, then most recently updated) — the same row Callyzer calls attach to.
+ *
+ * @returns {{ canonicalById: Map<string, object> }} loser lead id -> winning lead
+ */
+function buildPhoneCanonicalMap(leads = []) {
+  const winners = new Map();
+  for (const lead of leads) {
+    if (!lead) continue;
+    const key = personPhoneKey(lead);
+    if (!key) continue;
+    winners.set(key, preferredPhoneMatch(winners.get(key), lead));
+  }
+  const canonicalById = new Map();
+  for (const lead of leads) {
+    if (!lead) continue;
+    const key = personPhoneKey(lead);
+    if (!key) continue;
+    const winner = winners.get(key);
+    if (winner && String(winner.id) !== String(lead.id)) canonicalById.set(String(lead.id), winner);
+  }
+  return { canonicalById };
+}
+
+function placeMeetingsOnKanban(map, pushLead, allLeads, meetings, period, showLead, canonicalize = (l) => l) {
   const periodMeetings = filterMeetingsForPeriod(meetings, period);
   for (const meeting of periodMeetings) {
-    const lead = resolveMeetingLead(meeting, allLeads);
+    const lead = canonicalize(resolveMeetingLead(meeting, allLeads));
     const col = resolveMeetingKanbanColumn(meeting);
     if (!col || !lead || !map[col]) continue;
     if (!showLead(lead)) continue;
-    const id = String(lead.id);
-    if (placed.has(id)) continue;
-    map[col].push(lead);
-    placed.add(id);
+    pushLead(col, lead);
   }
   return periodMeetings;
 }
@@ -682,10 +713,16 @@ export function groupKanbanSyncedWithCallyzer(
   const scopedVisible = visibleLeads ?? filterPipelineLeadsForPeriod(allLeads, periodCalls, periodKey, meetings, kanbanIndex, options);
   const visibleIds = new Set(scopedVisible.map((l) => String(l.id)));
 
+  // Duplicate CRM rows for the same phone collapse onto one winning row (see buildPhoneCanonicalMap).
+  const { canonicalById } = buildPhoneCanonicalMap(scopedVisible);
+  const canonicalize = (lead) => (lead ? (canonicalById.get(String(lead.id)) || lead) : lead);
+  const placedPhones = new Set();
+
   const isFilterActive = Boolean(options.searchFiltered || options.visibleLeads);
 
   const showLead = (lead) => {
     if (!lead) return false;
+    if (canonicalById.has(String(lead.id))) return false; // losing duplicate — its winner is shown
     if (visibleIds.has(String(lead.id))) return true;
     if (lead._linkedLeadId && visibleIds.has(String(lead._linkedLeadId))) return true;
     if (!isFilterActive) {
@@ -698,8 +735,13 @@ export function groupKanbanSyncedWithCallyzer(
     if (!lead || !map[col]) return;
     const id = String(lead.id);
     if (placed.has(id)) return;
+    // Safety net: whatever route a card took (CRM row, meeting stub, orphan Callyzer call),
+    // the same phone never sits in two columns.
+    const phoneKey = personPhoneKey(lead);
+    if (phoneKey && placedPhones.has(phoneKey)) return;
     map[col].push(lead);
     placed.add(id);
+    if (phoneKey) placedPhones.add(phoneKey);
   };
 
   // Rep-set or manually overridden pipeline stages win over Callyzer auto-routing
@@ -713,7 +755,7 @@ export function groupKanbanSyncedWithCallyzer(
     }
   }
 
-  placeMeetingsOnKanban(map, placed, allLeads, meetings, periodKey, showLead);
+  placeMeetingsOnKanban(map, pushLead, allLeads, meetings, periodKey, showLead, canonicalize);
 
   // Lead-centric: best early-funnel column from calls for leads not manually staged.
   const leadsToEvaluate = new Set();
@@ -729,7 +771,7 @@ export function groupKanbanSyncedWithCallyzer(
   }
 
   for (const leadId of leadsToEvaluate) {
-    const lead = leadIndex.byId.get(leadId);
+    const lead = canonicalize(leadIndex.byId.get(leadId));
     if (!lead || !showLead(lead)) continue;
     const leadCalls = getLeadCalls(lead);
     const outboundCalls = getOutboundCalls(lead);
@@ -741,10 +783,22 @@ export function groupKanbanSyncedWithCallyzer(
   }
 
   // Orphan calls with no CRM lead match — still show from Callyzer (inbound + outbound).
+  // One card per phone: when the same unmatched number has several calls, keep the one whose
+  // column is furthest along (2 min+ > short > not pick) instead of a card per call.
+  const ORPHAN_COL_RANK = { conversation_2min: 3, short_call: 2, not_pick: 1 };
+  const orphanBest = new Map();
   for (const call of periodCalls) {
     const col = callKanbanColumn(call);
     if (!col) continue;
     if (resolveLeadForCallFromIndex(call, leadIndex, allLeads)) continue;
+    const phoneKey = phoneLast10(call.phone || call.clientPhone);
+    const groupKey = phoneKey.length >= 10 ? `p:${phoneKey}` : `c:${call.id}`;
+    const cur = orphanBest.get(groupKey);
+    if (!cur || (ORPHAN_COL_RANK[col] || 0) > (ORPHAN_COL_RANK[cur.col] || 0)) {
+      orphanBest.set(groupKey, { call, col });
+    }
+  }
+  for (const { call, col } of orphanBest.values()) {
     const orphanLead = leadFromOrphanCall(call, col);
     if (!showLead(orphanLead)) continue;
     pushLead(col, orphanLead);
@@ -753,7 +807,7 @@ export function groupKanbanSyncedWithCallyzer(
 
   for (const lead of scopedVisible) {
     const id = String(lead.id);
-    if (placed.has(id)) continue;
+    if (placed.has(id) || canonicalById.has(id)) continue;
     const allowUncontacted = options.includeUncontactedAssignments !== false;
     const periodKey = String(period).toLowerCase();
     const uncontactedNew = isAdminPanelAssignedLead(lead, options.employeeId)
@@ -785,6 +839,34 @@ export function groupKanbanSyncedWithCallyzer(
       map[colKey] = orderMeetingBookedColumn(map[colKey], meetings, displayedMs);
     } else {
       map[colKey].sort((a, b) => displayedMs(b) - displayedMs(a));
+    }
+  }
+
+  // Manually staged leads (stageOverride) stay on the board for every period on purpose, so a "Month"
+  // board can hold a lead last touched on 15 Jul. Tag those cards so the UI can label them "older"
+  // instead of leaving it looking like a period-filter bug. In-period = a call/meeting in the period,
+  // or last activity (meeting time / update) dated inside it.
+  if (periodKey !== "all") {
+    const periodMeetingLeadIds = new Set(
+      filterMeetingsForPeriod(meetings, periodKey).map((m) => String(m.leadId)).filter(Boolean),
+    );
+    const { callActiveIds } = kanbanIndex;
+    for (const colKey of Object.keys(map)) {
+      if (!Array.isArray(map[colKey])) continue;
+      map[colKey] = map[colKey].map((lead) => {
+        if (!lead || lead._fromCall || lead._fromMeeting) return lead;
+        const id = String(lead.id);
+        if (callActiveIds.has(id) || periodMeetingLeadIds.has(id)) return lead;
+        const rawAt = lead._meetingAt || lead.updatedAt || lead.createdAt;
+        if (!rawAt) return lead;
+        const at = parseAppDateTime(rawAt) || new Date(rawAt);
+        if (Number.isNaN(at.getTime())) return lead;
+        const key = localDateKey(at);
+        const inPeriod = lead._meetingAt
+          ? isMeetingDateKeyInPeriod(key, periodKey)
+          : isDateKeyInPeriod(key, periodKey);
+        return inPeriod ? lead : { ...lead, _outsidePeriod: true, _olderAt: at.toISOString() };
+      });
     }
   }
 

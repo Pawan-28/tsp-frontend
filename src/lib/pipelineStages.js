@@ -108,7 +108,9 @@ export function mapStageToId(stage, status = "") {
   if (s === "negotiation") return "objection";
   if (s === "proposal") return "proposal_sent";
   if (s === "qualified") return "meeting_booked";
-  if (s === "contacted" || st === "contacted" || st.includes("contacted")) return "lead";
+  // Same as backend utils/pipelineStages.js (source of truth): "Contacted" -> Conversation.
+  // ("Not Contacted" already returned "lead" above.)
+  if (s.includes("contacted")) return "conversation_2min";
 
   return DEFAULT_PIPELINE_STAGE_ID;
 }

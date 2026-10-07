@@ -17,14 +17,21 @@ function pct(actual, target) {
   return Math.round((safeNum(actual) / t) * 1000) / 10;
 }
 
+/** Rate that applies to a cash amount: the highest slab whose min is reached; below every slab -> baseline. */
 export function resolveIncentiveSlabRate(cashCollected, slabs = DEFAULT_SLABS, fallbackRate = 2.5) {
   const cash = safeNum(cashCollected);
-  const list = slabs.length ? slabs : DEFAULT_SLABS;
+  const list = Array.isArray(slabs) && slabs.length ? slabs : DEFAULT_SLABS;
   const sorted = [...list].sort((a, b) => safeNum(b.min) - safeNum(a.min));
   for (const slab of sorted) {
-    if (cash >= safeNum(slab.min)) return safeNum(slab.rate) || fallbackRate;
+    if (cash >= safeNum(slab.min)) return safeNum(slab.rate);
   }
-  return safeNum(list[0]?.rate) || fallbackRate;
+  return safeNum(fallbackRate);
+}
+
+/** Configured baseline rate; only an unset value falls back to the 2.5% default (0% is a valid setting). */
+function resolveBaselineRate(value) {
+  if (value == null || value === "" || Number.isNaN(Number(value))) return 2.5;
+  return Number(value);
 }
 
 function insightValues(emp, key) {
@@ -95,7 +102,7 @@ export function computeRemunerationBreakdown(draft, options = {}) {
       ? safeNum(weightedPerformance)
       : computeWeightedKraScore(merged, metricRows);
 
-  const baselineRate = safeNum(baseIncentiveRate) || 2.5;
+  const baselineRate = resolveBaselineRate(baseIncentiveRate);
   const slabRate = resolveIncentiveSlabRate(cashCollected, incentiveSlabs, baselineRate);
   const cashRate = useManualCashRate && draft?.incRate != null
     ? safeNum(draft.incRate)

@@ -2,16 +2,16 @@ import { useState, useEffect, useRef, startTransition } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, Bell, Menu, Plus, ChevronDown, X,
-  CheckSquare, MessageSquare, Phone, Calendar, User, LogOut, Shield, CalendarDays,
+  CheckSquare, MessageSquare, Phone, Calendar, User, LogOut, Shield,
 } from "lucide-react";
 import EmployeeDoodleAvatar from "./EmployeeDoodleAvatar.jsx";
 import PrivateContactsModal from "./PrivateContactsModal.jsx";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
-import { AnimatePresence } from "framer-motion";
-import { CustomDatePopover } from "../../components/DateRangeFilter.jsx";
-import { PERIOD_PILL_BTN, PERIOD_PILL_ACTIVE, PERIOD_PILL_INACTIVE } from "../../lib/dateRange.js";
+import PipelineDateFilter from "../../components/PipelineDateFilter.jsx";
+import { useDismissable } from "../../hooks/useDismissable.js";
+import { useActiveHeaderPopover, closeHeaderPopovers } from "../../hooks/useHeaderPopover.js";
 
 const QUICK_ACTIONS = [
   { label: "Add Lead",            icon: Plus,          to: "/employee/leads",        search: "?action=add" },
@@ -51,90 +51,6 @@ const CALL_PERIODS = [
   { id: "month", label: "This Month" },
 ];
 
-// Lead pipeline board tabs: Today | Yesterday | Week | Month | Custom
-const PIPELINE_TABS = [
-  { id: "today", label: "Today", shortLabel: "Today" },
-  { id: "yesterday", label: "Yesterday", shortLabel: "Yest." },
-  { id: "week", label: "Week", shortLabel: "Week" },
-  { id: "month", label: "Month", shortLabel: "Month" },
-  { id: "custom", label: "Custom", shortLabel: "Custom" },
-];
-
-const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
- * Employee Pipeline date filter — same Today | Week | Month | Custom tabs, pill
- * styling and custom From/To popover as the Admin Dashboard (DateRangeFilter).
- * State lives in the URL (?period=custom&from=YYYY-MM-DD&to=YYYY-MM-DD) so it
- * survives refresh; EmployeeLeads turns it into the board API query.
- */
-function PipelineDateFilter({ currentPeriod, fromDate, toDate, onSelect, onApplyCustom, compact = false }) {
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [draftFrom, setDraftFrom] = useState(fromDate || "");
-  const [draftTo, setDraftTo] = useState(toDate || "");
-  const customBtnRef = useRef(null);
-
-  useEffect(() => {
-    setDraftFrom(fromDate || "");
-    setDraftTo(toDate || "");
-  }, [fromDate, toDate]);
-
-  const hasCustom = currentPeriod === "custom" && fromDate && toDate;
-
-  return (
-    <div className={compact ? "grid grid-cols-5 gap-1 w-full min-w-0" : "flex items-center gap-0.5 sm:gap-1 flex-shrink-0 min-w-0"}>
-      {PIPELINE_TABS.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          ref={t.id === "custom" ? customBtnRef : undefined}
-          onClick={() => {
-            if (t.id === "custom") {
-              setShowCalendar(true);
-            } else {
-              setShowCalendar(false);
-              onSelect(t.id);
-            }
-          }}
-          className={`${PERIOD_PILL_BTN} ${compact ? "w-full inline-flex items-center justify-center px-1 text-[9px] sm:text-[10px]" : ""} ${currentPeriod === t.id ? PERIOD_PILL_ACTIVE : PERIOD_PILL_INACTIVE}`}
-        >
-          {t.id === "custom" && hasCustom ? (
-            <span className="inline-flex items-center gap-0.5">
-              <CalendarDays className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-              {fromDate.slice(5)} → {toDate.slice(5)}
-            </span>
-          ) : (
-            <>
-              <span className="sm:hidden">{t.shortLabel ?? t.label}</span>
-              <span className="hidden sm:inline">{t.label}</span>
-            </>
-          )}
-        </button>
-      ))}
-      <AnimatePresence>
-        {showCalendar && (
-          <CustomDatePopover
-            fromDate={draftFrom}
-            setFromDate={setDraftFrom}
-            toDate={draftTo}
-            setToDate={setDraftTo}
-            onApply={() => {
-              // Both dates are required; keep the popover open until they're set.
-              if (!DATE_KEY_RE.test(draftFrom) || !DATE_KEY_RE.test(draftTo)) return;
-              // Keep From <= To (To date is inclusive on the server).
-              const [from, to] = draftFrom <= draftTo ? [draftFrom, draftTo] : [draftTo, draftFrom];
-              onApplyCustom(from, to);
-              setShowCalendar(false);
-            }}
-            onClose={() => setShowCalendar(false)}
-            anchorRef={customBtnRef}
-          />
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 export default function EmployeeTopbar({ onMenu }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -144,9 +60,18 @@ export default function EmployeeTopbar({ onMenu }) {
   const meta = pathname.startsWith("/employee/sales-process/") && pathname !== "/employee/sales-process"
     ? { title: "SOP Detail", sub: "Full playbook · Scripts · Checklist" }
     : PAGE_META[pathname] || { title: "Employee Panel", sub: "" };
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  // Notifications, Quick Actions and the profile menu share one store, so only ONE popover is open at a time.
+  const [openMenu, setOpenMenu] = useActiveHeaderPopover();
+  const menuSetter = (id) => (next) => setOpenMenu((active) => {
+    const open = typeof next === "function" ? next(active === id) : next;
+    return open ? id : (active === id ? null : active);
+  });
+  const notifOpen = openMenu === "emp-notif";
+  const quickOpen = openMenu === "emp-quick";
+  const userMenuOpen = openMenu === "emp-user";
+  const setNotifOpen = menuSetter("emp-notif");
+  const setQuickOpen = menuSetter("emp-quick");
+  const setUserMenuOpen = menuSetter("emp-user");
   const [privateModalOpen, setPrivateModalOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const quickRef = useRef(null);
@@ -161,6 +86,7 @@ export default function EmployeeTopbar({ onMenu }) {
   const isLeadBoardPage = pathname === "/employee/leads" || pathname === "/employee/pipeline";
 
   const setPeriod = (nextPeriod) => {
+    closeHeaderPopovers();
     const newParams = new URLSearchParams(searchParams);
     newParams.set("period", String(nextPeriod).toLowerCase());
     if (String(nextPeriod).toLowerCase() !== "custom") {
@@ -191,18 +117,16 @@ export default function EmployeeTopbar({ onMenu }) {
     navigate(`${action.to}${action.search ?? ""}`);
   };
 
+  // Esc / outside click close the open menu. (The notifications panel has its own full-screen backdrop for
+  // outside clicks, so it only needs Esc here.)
+  useDismissable({ open: quickOpen, onDismiss: () => setQuickOpen(false), refs: [quickRef] });
+  useDismissable({ open: userMenuOpen, onDismiss: () => setUserMenuOpen(false), refs: [userRef] });
+  useDismissable({ open: notifOpen, onDismiss: () => setNotifOpen(false), outside: false });
+
+  // Navigating to another page closes any open popover.
   useEffect(() => {
-    const onClick = (e) => {
-      if (quickRef.current && !quickRef.current.contains(e.target)) {
-        setQuickOpen(false);
-      }
-      if (userRef.current && !userRef.current.contains(e.target)) {
-        setUserMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+    closeHeaderPopovers();
+  }, [pathname]);
 
   const handleUserMenu = (item) => {
     setUserMenuOpen(false);

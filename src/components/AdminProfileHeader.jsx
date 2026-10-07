@@ -2,7 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Settings } from "lucide-react";
 import { useAdmin } from "../context/AdminContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import AdminDoodleAvatar from "./AdminDoodleAvatar.jsx";
+import Avatar from "./Avatar.jsx";
 import AvatarUploadButton from "./AvatarUploadButton.jsx";
 import { getAdminCrmHeaders } from "../lib/crmContext.js";
 import { formatDateTime as formatProfileDateTime } from "../lib/adminProfile.js";
@@ -84,8 +84,8 @@ export default function AdminProfileHeader() {
         {/* Avatar */}
         <div className="absolute -top-7 left-4 sm:-top-9 sm:left-6">
           <div className="rounded-full border-[3px] sm:border-4 border-white shadow-md">
-            <AdminDoodleAvatar size={56} shape="circle" className="sm:hidden" photoUrl={photoUrl} />
-            <AdminDoodleAvatar size={68} shape="circle" className="hidden sm:block" photoUrl={photoUrl} />
+            <Avatar size={56} shape="circle" className="sm:hidden" src={photoUrl} name={displayName} />
+            <Avatar size={68} shape="circle" className="hidden sm:block" src={photoUrl} name={displayName} />
           </div>
           <AvatarUploadButton
             onUploaded={handlePhotoUploaded}

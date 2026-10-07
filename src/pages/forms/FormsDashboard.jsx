@@ -155,6 +155,8 @@ export default function FormsDashboard() {
   };
 
   const deleteForm = (id) => {
+    const form = forms.find((f) => f.id === id);
+    if (!window.confirm(`Delete the form "${form?.name || "this form"}"? This can't be undone.`)) return;
     setForms((prev) => prev.filter((f) => f.id !== id));
     toast.success("Form removed");
   };

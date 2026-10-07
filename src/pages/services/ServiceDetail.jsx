@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { GlassCard, StatCard, Badge } from "../../components/Primitives.jsx";
-import { formatServiceMoney, formatServicePriceLabel, serviceBadgeTone } from "../../data/servicesMock.js";
+import { formatServiceMoney, formatServicePriceLabel, serviceBadgeTone, isPlaceholderDescription } from "../../data/servicesMock.js";
 import { apiGet, apiDelete, apiPost, apiPut } from "../../lib/api.js";
 import { extractLeadService, cleanServiceName, leadBelongsToService } from "../../lib/servicesRegistry.js";
 
@@ -110,6 +110,10 @@ export default function ServiceDetail() {
             String(s.name || "").toLowerCase() === String(serviceId).toLowerCase();
         }) || null;
 
+        // Figures from the API are computed over ALL leads; the 500-lead sample below is only used for the lead
+        // table and as a fallback for services that are not in the catalog.
+        const fromCatalogApi = Boolean(found);
+
         if (!found && serviceId) {
           let matchedName = "";
           for (const l of leadsList) {
@@ -153,14 +157,16 @@ export default function ServiceDetail() {
 
         if (found) {
           const matching = leadsList.filter((l) => leadBelongsToService(l, found.name));
-          found.leads = matching.length > 0 ? matching.length : Number(found.leads) || 0;
-          found.converted = matching.length > 0
-            ? matching.filter((l) => String(l.status || "").toLowerCase().includes("converted") || String(l.status || "").toLowerCase().includes("payment")).length
-            : Number(found.converted) || 0;
-          found.revenue = matching.length > 0
-            ? matching.reduce((acc, l) => acc + (Number(l.expectedRevenue || l.expected_revenue) || 0), 0)
-            : Number(found.revenue) || 0;
-          found.convRate = found.leads > 0 ? Math.round((found.converted / found.leads) * 100) : Number(found.convRate) || 0;
+          if (!fromCatalogApi) {
+            found.leads = matching.length > 0 ? matching.length : Number(found.leads) || 0;
+            found.converted = matching.length > 0
+              ? matching.filter((l) => String(l.status || "").toLowerCase().includes("converted") || String(l.status || "").toLowerCase().includes("payment")).length
+              : Number(found.converted) || 0;
+            found.revenue = matching.length > 0
+              ? matching.reduce((acc, l) => acc + (Number(l.expectedRevenue || l.expected_revenue) || 0), 0)
+              : Number(found.revenue) || 0;
+            found.convRate = found.leads > 0 ? Math.round((found.converted / found.leads) * 100) : Number(found.convRate) || 0;
+          }
 
           if (!cancelled) {
             setService(found);
@@ -405,7 +411,7 @@ export default function ServiceDetail() {
       <div className="grid grid-cols-2 gap-2.5">
         <StatCard label="Total Leads" value={service.leads >= 1000 ? `${(service.leads / 1000).toFixed(1)}k` : String(service.leads)} icon={Users} iconBg="bg-rose-50" iconColor="text-rose-600" hover={false} />
         <StatCard label="Converted" value={String(service.converted)} icon={CheckCircle2} iconBg="bg-emerald-50" iconColor="text-emerald-600" hover={false} />
-        <StatCard label="Revenue" value={formatServiceMoney(service.revenue)} icon={DollarSign} iconBg="bg-sky-50" iconColor="text-sky-600" hover={false} />
+        <StatCard label="Pipeline Value" value={formatServiceMoney(service.pipelineValue ?? service.revenue)} icon={DollarSign} iconBg="bg-sky-50" iconColor="text-sky-600" hover={false} />
         <StatCard label="Conv. Rate" value={`${service.convRate}%`} icon={TrendingUp} iconBg="bg-amber-50" iconColor="text-amber-600" hover={false} />
       </div>
 
@@ -522,7 +528,11 @@ export default function ServiceDetail() {
         <h3 className="text-[11px] font-extrabold text-rose-700 uppercase tracking-wider mb-2">
           Service Architecture & Features
         </h3>
-        <p className="text-sm text-slate-600 leading-relaxed mb-4">{service.description}</p>
+        {isPlaceholderDescription(service.description, service.name) ? (
+          <p className="text-sm text-slate-400 italic leading-relaxed mb-4">No description yet</p>
+        ) : (
+          <p className="text-sm text-slate-600 leading-relaxed mb-4">{service.description}</p>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {(service.features || []).map((f) => (
             <div key={f.title} className="rounded-xl border border-rose-100 bg-white p-3.5">

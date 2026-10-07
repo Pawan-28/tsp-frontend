@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { Lock } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
 import TSPublicationDoodleLogo from "../components/TSPublicationDoodleLogo.jsx";
+import { validateNewPassword } from "../lib/passwordPolicy.js";
 
 export default function ChangePassword() {
   const { user, changePassword, logout } = useAuth();
@@ -20,8 +21,9 @@ export default function ChangePassword() {
       toast.error("Enter your current password");
       return;
     }
-    if (newPassword.length < 6) {
-      toast.error("New password must be at least 6 characters");
+    const passwordError = validateNewPassword(newPassword);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
     if (newPassword !== confirmPassword) {

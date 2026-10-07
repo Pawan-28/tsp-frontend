@@ -174,7 +174,7 @@ export function downloadIncentiveReportCsv(report) {
 
   push("Service Metrics");
   push("Metric", "Value", "Score %");
-  report.serviceMetrics.forEach((m) => push(m.label, m.value, m.score));
+  report.serviceMetrics.forEach((m) => push(m.label, m.value, m.score ?? "—"));
   blank();
 
   push("Lead Status Summary");
@@ -261,7 +261,7 @@ export function downloadIncentiveReportHtml(report) {
     .join("");
 
   const serviceRows = report.serviceMetrics
-    .map((m) => `<tr><td>${esc(m.label)}</td><td class="num">${esc(m.value)}</td><td class="num">${esc(m.score)}%</td></tr>`)
+    .map((m) => `<tr><td>${esc(m.label)}</td><td class="num">${esc(m.value)}</td><td class="num">${m.score == null ? "—" : `${esc(m.score)}%`}</td></tr>`)
     .join("");
 
   const leadStatusRows = Object.entries(report.leadStatus)

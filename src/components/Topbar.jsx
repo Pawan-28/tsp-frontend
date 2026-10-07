@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef, startTransition } from "react";
+import { useState, useEffect, useRef, useCallback, startTransition } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Bell, History, Plus, ChevronDown,
-  FileText, Users, Calculator,
+  FileText, Users,
   User, Briefcase, X, CheckCheck, Menu, Settings, LogOut,
 } from "lucide-react";
 import { useAdmin } from "../context/AdminContext.jsx";
@@ -11,14 +11,13 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { apiGet, apiPost } from "../lib/api.js";
 import { queryKeys } from "../lib/queryKeys.js";
 import DateRangeFilter from "./DateRangeFilter.jsx";
-import AdminDoodleAvatar from "./AdminDoodleAvatar.jsx";
+import PipelineDateFilter from "./PipelineDateFilter.jsx";
+import Avatar from "./Avatar.jsx";
+import { useDismissable } from "../hooks/useDismissable.js";
+import { useActiveHeaderPopover, closeHeaderPopovers } from "../hooks/useHeaderPopover.js";
+import { formatActivityDate } from "../lib/formatActivityDate.js";
+import { ADMIN_QUICK_ACTIONS } from "../lib/adminNav.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../lib/segmentPills.js";
-
-const PIPELINE_PERIODS = [
-  { id: "today", label: "Today" },
-  { id: "week", label: "Week" },
-  { id: "month", label: "Month" },
-];
 
 const titles = {
   "/":           { title: "Dashboard",             sub: "Overview of your CRM activity",            cta: "Quick Action" },
@@ -87,23 +86,27 @@ function hideDateRange(pathname) {
     || pathname === "/leads";
 }
 
-const quickActions = [
-  { label: "Add Lead",             icon: Plus,       to: "/sales",     search: "?action=addLead" },
-  { label: "Add SOP",              icon: FileText,   to: "/sop",       search: "?action=addSOP"  },
-  { label: "Add New Team Member",  icon: Users,      to: "/team",      search: "?action=addMember" },
-  { label: "View Sources",         icon: FileText,   to: "/sources"                               },
-  { label: "Calculate Incentive",  icon: Calculator, to: "/incentives"                            },
-];
+const quickActions = ADMIN_QUICK_ACTIONS;
 
-// relative time helper
-function timeAgo(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1)  return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+const NOTIF_SEEN_KEY = "crm_notif_last_seen";
+
+function readNotifSeen() {
+  try {
+    return Number(localStorage.getItem(NOTIF_SEEN_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+  const p = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "";
+  return /mac|iphone|ipad|ipod/i.test(p);
+}
+
+function ts(value) {
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? 0 : t;
 }
 
 const TYPE_ICON = {
@@ -126,20 +129,42 @@ export default function Topbar({ onMenu }) {
   const pipelinePeriod = String(searchParams.get("period") || "month").toLowerCase();
 
   const setPipelinePeriod = (nextPeriod) => {
+    closeHeaderPopovers();
     const params = new URLSearchParams(searchParams);
     params.set("period", String(nextPeriod).toLowerCase());
+    if (String(nextPeriod).toLowerCase() !== "custom") {
+      params.delete("from");
+      params.delete("to");
+    }
     startTransition(() => {
       setSearchParams(params, { replace: true });
     });
   };
 
-  const [openMenu,       setOpenMenu]       = useState(null);
+  const setPipelineCustomRange = (from, to) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("period", "custom");
+    params.set("from", from);
+    params.set("to", to);
+    startTransition(() => {
+      setSearchParams(params, { replace: true });
+    });
+  };
+
+  // Global "one header popover at a time" slot (activity | notif | quick | user | custom date range).
+  const [openMenu, setOpenMenu] = useActiveHeaderPopover();
   const [searchQ,        setSearchQ]        = useState("");
   const [searchResults,  setSearchResults]  = useState([]);
   const [searching,      setSearching]      = useState(false);
 
   const searchRef  = useRef(null);
   const mobileSearchRef = useRef(null);
+  const desktopInputRef = useRef(null);
+  const mobileInputRef = useRef(null);
+  const quickRef = useRef(null);
+  const userRef = useRef(null);
+  const [isMac] = useState(isMacPlatform);
+  const closeMenus = useCallback(() => setOpenMenu(null), [setOpenMenu]);
   const debounceRef = useRef(null);
   const queryClient = useQueryClient();
 
@@ -158,6 +183,20 @@ export default function Topbar({ onMenu }) {
   const activities = activityData?.success ? activityData.activities : [];
   const notifications = notifData?.success ? notifData.notifications : [];
   const unreadCount = notifData?.success ? notifData.unreadCount : 0;
+
+  // Unread dot: anything newer than the "last seen" timestamp (cleared when the panel opens).
+  const [notifLastSeen, setNotifLastSeen] = useState(readNotifSeen);
+  const [notifBaseline, setNotifBaseline] = useState(null);
+  const newNotifCount = notifications.filter((n) => ts(n.created_at) > notifLastSeen).length;
+  const hasUnreadDot = unreadCount > 0 || newNotifCount > 0;
+
+  const openNotifPanel = () => {
+    setNotifBaseline(notifLastSeen);
+    const now = Date.now();
+    try { localStorage.setItem(NOTIF_SEEN_KEY, String(now)); } catch { /* ignore */ }
+    setNotifLastSeen(now);
+    refreshNotifications();
+  };
 
   // ── search with debounce ────────────────────────────────
   useEffect(() => {
@@ -257,12 +296,46 @@ export default function Topbar({ onMenu }) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // Navigating to another page closes every header popover.
+  useEffect(() => {
+    closeHeaderPopovers();
+  }, [pathname]);
+
+  // Ctrl+K / Cmd+K focuses the search box that is actually visible (desktop vs mobile).
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "k") {
+        e.preventDefault();
+        const candidates = [desktopInputRef.current, mobileInputRef.current];
+        const target = candidates.find((el) => el && el.offsetParent !== null) || candidates.find(Boolean);
+        if (target) {
+          closeHeaderPopovers();
+          target.focus();
+          target.select?.();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Dismiss handling for the header menus (outside click + Esc). Notification / activity panels
+  // do their own via <Popover>.
+  useDismissable({ open: openMenu === "quick", onDismiss: closeMenus, refs: [quickRef] });
+  useDismissable({ open: openMenu === "user", onDismiss: closeMenus, refs: [userRef] });
+
+  const clearSearch = () => { setSearchQ(""); setSearchResults([]); };
+  const onSearchKeyDown = (e) => {
+    if (e.key === "Escape") {
+      clearSearch();
+      e.currentTarget.blur();
+    }
+  };
+
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#E5E7EB] shadow-sm">
       <div
-        className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 xl:px-8 py-2 min-w-0 ${
-          isDenseToolbar ? "h-14" : "min-h-[52px] md:h-16"
-        }`}
+        className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 xl:px-8 py-2 min-w-0 min-h-[52px] md:h-16"
       >
 
         <button
@@ -277,8 +350,10 @@ export default function Topbar({ onMenu }) {
         <div className="relative flex-1 min-w-0 md:hidden" ref={mobileSearchRef}>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#DC143C] pointer-events-none" />
           <input
+            ref={mobileInputRef}
             value={searchQ}
             onChange={(e) => { setSearchQ(e.target.value); setOpenMenu(null); }}
+            onKeyDown={onSearchKeyDown}
             placeholder="Search deals, people, SOPs…"
             aria-label="Search"
             className="w-full h-10 pl-9 pr-9 py-2 rounded-xl bg-[#F5F7FA] border border-[#E5E7EB]
@@ -308,43 +383,35 @@ export default function Topbar({ onMenu }) {
         </div>
 
         {/* Desktop: page title */}
-        <div className={`hidden md:flex flex-col justify-center shrink-0 min-w-0 ${
-          isDenseToolbar ? "max-w-[108px] lg:max-w-[148px] xl:max-w-[200px]" : ""
-        }`}>
-          <h1 className={`font-display font-semibold tracking-tight leading-tight text-[#111827] truncate ${
-            isDenseToolbar ? "text-[15px] lg:text-base" : "text-lg"
-          }`}>
+        <div className="hidden md:flex flex-col justify-center shrink-0 min-w-0 max-w-[132px] lg:max-w-[180px] xl:max-w-[240px]">
+          <h1 className="font-display font-semibold tracking-tight leading-tight text-[#111827] truncate text-base lg:text-lg" title={meta.title}>
             {meta.title}
           </h1>
-          <p className={`text-[10px] text-[#6B7280] leading-tight truncate ${
-            isDenseToolbar ? "hidden xl:block" : ""
-          }`}>
+          <p className="hidden xl:block text-[10px] text-[#6B7280] leading-tight truncate" title={meta.sub}>
             {meta.sub}
           </p>
         </div>
 
         {/* Desktop / tablet search */}
         <div
-          className={`relative hidden md:block min-w-0 ${
-            isDenseToolbar
-              ? "flex-1 mx-1 lg:mx-2"
-              : "flex-1 max-w-md mx-2 lg:mx-4 min-w-[140px] lg:min-w-[180px] xl:min-w-[280px]"
-          }`}
+          className="relative hidden md:block shrink min-w-[120px] w-[180px] lg:w-[240px] xl:w-[320px] mx-1 lg:mx-2"
           ref={searchRef}
         >
           <Search className="absolute left-3 lg:left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#DC143C]" />
           <input
+            ref={desktopInputRef}
             value={searchQ}
             onChange={(e) => { setSearchQ(e.target.value); setOpenMenu(null); }}
-            placeholder={isDenseToolbar ? "Search deals, people…" : "Search deals, people, SOPs…"}
-            className={`w-full pl-9 lg:pl-11 pr-3 lg:pr-16 rounded-xl bg-[#F5F7FA] border border-[#E5E7EB]
+            onKeyDown={onSearchKeyDown}
+            placeholder="Search deals, people, SOPs…"
+            aria-label="Search"
+            aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
+            className="w-full h-10 py-2 pl-9 lg:pl-11 pr-3 lg:pr-16 rounded-xl bg-[#F5F7FA] border border-[#E5E7EB]
               text-[#111827] text-sm placeholder:text-muted-foreground
-              focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-primary/40 transition ${
-                isDenseToolbar ? "h-10 py-2" : "min-h-[44px] py-2.5"
-              }`}
+              focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-primary/40 transition"
           />
-          <kbd className="hidden xl:flex absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-[#DC143C] px-2 py-0.5 rounded-md">
-            ⌘K
+          <kbd className="hidden lg:flex absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-[#DC143C] px-2 py-0.5 rounded-md pointer-events-none">
+            {isMac ? "\u2318K" : "Ctrl K"}
           </kbd>
           {(searchQ.length >= 2) && (
             <SearchDropdown
@@ -364,27 +431,20 @@ export default function Topbar({ onMenu }) {
           </div>
         )}
 
-        {!isDenseToolbar && <div className="hidden md:block flex-grow min-w-0" />}
+        <div className="hidden md:block flex-grow min-w-0" />
 
         {/* Right actions */}
         <div className="flex items-center gap-1 sm:gap-1.5 justify-end shrink-0 min-w-0">
 
           {isPipelinePage && (
             <div className="hidden md:inline-flex items-center shrink-0">
-              <div className={SEGMENT_WRAP}>
-                {PIPELINE_PERIODS.map(({ id, label }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setPipelinePeriod(id)}
-                    className={`${SEGMENT_BTN} ${
-                      pipelinePeriod === id ? SEGMENT_BTN_ACTIVE : SEGMENT_BTN_INACTIVE
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <PipelineDateFilter
+                currentPeriod={pipelinePeriod}
+                fromDate={searchParams.get("from") || ""}
+                toDate={searchParams.get("to") || ""}
+                onSelect={setPipelinePeriod}
+                onApplyCustom={setPipelineCustomRange}
+              />
             </div>
           )}
 
@@ -403,9 +463,11 @@ export default function Topbar({ onMenu }) {
             </button>
           )}
 
-          {/* Quick Actions — tablet+ (mobile uses FAB) */}
-          <div className="relative hidden md:inline-flex w-auto shrink-0">
+          {/* Quick Actions — tablet+ (phones: FAB + hamburger drawer) */}
+          <div ref={quickRef} className="relative hidden md:inline-flex w-auto shrink-0">
             <button
+              type="button"
+              aria-expanded={openMenu === "quick"}
               onClick={() => setOpenMenu(openMenu === "quick" ? null : "quick")}
               className="inline-flex items-center gap-1 bg-primary text-primary-foreground
                 h-9 md:h-10 px-2.5 md:px-3 rounded-xl text-[11px] md:text-xs font-medium hover:bg-primary/90 transition shrink-0"
@@ -435,22 +497,25 @@ export default function Topbar({ onMenu }) {
             )}
           </div>
 
-          {/* Activity — hide on narrow mobile to prevent header overflow */}
-          <div className="hidden sm:block">
+          {/* Activity / History */}
           <Popover
             open={openMenu === "activity"}
-            onToggle={() => {
-              setOpenMenu(openMenu === "activity" ? null : "activity");
-              if (openMenu !== "activity") refreshActivity();
-            }}
+            onOpen={() => { setOpenMenu("activity"); refreshActivity(); }}
+            onClose={closeMenus}
+            label="Recent activity"
             icon={<History className="w-[18px] h-[18px] text-[#DC143C]" />}
           >
             <div className="w-full sm:w-80 p-4 max-w-[calc(100vw-1.5rem)]">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm font-semibold text-[#DC143C]">Recent Activity</p>
-                <span className="text-[10px] text-[#9f1239] bg-[#fff0f6] px-2 py-0.5 rounded-full border border-[#fecdd3]">
-                  {activities.length} events
-                </span>
+                {activities.length > 0 && (
+                  <span
+                    className="text-[10px] text-[#9f1239] bg-[#fff0f6] px-2 py-0.5 rounded-full border border-[#fecdd3]"
+                    title="Most recent events"
+                  >
+                    Latest {activities.length}
+                  </span>
+                )}
               </div>
               <div className="space-y-1 max-h-72 overflow-y-auto">
                 {activities.length === 0 ? (
@@ -466,7 +531,7 @@ export default function Topbar({ onMenu }) {
                     <div className="flex-1 min-w-0">
                       <p className="text-[#111827] font-medium leading-tight truncate">{a.action}</p>
                       <p className="text-[#9CA3AF] mt-0.5 text-[10px]">
-                        {a.user_name} · {timeAgo(a.created_at)}
+                        {a.user_name} · {formatActivityDate(a.created_at)}
                       </p>
                     </div>
                   </div>
@@ -474,18 +539,17 @@ export default function Topbar({ onMenu }) {
               </div>
             </div>
           </Popover>
-          </div>
 
           {/* Notifications */}
           <Popover
             open={openMenu === "notif"}
-            onToggle={() => {
-              setOpenMenu(openMenu === "notif" ? null : "notif");
-              if (openMenu !== "notif") refreshNotifications();
-            }}
+            onOpen={() => { setOpenMenu("notif"); openNotifPanel(); }}
+            onClose={() => { setNotifBaseline(null); closeMenus(); }}
+            label="Notifications"
             icon={<Bell className="w-[18px] h-[18px] text-[#DC143C]" />}
             badge={unreadCount > 0}
             badgeCount={unreadCount}
+            dot={unreadCount === 0 && newNotifCount > 0}
           >
             <div className="w-full sm:w-80 max-w-[calc(100vw-1.5rem)]">
               <div className="flex items-center justify-between px-4 pt-4 pb-2">
@@ -501,37 +565,44 @@ export default function Topbar({ onMenu }) {
               <div className="max-h-80 overflow-y-auto px-2 pb-2">
                 {notifications.length === 0 ? (
                   <p className="text-xs text-center text-[#be123c] py-6">No notifications</p>
-                ) : notifications.map((n) => (
-                  <div key={n.id}
-                    className="p-3 rounded-xl hover:bg-[#FFF5F8] transition cursor-pointer"
-                    style={{ opacity: n.is_read ? 0.6 : 1 }}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs font-semibold text-[#111827]">{n.title}</p>
-                      {!n.is_read && (
-                        <span className="w-2 h-2 rounded-full bg-primary mt-1 shrink-0 animate-pulse" />
-                      )}
+                ) : notifications.map((n) => {
+                  const isNew = !n.is_read || ts(n.created_at) > (notifBaseline ?? notifLastSeen);
+                  return (
+                    <div key={n.id}
+                      className="p-3 rounded-xl hover:bg-[#FFF5F8] transition cursor-pointer"
+                      style={{ opacity: isNew ? 1 : 0.6 }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-semibold text-[#111827]">{n.title}</p>
+                        {isNew && (
+                          <span className="w-2 h-2 rounded-full bg-primary mt-1 shrink-0" aria-label="Unread" />
+                        )}
+                      </div>
+                      {n.body && <p className="text-[11px] text-[#6B7280] mt-1 leading-snug">{n.body}</p>}
+                      <p className="text-[10px] text-[#9CA3AF] mt-1">{formatActivityDate(n.created_at)}</p>
                     </div>
-                    {n.body && <p className="text-[11px] text-[#6B7280] mt-1 leading-snug">{n.body}</p>}
-                    <p className="text-[10px] text-[#9CA3AF] mt-1">{timeAgo(n.created_at)}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </Popover>
 
           {/* User */}
-          <button
-            onClick={() => setOpenMenu(openMenu === "user" ? null : "user")}
-            className="relative flex items-center justify-center gap-1.5 sm:gap-2 w-9 h-9 sm:w-auto sm:h-auto p-0 sm:pl-1 sm:pr-3 sm:py-1 rounded-full sm:rounded-xl shrink-0
-              border border-[#E5E7EB] bg-white hover:bg-[#FFE4EC] transition"
-          >
-            <AdminDoodleAvatar size={28} shape="circle" className="shrink-0" photoUrl={user?.avatarUrl || admin.avatarUrl} />
-            <div className={`${isLeadsPage ? "hidden 2xl:block" : "hidden lg:block"} text-left leading-tight min-w-0`}>
-              <div className="text-xs font-semibold text-[#DC143C] truncate max-w-[120px]">{admin.fullName}</div>
-              <div className="text-[10px] text-[#6B7280] truncate max-w-[120px]">{admin.role}</div>
-            </div>
-            <ChevronDown className="hidden sm:block w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <div ref={userRef} className="relative shrink-0">
+            <button
+              type="button"
+              aria-expanded={openMenu === "user"}
+              onClick={() => setOpenMenu(openMenu === "user" ? null : "user")}
+              className="relative flex items-center justify-center gap-1.5 sm:gap-2 w-9 h-9 sm:w-auto sm:h-auto p-0 sm:pl-1 sm:pr-3 sm:py-1 rounded-full sm:rounded-xl shrink-0
+                border border-[#E5E7EB] bg-white hover:bg-[#FFE4EC] transition"
+            >
+              <Avatar size={28} shape="circle" className="shrink-0" src={user?.avatarUrl || admin.avatarUrl} name={admin.fullName || user?.name} />
+              <div className={`${isLeadsPage ? "hidden 2xl:block" : "hidden lg:block"} text-left leading-tight min-w-0`}>
+                <div className="text-xs font-semibold text-[#DC143C] truncate max-w-[120px]">{admin.fullName}</div>
+                <div className="text-[10px] text-[#6B7280] truncate max-w-[120px]">{admin.role}</div>
+              </div>
+              <ChevronDown className="hidden sm:block w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            </button>
             {openMenu === "user" && (
               <div className="absolute right-0 top-full mt-2 popover-responsive bg-white rounded-2xl
                 border border-[#FFD6E5] shadow-[0_12px_40px_rgba(220,20,60,0.12)] p-2 z-50">
@@ -550,7 +621,7 @@ export default function Topbar({ onMenu }) {
                 ))}
               </div>
             )}
-          </button>
+          </div>
         </div>
       </div>
 
@@ -564,19 +635,15 @@ export default function Topbar({ onMenu }) {
       {isPipelinePage && (
         <div className="md:hidden px-3 pb-2 pt-0 border-t border-[#F3F4F6] bg-[#FAFAFA]/80">
           <div className="flex items-center gap-2">
-            <div className={`${SEGMENT_WRAP} inline-flex flex-1 min-w-0`}>
-              {PIPELINE_PERIODS.map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setPipelinePeriod(id)}
-                  className={`${SEGMENT_BTN} flex-1 ${
-                    pipelinePeriod === id ? SEGMENT_BTN_ACTIVE : SEGMENT_BTN_INACTIVE
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex-1 min-w-0">
+              <PipelineDateFilter
+                compact
+                currentPeriod={pipelinePeriod}
+                fromDate={searchParams.get("from") || ""}
+                toDate={searchParams.get("to") || ""}
+                onSelect={setPipelinePeriod}
+                onApplyCustom={setPipelineCustomRange}
+              />
             </div>
             <select
               value={selectedService}
@@ -673,13 +740,17 @@ function SearchDropdown({ searching, searchQ, searchResults, navigate, setSearch
   );
 }
 
-function Popover({ open, onToggle, icon, badge, badgeCount, children }) {
+function Popover({ open, onOpen, onClose, label, icon, badge, badgeCount, dot, children }) {
+  const wrapRef = useRef(null);
+  // Outside click / Esc closes it (trigger lives inside wrapRef so its own click toggles).
+  useDismissable({ open, onDismiss: onClose, refs: [wrapRef] });
   return (
-    <div className="relative shrink-0">
+    <div ref={wrapRef} className="relative shrink-0">
       <button
         type="button"
-        onClick={onToggle}
+        onClick={open ? onClose : onOpen}
         aria-expanded={open}
+        aria-label={label}
         className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-[#E5E7EB] bg-white hover:bg-[#F8F9FC] transition grid place-items-center shrink-0"
       >
         {icon}
@@ -689,10 +760,13 @@ function Popover({ open, onToggle, icon, badge, badgeCount, children }) {
             {badgeCount > 9 ? "9+" : badgeCount}
           </span>
         )}
+        {!badge && dot && (
+          <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-primary border-2 border-white" aria-label="New notifications" />
+        )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-2 popover-responsive bg-white rounded-2xl
-          border border-[#FFD6E5] shadow-[0_12px_40px_rgba(220,20,60,0.12)] z-50 max-w-[calc(100vw-1rem)]">
+        <div className="fixed inset-x-3 top-[3.25rem] sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 bg-white rounded-2xl
+          border border-[#FFD6E5] shadow-[0_12px_40px_rgba(220,20,60,0.12)] z-50">
           {children}
         </div>
       )}

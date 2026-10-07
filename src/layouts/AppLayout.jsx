@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useDismissable } from "../hooks/useDismissable.js";
 import { Outlet, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import Sidebar from "../components/Sidebar.jsx";
@@ -14,6 +15,8 @@ export default function AppLayout() {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const fabRef = useRef(null);
+  useDismissable({ open: fabOpen, onDismiss: () => setFabOpen(false), refs: [fabRef] });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -71,16 +74,17 @@ export default function AppLayout() {
       <div className="flex-1 min-w-0 flex flex-col max-w-full overflow-x-clip">
         <Topbar onMenu={() => setOpen(true)} />
 
-        <main className="flex-1 bg-white text-slate-900 p-3 sm:p-4 md:p-6 lg:p-8 xl:px-10 pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))] lg:pb-8 page-shell overflow-x-clip relative">
+        <main className="flex-1 bg-white text-slate-900 p-3 sm:p-4 md:p-6 lg:p-8 xl:px-10 pb-[calc(9.5rem+env(safe-area-inset-bottom,0px))] lg:pb-8 page-shell overflow-x-clip relative">
           <Outlet />
         </main>
 
         <MobileNav />
 
         {/* FAB (mobile quick-actions) */}
-        <div className="relative">
+        <div className="relative" ref={fabRef}>
           <button
             onClick={() => setFabOpen(!fabOpen)}
+            aria-label="Quick actions"
             className="lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] right-3 sm:right-4 z-40 w-12 h-12 sm:w-14 sm:h-14 rounded-full
                        gradient-primary text-primary-foreground shadow-glow
                        grid place-items-center hover:opacity-90 transition"

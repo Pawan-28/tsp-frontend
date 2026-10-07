@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDismissable } from "../../hooks/useDismissable.js";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, CheckSquare, MessageSquare, Phone, Users, FileText,
@@ -40,9 +41,12 @@ export default function EmployeeSidebar({ open, onClose, collapsed, onToggleColl
   const navigate = useNavigate();
   const isExpanded = !collapsed || hovered;
 
+  // Esc closes the mobile drawer.
+  useDismissable({ open, onDismiss: onClose, outside: false });
+
   return (
     <SidebarContext.Provider value={{ collapsed: !isExpanded }}>
-      {open && <div onClick={onClose} className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px] lg:hidden" />}
+      {open && <div onClick={onClose} aria-hidden className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-[2px] lg:hidden" />}
 
       <aside
         onMouseEnter={() => collapsed && setHovered(true)}

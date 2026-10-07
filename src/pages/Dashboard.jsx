@@ -20,11 +20,11 @@ import {
   SectionHeader, priorityTone, stageTone
 } from "../components/Primitives.jsx";
 import { useDateRange } from "../context/DateRangeContext.jsx";
-import { buildPeriodQueryParams } from "../lib/periodQuery.js";
+import { buildPeriodQueryParams, periodLabel as periodLabelFor } from "../lib/periodQuery.js";
 import { useAdmin } from "../context/AdminContext.jsx";
 import { apiGet, readCachedJson, readStaleCachedJson } from "../lib/api.js";
-import { mergeFilterData } from "../lib/fetchWithFallback.js";
-import { useTenantCallyzerStats } from "../lib/useTenantCallyzerStats.js";
+import { getStageLabelById } from "../lib/pipelineStages.js";
+import { formatActivityDate, formatAbsoluteDateTime } from "../lib/formatActivityDate.js";
 import { PercentDisk } from "../components/PercentRing.jsx";
 import { formatINR } from "../lib/indianFormat.js";
 
@@ -65,51 +65,35 @@ const PIPELINE_STAGES = ["Leads", "Contacted", "Qualified", "Proposal", "Negotia
 
 const ADMIN_DASH_CACHE_TTL = 3 * 60 * 1000;
 
-function hydrateDashboardCache() {
-  const cached = readCachedJson("/api/dashboard") ?? readStaleCachedJson("/api/dashboard");
-  if (!cached) return null;
-  return {
-    filterData: cached.filterData ?? null,
-    aiInsights: Array.isArray(cached.aiInsights) ? cached.aiInsights : [],
-    revenueSeries: cached.revenueSeries?.length ? cached.revenueSeries : [],
-  };
-}
-
-function hydrateTeamCache() {
-  const cached = readCachedJson("/api/team/employees") ?? readStaleCachedJson("/api/team/employees");
-  if (cached?.success && cached.employees?.length) return cached.employees;
-  return [];
+/** Map /api/activity rows to the card/drawer shape. The SAME list feeds both, so counts always agree. */
+function mapActivityRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    text: row.user_name ? `${row.action} — ${row.user_name}` : row.action,
+    createdAt: row.created_at,
+    entity: row.entity,
+  }));
 }
 
 function hydrateActivityCache() {
   const cached = readCachedJson("/api/activity") ?? readStaleCachedJson("/api/activity");
   if (!cached?.success || !cached.activities?.length) return null;
-  return cached.activities.slice(0, 8).map((row) => ({
-    text: row.user_name ? `${row.action} — ${row.user_name}` : row.action,
-    createdAt: row.created_at,
-  }));
+  return mapActivityRows(cached.activities);
 }
 
 const EMPTY_FILTER_RANGE = {
   kpis: [
-    { label: "Total Revenue", value: "₹0", icon: "DollarSign" },
-    { label: "Cash Collected", value: "₹0", icon: "DollarSign" },
-    { label: "Total Leads", value: "0", icon: "Users" },
-    { label: "Total Calls", value: "0", icon: "Phone" },
-    { label: "Qualified Leads", value: "0", icon: "FileText" },
-    { label: "Pipeline Value", value: "₹0", icon: "DollarSign" },
-    { label: "Closings", value: "0", icon: "Trophy" },
+    { label: "Revenue", key: "totalRevenue", value: "₹0", icon: "DollarSign" },
+    { label: "Cash Collected", key: "cashCollected", value: "₹0", icon: "DollarSign" },
+    { label: "Total Leads", key: "totalLeads", value: "0", icon: "Users" },
+    { label: "Total Calls", key: "totalCalls", value: "0", icon: "Phone" },
+    { label: "Qualified Leads", key: "qualifiedLeads", value: "0", icon: "FileText" },
+    { label: "Pipeline Value", key: "pipelineValue", value: "₹0", icon: "DollarSign" },
+    { label: "Closed Deals", key: "closings", value: "0", icon: "Trophy" },
   ],
   leaderboard: [],
   metrics: { pickup: 0, qualification: 0, conversion: 0 },
   insights: [],
   activity: [],
-};
-
-const EMPTY_FILTER_DATA = {
-  today: EMPTY_FILTER_RANGE,
-  week: EMPTY_FILTER_RANGE,
-  month: EMPTY_FILTER_RANGE,
 };
 
 // ─── Animation variants ───────────────────────────────────────────────────────
@@ -383,7 +367,21 @@ const KPI_GRADIENTS = [
   },
 ];
 
-function KPICardsRow({ kpiData, filterKey }) {
+function KpiInfo({ text }) {
+  if (!text) return null;
+  return (
+    <span
+      title={text}
+      aria-label={text}
+      role="img"
+      className="inline-flex items-center justify-center w-4 h-4 rounded-full text-slate-300 hover:text-slate-500 cursor-help"
+    >
+      <InfoIcon className="w-3 h-3" />
+    </span>
+  );
+}
+
+function KPICardsRow({ kpiData, filterKey, loading = false }) {
   const tones = ["success", "purple", "warning", "info", "primary", "indigo", "success"];
   const oddCount = kpiData.length % 2 === 1;
 
@@ -411,11 +409,12 @@ function KPICardsRow({ kpiData, filterKey }) {
             >
               <StatCard
                 label={k.label}
-                value={k.value}
+                value={loading ? "—" : k.value}
                 icon={Icon}
                 tone={tone}
                 className="h-full"
                 hover
+                corner={<KpiInfo text={k.info} />}
               />
             </motion.div>
           );
@@ -706,7 +705,7 @@ function MultiSegmentCircle({ totalCalls, pickup, meetings, proposals, advancePa
     { key: "pickup", label: "PICKUP", val: pickup ?? 0, color: "#10b981" },
     { key: "meetings", label: "MEETING BOOKED", val: meetings ?? 0, color: "#8b5cf6" },
     { key: "proposals", label: "PROPOSAL", val: proposals ?? 0, color: "#f59e0b" },
-    { key: "advance", label: "ADVANCE PAY", val: advancePay || "₹0", color: "#f43f5e" },
+    { key: "advance", label: "CASH", val: advancePay || "₹0", color: "#f43f5e" },
   ];
 
   const viewSize = 92;
@@ -764,34 +763,21 @@ function MultiSegmentCircle({ totalCalls, pickup, meetings, proposals, advancePa
   );
 }
 
-function buildLeaderboardFromEmployees(employees) {
-  if (!Array.isArray(employees) || !employees.length) return [];
-  return employees
-    .map((emp) => {
-      const totalCalls = Number(emp.total_calls || emp.calls || 0);
-      const pickup = Number(emp.pickup_calls || emp.pickup || 0);
-      const leads = Number(emp.total_leads || emp.leads || 0);
-      const meetings = Number(emp.meetings_booked || emp.meetings || 0);
-      const proposals = Number(emp.proposals_sent || emp.proposals || 0);
-      const advancePayVal = Number(emp.cash_collected || emp.advance_pay || emp.rawAdvancePay || 0);
-      return {
-        id: emp.id,
-        name: emp.name,
-        totalCalls: totalCalls || pickup,
-        leads,
-        pickup,
-        meetings,
-        proposals,
-        advancePay: fmtLeaderRevenue(advancePayVal),
-        rawAdvancePay: advancePayVal,
-      };
-    })
-    .sort((a, b) => b.totalCalls - a.totalCalls || b.pickup - a.pickup || a.name.localeCompare(b.name))
-    .slice(0, 3);
+// Ranking rule (mirrors backend utils/metricDefinitions.js compareLeaderboard):
+// total calls desc, then meetings booked desc, then name A-Z.
+const LEADERBOARD_RULE_FALLBACK = "Ranked by total calls (high to low). Ties: meetings booked, then name (A-Z).";
+
+function compareLeaders(a, b) {
+  const calls = (Number(b.totalCalls) || 0) - (Number(a.totalCalls) || 0);
+  if (calls) return calls;
+  const meetings = (Number(b.meetings) || 0) - (Number(a.meetings) || 0);
+  if (meetings) return meetings;
+  return String(a.name || "").localeCompare(String(b.name || ""));
 }
 
-function LeaderBoard({ employees }) {
-  const topPerformers = (Array.isArray(employees) ? employees : []).slice(0, 3);
+function LeaderBoard({ employees, rule = LEADERBOARD_RULE_FALLBACK, periodLabel = "", loading = false }) {
+  const topPerformers = [...(Array.isArray(employees) ? employees : [])].sort(compareLeaders).slice(0, 3);
+  const hasActivity = topPerformers.some((e) => Number(e.totalCalls) > 0 || Number(e.meetings) > 0 || Number(e.leads) > 0);
 
   const ranks = [
     {
@@ -818,23 +804,35 @@ function LeaderBoard({ employees }) {
   ];
 
   return (
-    <div className={`${PANEL} p-3.5 sm:p-4 min-w-0`}>
+    <div className={`${PANEL} p-3.5 sm:p-4 min-w-0 ${loading ? "opacity-70" : ""}`}>
       <SectionHead
         icon={Trophy}
         title="Leader Board"
-        sub="Top employees performance metrics"
+        sub={
+          <span className="inline-flex items-center gap-1" title={rule}>
+            Ranked by total calls, then meetings booked
+            <InfoIcon className="w-3 h-3 text-slate-400 cursor-help shrink-0" aria-label={rule} />
+          </span>
+        }
         compact
         action={
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold">
-            <Sparkles className="w-3 h-3 text-rose-500" /> Real-time Performance
-          </span>
+          periodLabel ? (
+            <span
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold whitespace-nowrap"
+              title={`Calls and cash use dates inside ${periodLabel}; meetings and proposals come from leads created in the same period.`}
+            >
+              <CalendarDays className="w-3 h-3 text-rose-500" /> {periodLabel}
+            </span>
+          ) : null
         }
       />
 
-      {topPerformers.length === 0 ? (
+      {topPerformers.length === 0 || !hasActivity ? (
         <div className="rounded-xl border border-dashed border-rose-200 bg-rose-50/30 py-6 text-center">
           <Trophy className="w-6 h-6 text-rose-300 mx-auto mb-1.5" />
-          <p className="text-xs font-semibold text-slate-600">No performance data yet</p>
+          <p className="text-xs font-semibold text-slate-600">
+            {loading ? "Loading performance data…" : "No calls or lead activity in this period"}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 sm:gap-3">
@@ -842,18 +840,12 @@ function LeaderBoard({ employees }) {
             const rank = ranks[i] || ranks[2];
             const initials = emp.name ? emp.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() : "EM";
 
-            const totalCalls = Number(emp.totalCalls || emp.total_calls || emp.calls || 0);
-            const pickup = Number(emp.pickup_calls || emp.pickup || 0);
-            const leads = Number(emp.total_leads || emp.leads || 0);
-            const meetings = Number(emp.meetings_booked || emp.meetings || 0);
-            const proposals = Number(emp.proposals_sent || emp.proposals || 0);
-            const advancePayVal = Number(emp.cash_collected || emp.advance_pay || emp.rawAdvancePay || 0);
-            const advancePay = (typeof emp.advancePay === "string" && emp.advancePay !== "₹0")
-              ? emp.advancePay
-              : (emp.cash_collected ? `₹${Number(emp.cash_collected).toLocaleString('en-IN')}` : fmtLeaderRevenue(advancePayVal));
-
-            // Display total call connected data in tile 1 (total calls made / connected)
-            const callDisplayVal = totalCalls || pickup || leads;
+            const totalCalls = Number(emp.totalCalls) || 0;
+            const pickup = Number(emp.pickup) || 0;
+            const meetings = Number(emp.meetings) || 0;
+            const proposals = Number(emp.proposals) || 0;
+            const cashVal = Number(emp.rawAdvancePay) || 0;
+            const cash = fmtLeaderRevenue(cashVal);
 
             return (
               <div
@@ -882,70 +874,59 @@ function LeaderBoard({ employees }) {
 
                 {/* Circle Multi-Metric Ring Visualization */}
                 <MultiSegmentCircle
-                  totalCalls={callDisplayVal}
+                  totalCalls={totalCalls}
                   pickup={pickup}
                   meetings={meetings}
                   proposals={proposals}
-                  advancePay={advancePay}
+                  advancePay={cash}
                 />
 
-                {/* 5 Real Metrics Grid */}
+                {/* Real metrics grid */}
                 <div className="space-y-1.5 mt-0.5">
                   <div className="grid grid-cols-2 gap-1 sm:gap-1.5">
-                    {/* 1. Total Calls Made / Connected */}
-                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col">
+                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col" title="All logged calls in the period (inbound + outbound)">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <PhoneCall className="w-2.5 h-2.5 text-blue-500" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500 truncate">Total Calls</span>
                       </div>
-                      <span className="text-xs font-black text-slate-900 tabular-nums">
-                        {callDisplayVal}
-                      </span>
+                      <span className="text-xs font-black text-slate-900 tabular-nums">{totalCalls}</span>
                     </div>
 
-                    {/* 2. Pickup */}
-                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col">
+                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col" title="Answered outbound calls (duration above 0)">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <Phone className="w-2.5 h-2.5 text-emerald-500" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500 truncate">Pickup</span>
                       </div>
-                      <span className="text-xs font-black text-slate-900 tabular-nums">
-                        {pickup}
-                      </span>
+                      <span className="text-xs font-black text-slate-900 tabular-nums">{pickup}</span>
                     </div>
 
-                    {/* 3. Meeting Booked */}
-                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col">
+                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col" title="Leads created in the period and assigned to this rep that reached Meeting Booked or later (same definition as the funnel)">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <CalendarDays className="w-2.5 h-2.5 text-violet-500" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500 truncate">Meeting Booked</span>
                       </div>
-                      <span className="text-xs font-black text-slate-900 tabular-nums">
-                        {meetings}
-                      </span>
+                      <span className="text-xs font-black text-slate-900 tabular-nums">{meetings}</span>
                     </div>
 
-                    {/* 4. Proposal */}
-                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col">
+                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col" title="Leads created in the period and assigned to this rep that reached Proposal Sent or later">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <FileText className="w-2.5 h-2.5 text-amber-500" />
                         <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500 truncate">Proposal</span>
                       </div>
-                      <span className="text-xs font-black text-slate-900 tabular-nums">
-                        {proposals}
-                      </span>
+                      <span className="text-xs font-black text-slate-900 tabular-nums">{proposals}</span>
                     </div>
                   </div>
 
-                  {/* 5. Advance Pay (Featured Bottom Banner) */}
-                  <div className="rounded-lg border border-rose-200 bg-gradient-to-r from-rose-500 via-pink-600 to-rose-600 p-2 text-white flex items-center justify-between shadow-xs">
+                  {/* Cash collected (featured bottom banner) */}
+                  <div
+                    className="rounded-lg border border-rose-200 bg-gradient-to-r from-rose-500 via-pink-600 to-rose-600 p-2 text-white flex items-center justify-between shadow-xs"
+                    title="Recorded cash collections for this rep, payment date inside the period"
+                  >
                     <div className="flex items-center gap-1 min-w-0">
                       <DollarSign className="w-3.5 h-3.5 text-rose-100 shrink-0" />
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-rose-100 truncate">Advance Pay</span>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-rose-100 truncate">Cash Collected</span>
                     </div>
-                    <span className="text-xs font-black tabular-nums tracking-tight shrink-0">
-                      {advancePay}
-                    </span>
+                    <span className="text-xs font-black tabular-nums tracking-tight shrink-0">{cash}</span>
                   </div>
                 </div>
               </div>
@@ -1289,7 +1270,7 @@ function PipelineRow({ rowKey, label, stops, data, bubbleRefs, hoveredBubble, se
   );
 }
 
-function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChange, loading }) {
+function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChange, loading, periodLabel = "" }) {
   const [hoveredBubble, setHoveredBubble] = useState(null);
   const bubbleRefs = useRef({});
 
@@ -1307,9 +1288,18 @@ function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChan
     return SEGMENTED_STAGES.map((_, i) => (hotData[i] || 0) + (warmData[i] || 0) + (coldData[i] || 0));
   }, [hotData, warmData, coldData]);
 
+  // Same lead universe as the "Total Leads" KPI tile (leads created in the selected period).
   const total = resolved.totalLeads ?? 0;
   const closed = resolved.conversions ?? 0;
   const overallConv = resolved.overallConv ?? 0;
+  const notInFunnel = resolved.notInFunnel ?? Math.max(0, total - (totalData[0] || 0));
+
+  const mappingTip = Array.isArray(resolved.stageMapping) && resolved.stageMapping.length
+    ? resolved.stageMapping
+        .map((m) => `${getStageLabelById(m.stageId)} → ${m.funnelStage || "not in funnel"}`)
+        .join("\n")
+    : "";
+  const infoTip = `Cumulative funnel: a lead counts in every stage up to the deepest one it reached. Universe: leads created in ${periodLabel || "the selected period"} (same as Total Leads).${mappingTip ? `\n\nStage mapping:\n${mappingTip}` : ""}`;
 
   const hotStops = [
     { offset: "0%", color: "#9f1239" },
@@ -1330,18 +1320,17 @@ function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChan
     { offset: "100%", color: "#93c5fd" }
   ];
 
-  const totalStops = [
-    { offset: "0%", color: "#0f766e" },
-    { offset: "50%", color: "#14b8a6" },
-    { offset: "100%", color: "#5eead4" }
-  ];
-
   return (
-    <div className={`${PANEL} p-3 sm:p-4 md:p-5 min-w-0 overflow-hidden`}>
+    <div className={`${PANEL} p-3 sm:p-4 md:p-5 min-w-0 overflow-hidden ${loading ? "opacity-70" : ""}`}>
       <SectionHead
         icon={GitBranch}
         title="Sales Pipeline Status"
-        sub="Temperature-segmented conversion progression"
+        sub={
+          <span className="inline-flex items-center gap-1" title={infoTip}>
+            Cumulative stage funnel · leads created {periodLabel ? periodLabel.toLowerCase() : "in period"}
+            <InfoIcon className="w-3 h-3 text-slate-400 cursor-help shrink-0" aria-label={infoTip} />
+          </span>
+        }
       />
 
       <div className="overflow-x-auto scrollbar-hide -mx-0.5 sm:-mx-1 px-0.5 sm:px-1">
@@ -1415,13 +1404,14 @@ function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChan
         </div>
       </div>
 
-      <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-slate-100 grid grid-cols-3 gap-1.5 sm:gap-2">
+      <div className="mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2">
         {[
-          { label: "Total Leads",  value: total.toLocaleString() },
-          { label: "Conversions",  value: closed.toLocaleString() },
-          { label: "Overall Conv", value: `${overallConv}%` },
-        ].map(({ label, value }) => (
-          <div key={label} className="text-center rounded-lg bg-slate-50 border border-slate-100 py-1.5 sm:py-2 px-0.5 min-w-0">
+          { label: "Total Leads", value: total.toLocaleString(), tip: "All leads created in the period — identical to the Total Leads tile above" },
+          { label: "Not in funnel", value: notInFunnel.toLocaleString(), tip: "Leads not yet contacted (new / not picked) or marked Not Interested" },
+          { label: "Closed Deals", value: closed.toLocaleString(), tip: "Leads at Payment Complete / Converted / Won — identical to the Closed Deals tile above" },
+          { label: "Overall Conv", value: `${overallConv}%`, tip: "Closed deals / total leads" },
+        ].map(({ label, value, tip }) => (
+          <div key={label} title={tip} className="text-center rounded-lg bg-slate-50 border border-slate-100 py-1.5 sm:py-2 px-0.5 min-w-0">
             <p className="text-xs sm:text-sm font-bold text-slate-800 tabular-nums">{value}</p>
             <p className="text-[8px] sm:text-[9px] text-slate-500 mt-0.5 leading-tight">{label}</p>
           </div>
@@ -1477,8 +1467,8 @@ function AiCostPanel({ data, loading, filterKey }) {
       </div>
 
       <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Daily spend</p>
-      <div style={{ width: "100%", height: 120 }}>
-        <ResponsiveContainer>
+      <div style={{ width: "100%", height: 120, minWidth: 0, minHeight: 120 }}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={120} initialDimension={{ width: 320, height: 120 }}>
           <BarChart data={daily} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
             <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
             <YAxis hide />
@@ -1554,7 +1544,7 @@ function HighlightText({ text }) {
   );
 }
 
-function AIInsightsPanel({ insights = [], filterKey, forecastValue = "₹0", onRefresh }) {
+function AIInsightsPanel({ insights = [], loading = false, periodLabel = "", pipelineValue = "₹0", openLeads = 0, onRefresh }) {
   const isMobile = useIsMobile();
   const [refreshing, setRefreshing] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
@@ -1601,7 +1591,7 @@ function AIInsightsPanel({ insights = [], filterKey, forecastValue = "₹0", onR
         compact={isMobile}
         icon={Sparkles}
         title="AI Insights Center"
-        sub={isMobile ? "Next-best actions" : "Next-best-action & risk assessment"}
+        sub={`${isMobile ? "Next-best actions" : "Next-best-action & risk assessment"}${periodLabel ? ` · ${periodLabel}` : ""}`}
         action={
           <button
             type="button"
@@ -1617,8 +1607,8 @@ function AIInsightsPanel({ insights = [], filterKey, forecastValue = "₹0", onR
         {normalized.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 py-8 text-center">
             <Sparkles className="w-7 h-7 text-slate-300 mx-auto mb-2" />
-            <p className="text-sm font-semibold text-slate-600">No insights yet</p>
-            <p className="text-xs text-slate-400 mt-1">Insights appear from your live CRM activity and lead data.</p>
+            <p className="text-sm font-semibold text-slate-600">{loading ? "Loading insights…" : "No insights for this period"}</p>
+            <p className="text-xs text-slate-400 mt-1">Insights are built from calls and open leads inside the selected period.</p>
           </div>
         ) : (
           <div className="max-h-[385px] overflow-y-auto pr-1 space-y-2 sm:space-y-2.5 scrollbar-thin scrollbar-thumb-slate-200 hover:scrollbar-thumb-slate-300">
@@ -1665,23 +1655,18 @@ function AIInsightsPanel({ insights = [], filterKey, forecastValue = "₹0", onR
         >
           <div className="flex items-start justify-between gap-2 mb-2 sm:mb-3 w-full min-w-0">
             <div className="min-w-0 flex-1">
-              <p className="text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Pipeline Forecast</p>
+              <p className="text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Open Pipeline Value</p>
               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mt-1">
-                <span className="text-lg sm:text-xl font-black tracking-tight text-slate-900 tabular-nums">{forecastValue}</span>
-                <span className="text-[9px] sm:text-[10px] text-slate-500 font-semibold">from live data</span>
+                <span className="text-lg sm:text-xl font-black tracking-tight text-slate-900 tabular-nums">{pipelineValue}</span>
+                <span className="text-[9px] sm:text-[10px] text-slate-500 font-semibold">
+                  {openLeads} open {openLeads === 1 ? "lead" : "leads"}{periodLabel ? ` · created ${periodLabel.toLowerCase()}` : ""}
+                </span>
               </div>
+              <p className="text-[9px] text-slate-400 mt-0.5">Sum of expected revenue of open leads (not closed, not lost). Not a forecast.</p>
             </div>
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
               <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500" />
             </div>
-          </div>
-          <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden w-full">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: normalized.length ? "80%" : "0%" }}
-              transition={{ duration: 1, ease: "easeOut" }}
-              className="h-full bg-gradient-to-r from-rose-500 to-rose-400 rounded-full"
-            />
           </div>
         </motion.div>
       </div>
@@ -1703,7 +1688,13 @@ function AIInsightsPanel({ insights = [], filterKey, forecastValue = "₹0", onR
 }
 
 // ─── Imp. Metrics ─────────────────────────────────────────────────────────────
-function ImpMetrics({ metrics = {}, filterKey }) {
+// Definitions come from the backend (utils/metricDefinitions.js) so tooltips always match the maths.
+function metricInfo(definitions, key, fallback) {
+  const d = definitions?.[key];
+  return d ? `Formula: ${d.formula}. Basis: ${d.basis}.` : fallback;
+}
+
+function ImpMetrics({ metrics = {}, filterKey, definitions = null }) {
   const isMobile = useIsMobile();
   const circleSize = isMobile ? 64 : 80;
   const safe = {
@@ -1718,7 +1709,7 @@ function ImpMetrics({ metrics = {}, filterKey }) {
       value: safe.pickup,
       color: "#e11d48",
       glow: "#e11d48",
-      info: "Share of calls that connected (duration > 0) vs total calls in this period.",
+      info: metricInfo(definitions, "pickup", "Formula: answered outbound calls / dialled outbound calls. Basis: call date within the selected period."),
     },
     {
       label: "Qualification Rate",
@@ -1726,7 +1717,7 @@ function ImpMetrics({ metrics = {}, filterKey }) {
       value: safe.qualification,
       color: "#6366f1",
       glow: "#6366f1",
-      info: "Leads with a 2 min+ conversation or meeting booked, as a share of total leads.",
+      info: metricInfo(definitions, "qualification", "Formula: leads with a 2 min+ conversation or meeting booked (or later) / total leads. Basis: leads created in the selected period."),
     },
     {
       label: "Conversion Rate",
@@ -1734,7 +1725,7 @@ function ImpMetrics({ metrics = {}, filterKey }) {
       value: safe.conversion,
       color: "#10b981",
       glow: "#10b981",
-      info: "Leads marked converted or won vs total leads in this period.",
+      info: metricInfo(definitions, "conversion", "Formula: payment-complete leads / total leads. Basis: leads created in the selected period."),
     },
   ];
 
@@ -1744,7 +1735,7 @@ function ImpMetrics({ metrics = {}, filterKey }) {
         compact={isMobile}
         icon={Activity}
         title="Key Metrics"
-        sub={isMobile ? "Hover a circle for details" : "Hover each circle for rate details"}
+        sub={isMobile ? "Tap a circle for the formula" : "Hover a circle for formula and date basis"}
       />
       <AnimatePresence mode="wait">
         <motion.div
@@ -1781,55 +1772,91 @@ function ImpMetrics({ metrics = {}, filterKey }) {
   );
 }
 
-// ─── Recent Activity — expanded with more items & no empty gap ───────────────
-// ─── Recent Activity Drawer Content ──────────────────────────────────────────
+// ─── Recent Activity ──────────────────────────────────────────────────────────
+// The card and the history drawer read the SAME list (rows from /api/activity), so counts always agree.
+// Dates use the shared formatActivityDate (relative under 7 days, otherwise "6 Aug 2026").
+const ACTIVITY_CARD_LIMIT = 6;
+
+// Category from the event's entity when the API provides one; text heuristics only as a fallback.
+function getActivityCategory(item) {
+  const entity = String(item?.entity || "").toLowerCase();
+  if (entity === "employee" || entity === "team") return "Team";
+  if (entity === "lead" || entity === "deal" || entity === "pipeline") return "Deals";
+  if (entity === "call") return "Calls";
+  const t = String(item?.text || "").toLowerCase();
+  if (t.includes("seo") || t.includes("web dev") || t.includes("ui/ux") || t.includes("crm") || t.includes("automation")) return "Deals";
+  if (t.includes("employee") || t.includes("team")) return "Team";
+  return "System";
+}
+
+function isAlertText(text) {
+  const t = String(text || "").toLowerCase();
+  return t.includes("drop") || t.includes("below") || t.includes("no-showed") || t.includes("overdue") || t.includes("inactive") || t.includes("overloaded");
+}
+
+const getActivityIconConfig = (text) => {
+  const t = String(text || "").toLowerCase();
+  if (t.includes("drop") || t.includes("below") || t.includes("no-showed") || t.includes("overdue") || t.includes("inactive")) {
+    return {
+      bg: "bg-amber-50 border-amber-100 text-amber-600 shadow-sm shadow-amber-500/10",
+      icon: AlertTriangle
+    };
+  }
+  if (t.includes("overloaded") || t.includes("overcapacity") || t.includes("delay")) {
+    return {
+      bg: "bg-red-50 border-red-100 text-rose-600 shadow-sm shadow-red-500/10",
+      icon: AlertTriangle
+    };
+  }
+  if (t.includes("closed") || t.includes("exceeded") || t.includes("up to") || t.includes("completed") || t.includes("drove") || t.includes("sent") || t.includes("added new")) {
+    return {
+      bg: "bg-emerald-50 border-emerald-100 text-emerald-600 shadow-sm shadow-emerald-500/10",
+      icon: CheckCircle2
+    };
+  }
+  return {
+    bg: "bg-rose-50 border-rose-200 text-rose-600 shadow-sm shadow-rose-500/10",
+    icon: InfoIcon
+  };
+};
+
 function ActivityHistoryDrawerContent({ items }) {
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
 
-  const categories = ["All", "Team", "Deals", "Alerts", "System"];
-
-  // Enrich items with timestamps and categories
   const enrichedItems = useMemo(() => {
-    return items.map((item, idx) => {
-      const text = item.text;
-      const t = text.toLowerCase();
-      let cat = "System";
-      if (t.includes("seo") || t.includes("web dev") || t.includes("ui/ux") || t.includes("crm") || t.includes("automation")) {
-        cat = "Deals";
-      } else if (t.includes("rahul") || t.includes("priya") || t.includes("aman") || t.includes("aryan")) {
-        cat = "Team";
-      }
-      
-      let isAlert = false;
-      if (t.includes("drop") || t.includes("below") || t.includes("no-showed") || t.includes("overdue") || t.includes("inactive") || t.includes("overloaded")) {
-        isAlert = true;
-      }
-
-      return {
-        ...item,
-        category: cat,
-        isAlert: isAlert,
-        time: formatRealRelativeTime(item.createdAt || item.created_at),
-        catTag: getCategoryTag(text)
-      };
-    });
+    return items.map((item) => ({
+      ...item,
+      category: getActivityCategory(item),
+      isAlert: isAlertText(item.text),
+      time: formatActivityDate(item.createdAt || item.created_at),
+      fullTime: formatAbsoluteDateTime(item.createdAt || item.created_at),
+    }));
   }, [items]);
 
+  // Only offer filters that have at least one event.
+  const categories = useMemo(() => {
+    const present = new Set(enrichedItems.map((i) => i.category));
+    const list = ["All", ...["Team", "Deals", "Calls", "System"].filter((c) => present.has(c))];
+    if (enrichedItems.some((i) => i.isAlert)) list.push("Alerts");
+    return list;
+  }, [enrichedItems]);
+
   const filteredItems = useMemo(() => {
-    return enrichedItems.filter(item => {
-      const matchesSearch = item.text.toLowerCase().includes(search.toLowerCase());
+    return enrichedItems.filter((item) => {
+      const matchesSearch = String(item.text || "").toLowerCase().includes(search.toLowerCase());
       if (activeFilter === "All") return matchesSearch;
-      if (activeFilter === "Team") return item.category === "Team" && matchesSearch;
-      if (activeFilter === "Deals") return item.category === "Deals" && matchesSearch;
       if (activeFilter === "Alerts") return item.isAlert && matchesSearch;
-      if (activeFilter === "System") return item.category === "System" && matchesSearch;
-      return matchesSearch;
+      return item.category === activeFilter && matchesSearch;
     });
   }, [enrichedItems, search, activeFilter]);
 
   return (
     <div className="space-y-5 flex flex-col h-full">
+      <p className="text-[11px] text-slate-500 -mb-2">
+        {items.length} {items.length === 1 ? "event" : "events"} · full activity log (not filtered by the dashboard date range)
+      </p>
+
       {/* Search Input */}
       <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white border border-slate-200 focus-within:border-rose-300 focus-within:ring-2 focus-within:ring-rose-100 transition-all shadow-sm">
         <Search className="w-4 h-4 text-slate-400 flex-shrink-0" />
@@ -1892,9 +1919,9 @@ function ActivityHistoryDrawerContent({ items }) {
                 <div className="flex-1 bg-white border border-rose-100 group-hover:border-rose-200 hover:bg-rose-50/40 rounded-2xl p-3.5 transition-all shadow-sm">
                   <div className="flex items-start justify-between gap-3 mb-1">
                     <span className="text-[10px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded-md">
-                      {item.catTag}
+                      {item.category}
                     </span>
-                    <span className="text-[10px] text-slate-400 font-bold tracking-tight whitespace-nowrap">{item.time}</span>
+                    <span className="text-[10px] text-slate-400 font-bold tracking-tight whitespace-nowrap" title={item.fullTime}>{item.time}</span>
                   </div>
                   <p className="text-xs text-slate-700 group-hover:text-slate-900 leading-relaxed font-medium">
                     {item.text}
@@ -1913,148 +1940,80 @@ function ActivityHistoryDrawerContent({ items }) {
   );
 }
 
-// Helper generators
-// No usable timestamp -> "—" (never a made-up time; getRelativeTime was never defined and crashed the Dashboard).
-const formatRealRelativeTime = (dateInput) => {
-  if (!dateInput) return "—";
-  const date = new Date(dateInput);
-  if (isNaN(date.getTime())) return "—";
-
-  const diffMs = Date.now() - date.getTime();
-  const diffSecs = Math.floor(diffMs / 1000);
-  if (diffSecs < 0) return "Just now";
-  const diffMins = Math.floor(diffSecs / 60);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffSecs < 60) return "Just now";
-  if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? "min" : "mins"} ago`;
-  if (diffHours < 24) return `${diffHours} ${diffHours === 1 ? "hour" : "hours"} ago`;
-  if (diffDays < 30) return `${diffDays} ${diffDays === 1 ? "day" : "days"} ago`;
-
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-};
-
-const getCategoryTag = (text) => {
-  const t = text.toLowerCase();
-  if (t.includes("seo")) return "SEO";
-  if (t.includes("web dev")) return "Web Dev";
-  if (t.includes("ui/ux")) return "UI/UX";
-  if (t.includes("crm")) return "CRM Setup";
-  if (t.includes("automation")) return "Automation";
-  if (t.includes("rahul") || t.includes("priya") || t.includes("aman") || t.includes("aryan") || t.includes("employee")) return "Team";
-  return "System";
-};
-
-const getActivityIconConfig = (text) => {
-  const t = text.toLowerCase();
-  if (t.includes("drop") || t.includes("below") || t.includes("no-showed") || t.includes("overdue") || t.includes("inactive")) {
-    return {
-      bg: "bg-amber-50 border-amber-100 text-amber-600 shadow-sm shadow-amber-500/10",
-      icon: AlertTriangle
-    };
-  }
-  if (t.includes("overloaded") || t.includes("overcapacity") || t.includes("delay")) {
-    return {
-      bg: "bg-red-50 border-red-100 text-rose-600 shadow-sm shadow-red-500/10",
-      icon: AlertTriangle
-    };
-  }
-  if (t.includes("closed") || t.includes("exceeded") || t.includes("up to") || t.includes("completed") || t.includes("drove") || t.includes("sent")) {
-    return {
-      bg: "bg-emerald-50 border-emerald-100 text-emerald-600 shadow-sm shadow-emerald-500/10",
-      icon: CheckCircle2
-    };
-  }
-  if (t.includes("rahul") || t.includes("priya") || t.includes("aman") || t.includes("aryan") || t.includes("employee") || t.includes("added new")) {
-    return {
-      bg: "bg-slate-50 border-slate-200 text-slate-600 shadow-sm shadow-slate-500/5",
-      icon: InfoIcon
-    };
-  }
-  return {
-    bg: "bg-rose-50 border-rose-200 text-rose-600 shadow-sm shadow-rose-500/10",
-    icon: InfoIcon
-  };
-};
-
-// ─── Recent Activity — expanded with real relative time & active team filter ───────────────
-function RecentActivityPanel({ items = [], filterKey }) {
+function RecentActivityPanel({ items = [] }) {
   const isMobile = useIsMobile();
   const [activityDrawerOpen, setActivityDrawerOpen] = useState(false);
 
-  const activeItems = useMemo(() => {
-    if (!Array.isArray(items)) return [];
-    return items.filter((item) => {
-      const text = (item.text || "").toLowerCase();
-      return !text.includes("sourav") && !text.includes("rohan") && !text.includes("inactive");
-    });
-  }, [items]);
+  const all = Array.isArray(items) ? items : [];
+  const visible = all.slice(0, ACTIVITY_CARD_LIMIT);
+  const hasDealOrCall = all.some((i) => ["Deals", "Calls"].includes(getActivityCategory(i)));
 
   return (
-    <div className={`${PANEL} p-2.5 sm:p-5 min-w-0 w-full`}>
+    <div className={`${PANEL} p-2.5 sm:p-5 min-w-0 w-full flex flex-col flex-1`}>
       <SectionHead
         compact={isMobile}
         icon={Bell}
         title="Recent Activity"
-        sub={isMobile ? "Team & deal updates" : "Live team & deal updates"}
+        sub={hasDealOrCall ? "Team, deal & call events" : "Team activity log"}
         action={
-          <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            Live
+          <span className="text-[10px] font-semibold text-slate-500 flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md whitespace-nowrap">
+            {all.length} {all.length === 1 ? "event" : "events"}
           </span>
         }
       />
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={filterKey}
-          className={`space-y-0.5 pr-1 ${activeItems.length > 6 ? "overflow-y-auto" : "overflow-y-hidden"}`}
-          style={{ maxHeight: "240px" }}
-          initial="hidden"
-          animate="show"
-          exit="hidden"
-          variants={staggerContainer}
-        >
-          {activeItems.map((item, i) => {
-            const config = getActivityIconConfig(item.text);
-            const Icon = config.icon;
-            const timeStr = formatRealRelativeTime(item.createdAt || item.created_at);
+      <div className="space-y-0.5 pr-1 flex-1">
+        {visible.length === 0 && (
+          <p className="text-center text-xs text-slate-500 py-6">No activity recorded yet.</p>
+        )}
+        {visible.map((item, i) => {
+          const config = getActivityIconConfig(item.text);
+          const Icon = config.icon;
+          const when = item.createdAt || item.created_at;
 
-            return (
-              <motion.div
-                key={i}
-                variants={fadeUp}
-                custom={i}
-                className="group flex items-start gap-2.5 py-1.5 px-1.5 rounded-lg border border-transparent hover:bg-slate-50 hover:border-slate-100 transition-all duration-200 cursor-default"
-              >
-                <div className={`w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 bg-white shadow-sm ${config.bg}`}>
-                  <Icon className="w-3.5 h-3.5" />
-                </div>
+          return (
+            <motion.div
+              key={i}
+              variants={fadeUp}
+              initial="hidden"
+              animate="show"
+              custom={i}
+              className="group flex items-start gap-2.5 py-1.5 px-1.5 rounded-lg border border-transparent hover:bg-slate-50 hover:border-slate-100 transition-all duration-200 cursor-default"
+            >
+              <div className={`w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 bg-white shadow-sm ${config.bg}`}>
+                <Icon className="w-3.5 h-3.5" />
+              </div>
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-baseline gap-2 mb-0.5">
-                    <span className="text-[8px] font-bold uppercase text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                      {getCategoryTag(item.text)}
-                    </span>
-                    <span className="text-[8px] text-slate-400 font-medium shrink-0">{timeStr}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-700 group-hover:text-slate-900 leading-snug font-medium line-clamp-2">
-                    {item.text}
-                  </p>
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-baseline gap-2 mb-0.5">
+                  <span className="text-[8px] font-bold uppercase text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                    {getActivityCategory(item)}
+                  </span>
+                  <span className="text-[8px] text-slate-400 font-medium shrink-0" title={formatAbsoluteDateTime(when)}>
+                    {formatActivityDate(when)}
+                  </span>
                 </div>
-              </motion.div>
-            );
-          })}
-        </motion.div>
-      </AnimatePresence>
+                <p className="text-[11px] text-slate-700 group-hover:text-slate-900 leading-snug font-medium line-clamp-2">
+                  {item.text}
+                </p>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+
+      {all.length > 0 && (
+        <p className="mt-2 text-[10px] text-slate-400 text-center">
+          Showing {visible.length} of {all.length} · not filtered by the date range
+        </p>
+      )}
 
       <button
         type="button"
         onClick={() => setActivityDrawerOpen(true)}
-        className="mt-3 w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[11px] font-bold rounded-lg border border-slate-200 hover:border-slate-300 transition-all flex items-center justify-center gap-1"
+        className="mt-2 w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 text-[11px] font-bold rounded-lg border border-slate-200 hover:border-slate-300 transition-all flex items-center justify-center gap-1"
       >
-        View all history
+        View all {all.length} {all.length === 1 ? "event" : "events"}
         <ArrowRight className="w-3.5 h-3.5 opacity-60" />
       </button>
 
@@ -2063,7 +2022,7 @@ function RecentActivityPanel({ items = [], filterKey }) {
         onClose={() => setActivityDrawerOpen(false)}
         title="Activity Timeline History"
       >
-        <ActivityHistoryDrawerContent items={items} />
+        <ActivityHistoryDrawerContent items={all} />
       </Drawer>
     </div>
   );
@@ -2131,27 +2090,32 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
     const rev = payload.find(p => p.dataKey === "revenue")?.value || 0;
     const cash = payload.find(p => p.dataKey === "cashCollected")?.value || 0;
+    const closedCount = payload[0]?.payload?.closedCount;
 
     return (
       <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-3 shadow-lg min-w-[180px] text-slate-800 transition-all z-[99999]">
         <p className="text-xs uppercase font-extrabold text-slate-700 tracking-wider mb-2">{label}</p>
         <div className="space-y-1.5">
-          {/* Real Revenue */}
           <div className="flex items-center justify-between text-xs">
             <span className="flex items-center gap-1.5 text-slate-500 font-medium">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
-              Real Revenue
+              Revenue (closed deals)
             </span>
-            <span className="font-extrabold text-slate-900">₹{rev.toFixed(1)}L</span>
+            <span className="font-extrabold text-slate-900">{formatINR(rev * 100000)}</span>
           </div>
-          {/* Cash Collected */}
           <div className="flex items-center justify-between text-xs">
             <span className="flex items-center gap-1.5 text-slate-500 font-medium">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
               Cash Collected
             </span>
-            <span className="font-extrabold text-emerald-700">₹{cash.toFixed(1)}L</span>
+            <span className="font-extrabold text-emerald-700">{formatINR(cash * 100000)}</span>
           </div>
+          {closedCount != null && (
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium pl-4">Closed deals</span>
+              <span className="font-extrabold text-slate-900">{closedCount}</span>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2160,7 +2124,9 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 // ─── REVENUE TRAJECTORY CARD ──────────────────────────────────────────────────
-function RevenueTrajectory({ data = [], kpis = [] }) {
+// Summary tiles use the SAME numbers as the KPI row (selected period). The chart is monthly HISTORY
+// (last 6 months) and says so. Sparse history (< 3 months) is drawn as bars, never a smoothed curve to zero.
+function RevenueTrajectory({ data = [], kpis = [], periodLabel = "" }) {
   const [viewMode, setViewMode] = useState("monthly");
   const isMobile = useIsMobile(768);
   const chartHeight = isMobile ? 168 : 250;
@@ -2168,81 +2134,53 @@ function RevenueTrajectory({ data = [], kpis = [] }) {
     ? { top: 6, right: 4, left: -12, bottom: 2 }
     : { top: 15, right: 30, left: 10, bottom: 8 };
 
-  const resolvedData = useMemo(() => {
-    if (data?.length) return data;
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const now = new Date();
-    const list = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      list.push({
-        month: monthNames[d.getMonth()],
-        revenue: 0,
-        cashCollected: 0,
-        closedCount: 0,
-      });
-    }
-    return list;
-  }, [data]);
+  const points = useMemo(() => (Array.isArray(data) ? data : []), [data]);
 
-  // Monthly vs Cumulative
-  let runningActual = 0;
-  let runningCash = 0;
   const cumulativeData = useMemo(() => {
     let rActual = 0;
     let rCash = 0;
-    return resolvedData.map((item) => {
+    let rClosed = 0;
+    return points.map((item) => {
       rActual += (Number(item.revenue) || 0);
       rCash += (Number(item.cashCollected) || 0);
+      rClosed += (Number(item.closedCount) || 0);
       return {
         ...item,
-        month: item.month,
-        revenue: Math.round(rActual * 10) / 10,
-        cashCollected: Math.round(rCash * 10) / 10,
+        revenue: Math.round(rActual * 100) / 100,
+        cashCollected: Math.round(rCash * 100) / 100,
+        closedCount: rClosed,
       };
     });
-  }, [resolvedData]);
+  }, [points]);
 
-  const activeData = viewMode === "monthly" ? resolvedData : cumulativeData;
+  const activeData = viewMode === "monthly" ? points : cumulativeData;
+  const sparse = activeData.length < 3;
+  const maxVal = useMemo(
+    () => Math.max(0, ...activeData.map((d) => Math.max(Number(d.revenue) || 0, Number(d.cashCollected) || 0))),
+    [activeData],
+  );
 
-  const maxVal = useMemo(() => {
-    if (!activeData.length) return 0;
-    return Math.max(
-      0,
-      ...activeData.map((d) => Math.max(Number(d.revenue) || 0, Number(d.cashCollected) || 0))
-    );
-  }, [activeData]);
+  const pick = (...labels) => kpis.find((k) => labels.includes(k.label))?.value;
+  const totalRevenueVal = pick("Revenue", "Total Revenue") || "₹0";
+  const cashCollectedVal = pick("Cash Collected") || "₹0";
+  const pipelineVal = pick("Pipeline Value") || "₹0";
+  const closingsVal = pick("Closed Deals", "Closings") || "0";
+  const stat = [
+    { label: "Revenue", value: totalRevenueVal, tip: "Value of closed (Payment Complete) deals among leads created in the selected period", icon: DollarSign, box: "bg-rose-50 border-rose-100 text-rose-600", text: "text-slate-900" },
+    { label: "Cash Collected", value: cashCollectedVal, tip: "Recorded cash collections with payment date in the selected period", icon: DollarSign, box: "bg-emerald-50 border-emerald-100 text-emerald-600", text: "text-emerald-700" },
+    { label: "Pipeline Value", value: pipelineVal, tip: "Expected revenue of OPEN leads (not closed, not lost) created in the selected period", icon: BarChart3, box: "bg-sky-50 border-sky-100 text-sky-600", text: "text-slate-900" },
+    { label: "Closed Deals", value: closingsVal, tip: "Leads at Payment Complete / Converted / Won in the selected period", icon: Trophy, box: "bg-amber-50 border-amber-100 text-amber-600", text: "text-slate-900" },
+  ];
 
-  const computedTotalRev = useMemo(() => {
-    const sumLakhs = activeData.reduce((acc, d) => acc + (Number(d.revenue) || 0), 0);
-    if (sumLakhs >= 100) return `₹${(sumLakhs / 100).toFixed(2)}Cr`;
-    if (sumLakhs > 0) return `₹${sumLakhs.toFixed(1)}L`;
-    return "₹0";
-  }, [activeData]);
-
-  const computedCash = useMemo(() => {
-    const sumLakhs = activeData.reduce((acc, d) => acc + (Number(d.cashCollected) || 0), 0);
-    if (sumLakhs >= 100) return `₹${(sumLakhs / 100).toFixed(2)}Cr`;
-    if (sumLakhs > 0) return `₹${sumLakhs.toFixed(1)}L`;
-    return "₹0";
-  }, [activeData]);
-
-  const computedClosings = useMemo(() => {
-    const totalClosed = activeData.reduce((acc, d) => acc + (Number(d.closedCount) || 0), 0);
-    return String(totalClosed);
-  }, [activeData]);
-
-  const pipelineVal = kpis.find((k) => k.label === "Pipeline Value")?.value || "₹0";
-  const totalRevenueVal = computedTotalRev !== "₹0" ? computedTotalRev : (kpis.find((k) => k.label === "Total Revenue" || k.label === "Revenue")?.value || "₹0");
-  const cashCollectedVal = computedCash !== "₹0" ? computedCash : (kpis.find((k) => k.label === "Cash Collected")?.value || "₹0");
-  const closingsVal = computedClosings !== "0" ? computedClosings : (kpis.find((k) => k.label === "Closings")?.value || "0");
+  const axisTick = { fill: "#475569", fontWeight: 500, fontSize: isMobile ? 8 : 10 };
+  const yTick = (v) => { const r = Math.round((Number(v) || 0) * 10) / 10; return isMobile ? `${r}L` : `₹${r}L`; };
 
   return (
-    <div className={`${PANEL} p-3 sm:p-5`}>
+    <div className={`${PANEL} p-3 sm:p-5 flex flex-col flex-1 min-w-0`}>
       <SectionHead
         icon={BarChart3}
         title="Revenue Trajectory"
-        sub={isMobile ? "Real revenue & cash collections" : "Real monthly revenue & cash collected from DB"}
+        sub={`Tiles: ${periodLabel || "selected period"} (same as KPI row) · Chart: monthly history, last 6 months`}
         action={
           <div className="inline-flex p-0.5 sm:p-1 rounded-lg bg-slate-100 border border-slate-200">
             {["monthly", "cumulative"].map((mode) => (
@@ -2261,274 +2199,200 @@ function RevenueTrajectory({ data = [], kpis = [] }) {
         }
       />
 
-      {/* Summary stats: 4 Real Parameters matching Top KPI Row */}
+      {/* Summary stats: identical to the top KPI row for the selected period */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-3 sm:mb-5">
-        {/* Total Revenue */}
-        <div className="rounded-lg sm:rounded-xl bg-slate-50 border border-slate-100 p-2 sm:p-3 flex items-center gap-2">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
-            <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        {stat.map(({ label, value, tip, icon: Icon, box, text }) => (
+          <div key={label} title={tip} className="rounded-lg sm:rounded-xl bg-slate-50 border border-slate-100 p-2 sm:p-3 flex items-center gap-2">
+            <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg border flex items-center justify-center shrink-0 ${box}`}>
+              <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[8px] sm:text-[9px] uppercase font-semibold text-slate-400 tracking-wide truncate">{label}</p>
+              <p className={`text-xs sm:text-sm font-bold tabular-nums ${text}`}>{value}</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-[8px] sm:text-[9px] uppercase font-semibold text-slate-400 tracking-wide truncate">
-              {viewMode === "monthly" ? "Total Revenue" : "Cumulative Rev"}
-            </p>
-            <p className="text-xs sm:text-sm font-bold text-slate-900 tabular-nums">{totalRevenueVal}</p>
-          </div>
-        </div>
-
-        {/* Cash Collected */}
-        <div className="rounded-lg sm:rounded-xl bg-slate-50 border border-slate-100 p-2 sm:p-3 flex items-center gap-2">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
-            <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[8px] sm:text-[9px] uppercase font-semibold text-slate-400 tracking-wide truncate">
-              Cash Collected
-            </p>
-            <p className="text-xs sm:text-sm font-bold text-emerald-700 tabular-nums">{cashCollectedVal}</p>
-          </div>
-        </div>
-
-        {/* Pipeline Value */}
-        <div className="rounded-lg sm:rounded-xl bg-slate-50 border border-slate-100 p-2 sm:p-3 flex items-center gap-2">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shrink-0">
-            <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[8px] sm:text-[9px] uppercase font-semibold text-slate-400 tracking-wide truncate">Pipeline Value</p>
-            <p className="text-xs sm:text-sm font-bold text-slate-900 tabular-nums">{pipelineVal}</p>
-          </div>
-        </div>
-
-        {/* Converted Closings */}
-        <div className="rounded-lg sm:rounded-xl bg-slate-50 border border-slate-100 p-2 sm:p-3 flex items-center gap-2">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shrink-0">
-            <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[8px] sm:text-[9px] uppercase font-semibold text-slate-400 tracking-wide truncate">Closed Deals</p>
-            <p className="text-xs sm:text-sm font-bold text-slate-900 tabular-nums">{closingsVal}</p>
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* Main Chart */}
-      <div className={isMobile ? "w-full min-w-0" : "rev-scroll overflow-x-auto"}>
-        <div style={isMobile ? { height: chartHeight, width: "100%" } : { minWidth: 400, height: chartHeight }}>
-          <ResponsiveContainer width="100%" height={chartHeight}>
-            <ComposedChart data={activeData} margin={chartMargin}>
-              <defs>
-                <linearGradient id="actualGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#e11d48" stopOpacity={0.25}/>
-                  <stop offset="100%" stopColor="#e11d48" stopOpacity={0.01}/>
-                </linearGradient>
-                <linearGradient id="cashGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.25}/>
-                  <stop offset="100%" stopColor="#10b981" stopOpacity={0.01}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="#f1f5f9" vertical={false} strokeDasharray="3 3" />
-              <XAxis
-                dataKey="month"
-                stroke="#94a3b8"
-                fontSize={isMobile ? 8 : 10}
-                interval={isMobile ? 1 : 0}
-                tick={{ dy: 4, fill: "#475569", fontWeight: 500, fontSize: isMobile ? 8 : 10 }}
-                tickMargin={2}
-                axisLine={{ stroke: "#e2e8f0" }}
-                tickLine={false}
-              />
-              <YAxis
-                stroke="#94a3b8"
-                fontSize={isMobile ? 8 : 10}
-                width={isMobile ? 26 : 40}
-                tickMargin={2}
-                domain={[0, maxVal > 0 ? "auto" : 5]}
-                tickFormatter={v => (isMobile ? `${v}L` : `₹${v}L`)}
-                tick={{ fill: "#475569", fontWeight: 500, fontSize: isMobile ? 8 : 10 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip content={<CustomTooltip />} cursor={{ stroke: "#fecdd3", strokeWidth: 1.5, strokeDasharray: "3 3" }} />
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+        Monthly history · {viewMode === "monthly" ? "per month" : "running total"} · ₹ lakhs
+      </p>
 
-              {/* Cash Collected (emerald solid area) */}
-              <Area
-                type="monotone"
-                dataKey="cashCollected"
-                stroke="#10b981"
-                strokeWidth={isMobile ? 1.5 : 2}
-                fill="url(#cashGrad)"
-                name="Cash Collected"
-                activeDot={{ r: isMobile ? 4 : 5, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
-              />
-
-              {/* Revenue (solid rose area) */}
-              <Area
-                type="monotone"
-                dataKey="revenue"
-                stroke="#e11d48"
-                strokeWidth={isMobile ? 2 : 2.5}
-                fill="url(#actualGrad)"
-                name="Revenue"
-                activeDot={{ r: isMobile ? 4 : 6, fill: "#e11d48", stroke: "#fff", strokeWidth: 2 }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+      {/* Chart box grows to fill the column (no empty gap) but never collapses below chartHeight. */}
+      <div className="relative flex-1 w-full min-w-0" style={{ minHeight: chartHeight, minWidth: 0 }}>
+        {activeData.length === 0 ? (
+          <div className="absolute inset-0 grid place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
+            <p className="text-xs font-semibold text-slate-500">No monthly history yet</p>
+          </div>
+        ) : (
+          <div className="absolute inset-0" style={{ minWidth: 0, minHeight: chartHeight }}>
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minWidth={0}
+              minHeight={chartHeight}
+              initialDimension={{ width: 480, height: chartHeight }}
+            >
+              {sparse ? (
+                <BarChart data={activeData} margin={chartMargin} barGap={4}>
+                  <CartesianGrid stroke="#f1f5f9" vertical={false} strokeDasharray="3 3" />
+                  <XAxis dataKey="month" stroke="#94a3b8" tick={{ dy: 4, ...axisTick }} tickMargin={2} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
+                  <YAxis
+                    stroke="#94a3b8"
+                    width={isMobile ? 26 : 40}
+                    tickMargin={2}
+                    domain={[0, maxVal > 0 ? "auto" : 5]}
+                    tickFormatter={yTick}
+                    tick={axisTick}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(225,29,72,0.05)" }} />
+                  <Bar dataKey="revenue" name="Revenue" fill="#e11d48" radius={[4, 4, 0, 0]} maxBarSize={44} />
+                  <Bar dataKey="cashCollected" name="Cash Collected" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={44} />
+                </BarChart>
+              ) : (
+                <ComposedChart data={activeData} margin={chartMargin}>
+                  <defs>
+                    <linearGradient id="actualGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#e11d48" stopOpacity={0.25}/>
+                      <stop offset="100%" stopColor="#e11d48" stopOpacity={0.01}/>
+                    </linearGradient>
+                    <linearGradient id="cashGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.25}/>
+                      <stop offset="100%" stopColor="#10b981" stopOpacity={0.01}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#f1f5f9" vertical={false} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="month"
+                    stroke="#94a3b8"
+                    interval={isMobile ? 1 : 0}
+                    tick={{ dy: 4, ...axisTick }}
+                    tickMargin={2}
+                    axisLine={{ stroke: "#e2e8f0" }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    stroke="#94a3b8"
+                    width={isMobile ? 26 : 40}
+                    tickMargin={2}
+                    domain={[0, maxVal > 0 ? "auto" : 5]}
+                    tickFormatter={yTick}
+                    tick={axisTick}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: "#fecdd3", strokeWidth: 1.5, strokeDasharray: "3 3" }} />
+                  <Area
+                    type="monotone"
+                    dataKey="cashCollected"
+                    stroke="#10b981"
+                    strokeWidth={isMobile ? 1.5 : 2}
+                    fill="url(#cashGrad)"
+                    name="Cash Collected"
+                    dot={{ r: 3, fill: "#10b981", stroke: "#fff", strokeWidth: 1 }}
+                    activeDot={{ r: isMobile ? 4 : 5, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="#e11d48"
+                    strokeWidth={isMobile ? 2 : 2.5}
+                    fill="url(#actualGrad)"
+                    name="Revenue"
+                    dot={{ r: 3, fill: "#e11d48", stroke: "#fff", strokeWidth: 1 }}
+                    activeDot={{ r: isMobile ? 4 : 6, fill: "#e11d48", stroke: "#fff", strokeWidth: 2 }}
+                  />
+                </ComposedChart>
+              )}
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
-
     </div>
   );
 }
 
 // ─── ROOT DASHBOARD ───────────────────────────────────────────────────────────
+const MONEY_KPI_KEYS = new Set(["totalRevenue", "cashCollected", "pipelineValue"]);
+
 export default function Dashboard() {
   const [lead,            setLead]           = useState(null);
   const { preset, bounds } = useDateRange();
   const { selectedService, setSelectedService } = useAdmin();
-  const initialDash = hydrateDashboardCache();
-  const [apiFilterData, setApiFilterData] = useState(initialDash?.filterData ?? null);
-  const [customFilterRange, setCustomFilterRange] = useState(null);
-  const [customRangeLoading, setCustomRangeLoading] = useState(false);
-  const [aiInsights, setAiInsights] = useState(initialDash?.aiInsights ?? []);
-  const [teamEmployees, setTeamEmployees] = useState(() => hydrateTeamCache());
-  const [chartRevenue, setChartRevenue] = useState(initialDash?.revenueSeries ?? []);
-  const [pipelineStats, setPipelineStats] = useState(null);
+  // ONE period object (preset or custom From/To) drives the tiles, funnel, leaderboard, key metrics,
+  // AI credit and AI insights. No widget keeps its own date logic.
+  const [filterRange, setFilterRange] = useState(null);
+  const [rangeLoading, setRangeLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState(null);
+  const [aiInsights, setAiInsights] = useState([]);
+  const [insightsLoading, setInsightsLoading] = useState(true);
+  const [insightsReload, setInsightsReload] = useState(0);
+  const [chartRevenue, setChartRevenue] = useState([]);
+  const [servicePipeline, setServicePipeline] = useState(null);
+  const [serviceLoading, setServiceLoading] = useState(false);
   const [aiCost, setAiCost] = useState(null);
   const [aiCostLoading, setAiCostLoading] = useState(true);
-  const [pipelineLoading, setPipelineLoading] = useState(true);
-  const [liveActivity, setLiveActivity] = useState(() => hydrateActivityCache());
-  const [dashboardLoading, setDashboardLoading] = useState(!initialDash?.filterData);
-  const [dashboardError, setDashboardError] = useState(null);
+  const [liveActivity, setLiveActivity] = useState(() => hydrateActivityCache() || []);
 
   const filterKey = preset === "custom" ? "custom" : preset;
-  const mergedFilter = mergeFilterData(null, apiFilterData);
-  const fd = preset === "custom"
-    ? (customFilterRange || EMPTY_FILTER_RANGE)
-    : (mergedFilter?.[filterKey] || EMPTY_FILTER_RANGE);
+  const periodReady = preset !== "custom" || Boolean(bounds?.start && bounds?.end);
+  const fd = filterRange || EMPTY_FILTER_RANGE;
+  const periodLabel = filterRange?.period?.label
+    || (preset === "custom" && periodReady ? `${bounds.start} to ${bounds.end}` : periodLabelFor(preset));
 
-  const leaderboardData = useMemo(() => {
-    const fromApi = fd?.leaderboard;
-    const fromTeam = buildLeaderboardFromEmployees(teamEmployees);
-
-    if (fromApi?.length && fromApi.some((e) => Number(e.leads || e.total_leads || e.pickup || e.pickup_calls) > 0)) {
-      return fromApi.slice(0, 3);
-    }
-    if (fromTeam.length) return fromTeam;
-    if (fromApi?.length) return fromApi.slice(0, 3);
-    return [];
-  }, [fd, teamEmployees]);
-
-  const insightItems = aiInsights.length ? aiInsights : (fd.insights || []);
-  const pipelineForecast = fd.kpis?.find((k) => k.label === "Pipeline Value")?.value || "₹0";
-  const activityItems = liveActivity?.length ? liveActivity : (fd.activity || []);
-
+  // Monthly revenue history + activity log: not period dependent.
   useEffect(() => {
     let cancelled = false;
+    apiGet("/api/dashboard/revenue", { cacheTtl: 60_000 })
+      .then((data) => { if (!cancelled) setChartRevenue(Array.isArray(data?.revenueSeries) ? data.revenueSeries : []); })
+      .catch(() => { if (!cancelled) setChartRevenue([]); });
 
-    async function applyDashboardPayload(data) {
-      if (!data || cancelled) return;
-      if (data.filterData) setApiFilterData(data.filterData);
-      if (Array.isArray(data.aiInsights)) setAiInsights(data.aiInsights);
-      if (data.revenueSeries?.length) setChartRevenue(data.revenueSeries);
-      else setChartRevenue([]);
-      setDashboardError(null);
-    }
-
-    async function loadDashboardBundle() {
-      if (!apiFilterData) setDashboardLoading(true);
-      try {
-        const data = await apiGet("/api/dashboard", { cacheTtl: ADMIN_DASH_CACHE_TTL });
-        await applyDashboardPayload(data);
-      } catch (err) {
+    apiGet("/api/activity", { cacheTtl: ADMIN_DASH_CACHE_TTL })
+      .then((activity) => {
+        if (cancelled || !activity?.success) return;
+        setLiveActivity(mapActivityRows(activity.activities || []));
+      })
+      .catch(() => {
         if (cancelled) return;
-        const cached = readStaleCachedJson("/api/dashboard");
-        if (cached?.filterData) {
-          await applyDashboardPayload(cached);
-        } else if (!apiFilterData) {
-          setDashboardError(err?.message || "Could not load dashboard data");
-        }
-      } finally {
-        if (!cancelled) setDashboardLoading(false);
-      }
-
-      try {
-        const team = await apiGet("/api/team/employees", { cacheTtl: ADMIN_DASH_CACHE_TTL });
-        if (!cancelled && team.success && team.employees?.length) {
-          setTeamEmployees(team.employees);
-        }
-      } catch {
-        if (!cancelled) {
-          const cachedTeam = hydrateTeamCache();
-          if (cachedTeam.length) setTeamEmployees(cachedTeam);
-        }
-      }
-
-      try {
-        const activity = await apiGet("/api/activity", { cacheTtl: ADMIN_DASH_CACHE_TTL });
-        if (!cancelled && activity?.success && activity.activities?.length) {
-          setLiveActivity(
-            activity.activities.slice(0, 8).map((row) => ({
-              text: row.user_name ? `${row.action} — ${row.user_name}` : row.action,
-              createdAt: row.created_at,
-            })),
-          );
-        }
-      } catch {
-        if (!cancelled) {
-          const cachedActivity = hydrateActivityCache();
-          if (cachedActivity?.length) setLiveActivity(cachedActivity);
-        }
-      }
-    }
-
-    loadDashboardBundle();
+        const cached = hydrateActivityCache();
+        if (cached?.length) setLiveActivity(cached);
+      });
     return () => { cancelled = true; };
   }, []);
 
+  // Tiles + funnel + leaderboard + key metrics: one request for the active period.
   useEffect(() => {
-    if (preset !== "custom") {
-      setCustomFilterRange(null);
-      setCustomRangeLoading(false);
-      return;
+    if (!periodReady) {
+      setFilterRange(null);
+      setRangeLoading(false);
+      return undefined;
     }
-    if (!bounds?.start || !bounds?.end) {
-      setCustomFilterRange(null);
-      return;
-    }
-
     let cancelled = false;
-    setCustomRangeLoading(true);
-    const params = buildPeriodQueryParams({
-      preset: "custom",
-      bounds,
-    });
-    params.set("range", "custom");
+    setRangeLoading(true);
+    const params = buildPeriodQueryParams({ preset, bounds });
+    params.set("range", preset === "custom" ? "custom" : filterKey);
 
-    apiGet(`/api/dashboard/filter-range?${params.toString()}`, { cacheTtl: ADMIN_DASH_CACHE_TTL })
+    apiGet(`/api/dashboard/filter-range?${params.toString()}`, { cacheTtl: 30_000 })
       .then((data) => {
         if (cancelled || !data?.success) return;
-        setCustomFilterRange({
-          kpis: data.kpis || EMPTY_FILTER_RANGE.kpis,
-          leaderboard: data.leaderboard || [],
-          metrics: data.metrics || EMPTY_FILTER_RANGE.metrics,
-          insights: data.insights || [],
-          activity: data.activity || [],
-        });
+        setFilterRange(data);
+        setDashboardError(null);
       })
-      .catch(() => {
-        if (!cancelled) setCustomFilterRange(null);
+      .catch((err) => {
+        if (cancelled) return;
+        setFilterRange(null);
+        setDashboardError(err?.message || "Could not load dashboard data");
       })
-      .finally(() => {
-        if (!cancelled) setCustomRangeLoading(false);
-      });
+      .finally(() => { if (!cancelled) setRangeLoading(false); });
 
     return () => { cancelled = true; };
-  }, [preset, bounds?.start, bounds?.end]);
+  }, [preset, filterKey, periodReady, bounds?.start, bounds?.end]);
 
-  // AI credit spent (transcript + MoM) for the selected Today / Week / Month / Custom period.
+  // AI credit spent for the same period.
   useEffect(() => {
-    if (preset === "custom" && (!bounds?.start || !bounds?.end)) return undefined;
+    if (!periodReady) return undefined;
     let cancelled = false;
     setAiCostLoading(true);
     const params = buildPeriodQueryParams({ preset, bounds });
@@ -2537,122 +2401,72 @@ export default function Dashboard() {
       .catch(() => { if (!cancelled) setAiCost(null); })
       .finally(() => { if (!cancelled) setAiCostLoading(false); });
     return () => { cancelled = true; };
-  }, [preset, bounds?.start, bounds?.end]);
+  }, [preset, periodReady, bounds?.start, bounds?.end]);
 
+  // AI insights for the same period (validated server-side against live lead stages).
   useEffect(() => {
+    if (!periodReady) return undefined;
     let cancelled = false;
-    setPipelineLoading(true);
+    setInsightsLoading(true);
+    const params = buildPeriodQueryParams({ preset, bounds });
+    apiGet(`/api/dashboard/insights?${params.toString()}`, { cacheTtl: insightsReload ? 0 : 30_000, skipCache: insightsReload > 0 })
+      .then((data) => { if (!cancelled) setAiInsights(Array.isArray(data?.insights) ? data.insights : []); })
+      .catch(() => { if (!cancelled) setAiInsights([]); })
+      .finally(() => { if (!cancelled) setInsightsLoading(false); });
+    return () => { cancelled = true; };
+  }, [preset, periodReady, bounds?.start, bounds?.end, insightsReload]);
+
+  // The funnel normally comes from the same response as the tiles (guaranteed identical lead universe).
+  // Only a service-filtered view needs its own request.
+  const serviceFiltered = selectedService && selectedService !== "All Services";
+  useEffect(() => {
+    if (!serviceFiltered || !periodReady) {
+      setServicePipeline(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setServiceLoading(true);
     const params = buildPeriodQueryParams({ preset, bounds, extra: { service: selectedService } });
     params.set("range", preset === "custom" ? "custom" : filterKey);
-    apiGet(`/api/dashboard/pipeline-status?${params.toString()}`, { cacheTtl: ADMIN_DASH_CACHE_TTL })
-      .then((data) => {
-        if (!cancelled && data?.success) setPipelineStats(data);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          const cached = readStaleCachedJson(`/api/dashboard/pipeline-status?${params.toString()}`);
-          if (cached?.success) setPipelineStats(cached);
-          else setPipelineStats({ success: true, ...buildEmptyPipelineGrid() });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPipelineLoading(false);
-      });
+    apiGet(`/api/dashboard/pipeline-status?${params.toString()}`, { cacheTtl: 30_000 })
+      .then((data) => { if (!cancelled && data?.success) setServicePipeline(data); })
+      .catch(() => { if (!cancelled) setServicePipeline({ success: true, ...buildEmptyPipelineGrid() }); })
+      .finally(() => { if (!cancelled) setServiceLoading(false); });
     return () => { cancelled = true; };
-  }, [filterKey, preset, bounds?.start, bounds?.end, selectedService]);
+  }, [serviceFiltered, selectedService, preset, filterKey, periodReady, bounds?.start, bounds?.end]);
 
   // Reset service filter when time filter changes
   useEffect(() => { setSelectedService("All Services"); }, [filterKey, preset]);
 
-  const serviceBreakdownData = apiFilterData?.serviceBreakdown || null;
-  const services = serviceBreakdownData?.[selectedService] || serviceBreakdownData?.["All Services"] || [];
-
-  const totalRevenueCard = fd.kpis?.find(k => k.label === "Total Revenue" || k.label === "Revenue") || 
-                           { label: "Total Revenue", value: "₹0", icon: "DollarSign" };
-  const cashCollectedCard = fd.kpis?.find(k => k.label === "Cash Collected") || 
-                            { label: "Cash Collected", value: "₹0", icon: "DollarSign" };
-  const totalLeadsValue = fd.kpis?.find(k => k.label === "Total Leads")?.value || "0";
-  const totalCallsValue = fd.kpis?.find(k => k.label === "Total Calls" || k.label === "Total Calls Made")?.value || "0";
-  const qualifiedLeadsCard = fd.kpis?.find(k => k.label === "Qualified Leads") || 
-                             { label: "Qualified Leads", value: "0", icon: "FileText" };
-  const pipelineValueCard = fd.kpis?.find(k => k.label === "Pipeline Value") || 
-                            { label: "Pipeline Value", value: "₹0", icon: "DollarSign" };
-  const closingsValue = fd.kpis?.find(k => k.label === "Closings")?.value || "0";
-  const kpiLoading = (dashboardLoading && !apiFilterData) || (preset === "custom" && customRangeLoading && !customFilterRange);
-
-  const { stats: tenantCallStats } = useTenantCallyzerStats(
-    preset === "custom" ? "month" : filterKey,
-    Boolean(apiFilterData),
+  const leaderboardData = useMemo(
+    () => [...(fd.leaderboard || [])].sort(compareLeaders).slice(0, 3),
+    [fd.leaderboard],
   );
 
-  const parseKpiNumber = (value) => {
-    const n = parseInt(String(value ?? "").replace(/[^\d]/g, ""), 10);
-    return Number.isFinite(n) ? n : 0;
-  };
+  const funnelStats = serviceFiltered ? servicePipeline : (fd.pipeline || null);
+  const funnelLoading = serviceFiltered ? serviceLoading : rangeLoading;
 
-  const resolvedMetrics = useMemo(() => {
-    const base = fd?.metrics || { pickup: 0, qualification: 0, conversion: 0 };
-    let pickup = Number(base.pickup) || 0;
-    let qualification = Number(base.qualification) || 0;
-    let conversion = Number(base.conversion) || 0;
+  const finalKpis = useMemo(() => {
+    const list = fd.kpis?.length ? fd.kpis : EMPTY_FILTER_RANGE.kpis;
+    return list.map((k) => (
+      k.raw != null && MONEY_KPI_KEYS.has(k.key)
+        ? { ...k, value: formatINR(k.raw) }
+        : k
+    ));
+  }, [fd.kpis]);
 
-    if (!pickup && tenantCallStats?.totalCalls) {
-      pickup = Math.min(
-        100,
-        Math.round((Number(tenantCallStats.connectedCalls) / Number(tenantCallStats.totalCalls)) * 100),
-      );
-    }
+  const kpiValue = (...labels) => finalKpis.find((k) => labels.includes(k.label));
+  const pipelineValue = kpiValue("Pipeline Value")?.value || "₹0";
+  const openLeads = fd.pipeline?.openLeads ?? 0;
 
-    const totalLeads = parseKpiNumber(totalLeadsValue);
-    const qualified = parseKpiNumber(qualifiedLeadsCard.value);
-    const closings = parseKpiNumber(closingsValue);
-
-    if (!qualification && totalLeads > 0 && qualified > 0) {
-      qualification = Math.min(100, Math.round((qualified / totalLeads) * 100));
-    }
-    if (!conversion && totalLeads > 0 && closings > 0) {
-      conversion = Math.min(100, Math.round((closings / totalLeads) * 100));
-    }
-    if (!conversion && pipelineStats?.overallConv) {
-      conversion = Math.min(100, Number(pipelineStats.overallConv) || 0);
-    }
-
-    return { pickup, qualification, conversion };
-  }, [
-    fd?.metrics,
-    tenantCallStats,
-    totalLeadsValue,
-    qualifiedLeadsCard.value,
-    closingsValue,
-    pipelineStats?.overallConv,
-  ]);
-
-  const finalKpis = [
-    { label: "Total Revenue", value: totalRevenueCard.value, icon: "DollarSign" },
-    { label: "Cash Collected", value: cashCollectedCard.value, icon: "DollarSign" },
-    { label: "Total Leads", value: totalLeadsValue, icon: "Users" },
-    { label: "Total Calls", value: totalCallsValue, icon: "Phone" },
-    { label: "Qualified Leads", value: qualifiedLeadsCard.value, icon: "FileText" },
-    { label: "Pipeline Value", value: pipelineValueCard.value, icon: "DollarSign" },
-    { label: "Closings", value: closingsValue, icon: "Trophy" },
-  ];
-
-  const handleRefreshDashboard = async () => {
-    try {
-      localStorage.removeItem("/api/dashboard");
-      const data = await apiGet("/api/dashboard", { cacheTtl: 0 });
-      if (data?.filterData) setApiFilterData(data.filterData);
-      if (Array.isArray(data?.aiInsights)) setAiInsights(data.aiInsights);
-      if (data?.revenueSeries?.length) setChartRevenue(data.revenueSeries);
-    } catch (e) {
-      console.warn("Dashboard refresh error:", e);
-    }
+  const handleRefreshInsights = async () => {
+    setInsightsReload((n) => n + 1);
   };
 
   return (
     <div className="space-y-4 sm:space-y-5 page-shell min-w-0">
 
-      {dashboardError && !apiFilterData && (
+      {dashboardError && !filterRange && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <p className="text-sm font-semibold text-rose-800">{dashboardError}</p>
           <button
@@ -2665,29 +2479,54 @@ export default function Dashboard() {
         </div>
       )}
 
-      <KPICardsRow kpiData={kpiLoading ? EMPTY_FILTER_RANGE.kpis : finalKpis} filterKey={filterKey} />
+      {!periodReady && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-800">
+          Choose both a From and a To date to load the custom range.
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_minmax(0,_36%)] gap-3 sm:gap-4 items-start min-w-0">
+      <p className="text-[11px] text-slate-500 -mb-2">
+        Showing <span className="font-bold text-slate-700">{periodLabel}</span>
+        {filterRange?.period?.fellBack ? " (custom range incomplete — showing this month)" : ""}
+        {" · "}Lead metrics (Total Leads, Qualified, Pipeline Value, Revenue, Closed Deals, funnel) count leads created in this period; calls and cash use their own dates inside it.
+      </p>
+
+      <KPICardsRow kpiData={finalKpis} filterKey={filterKey} loading={rangeLoading || !filterRange} />
+
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_minmax(0,_36%)] gap-3 sm:gap-4 items-stretch min-w-0">
 
         <div className="flex flex-col gap-3 sm:gap-4 min-w-0">
-          <LeaderBoard employees={leaderboardData} />
+          <LeaderBoard
+            employees={leaderboardData}
+            rule={fd.leaderboardRule || LEADERBOARD_RULE_FALLBACK}
+            periodLabel={periodLabel}
+            loading={rangeLoading}
+          />
 
           <LeadPipeline
-            pipelineStats={pipelineStats}
+            pipelineStats={funnelStats}
             filterKey={filterKey}
             selectedService={selectedService}
             onServiceChange={setSelectedService}
-            loading={pipelineLoading}
+            loading={funnelLoading}
+            periodLabel={periodLabel}
           />
 
-          <RevenueTrajectory data={chartRevenue} kpis={finalKpis} />
+          <RevenueTrajectory data={chartRevenue} kpis={finalKpis} periodLabel={periodLabel} />
         </div>
 
         <div className="flex flex-col gap-3 sm:gap-4 min-w-0 w-full">
           <AiCostPanel data={aiCost} loading={aiCostLoading} filterKey={filterKey} />
-          <AIInsightsPanel insights={insightItems} filterKey={filterKey} forecastValue={pipelineForecast} onRefresh={handleRefreshDashboard} />
-          <ImpMetrics metrics={resolvedMetrics} filterKey={filterKey} />
-          <RecentActivityPanel items={activityItems} filterKey={filterKey} />
+          <AIInsightsPanel
+            insights={aiInsights}
+            loading={insightsLoading}
+            periodLabel={periodLabel}
+            pipelineValue={pipelineValue}
+            openLeads={openLeads}
+            onRefresh={handleRefreshInsights}
+          />
+          <ImpMetrics metrics={fd.metrics} filterKey={filterKey} definitions={fd.definitions} />
+          <RecentActivityPanel items={liveActivity} />
         </div>
       </div>
 

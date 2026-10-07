@@ -6,6 +6,7 @@ import {
   Share2, Zap, Filter, Trash2,
 } from "lucide-react";
 import { GlassCard, StatCard } from "../../components/Primitives.jsx";
+import { SkeletonBlock } from "../../components/Skeleton.jsx";
 import { apiGet, apiPut } from "../../lib/api.js";
 import { fetchAllLeads } from "../../lib/leadSync.js";
 import { getAdminCrmHeaders } from "../../lib/crmContext.js";
@@ -51,7 +52,8 @@ export default function SourcesDashboard() {
     (async () => {
       setLoading(true);
       try {
-        const items = await fetchAllLeads(apiGet, { headers: getAdminCrmHeaders() });
+        // Large pages: the default 500/page walked ~6 sequential requests (5-8 s); the API allows up to 5000.
+        const items = await fetchAllLeads(apiGet, { headers: getAdminCrmHeaders(), pageSize: 2500 });
         if (!cancelled) setLeads(Array.isArray(items) ? items : []);
       } catch {
         if (!cancelled) setLeads([]);
@@ -114,8 +116,35 @@ export default function SourcesDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <p className="text-sm text-slate-400">Loading lead sources…</p>
+      <div className="space-y-5 page-shell min-w-0" role="status" aria-label="Loading lead sources">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <GlassCard key={i} className="p-3.5 sm:p-4 min-h-[96px] sm:min-h-[104px] !bg-white !border-slate-200/80 space-y-3">
+              <SkeletonBlock className="block h-2.5 w-20" />
+              <SkeletonBlock className="block h-6 w-16" />
+            </GlassCard>
+          ))}
+        </div>
+        <GlassCard className="p-4">
+          <SkeletonBlock className="block h-10 w-full rounded-xl" />
+        </GlassCard>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+            <GlassCard key={i} className="p-3.5 sm:p-4 flex flex-col">
+              <div className="flex items-center gap-2 mb-3">
+                <SkeletonBlock className="h-9 w-9 rounded-lg" />
+                <div className="space-y-1.5 flex-1">
+                  <SkeletonBlock className="block h-3 w-2/3" />
+                  <SkeletonBlock className="block h-2 w-1/3" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 mb-3">
+                {[0, 1, 2, 3].map((j) => <SkeletonBlock key={j} className="block h-9 w-full" />)}
+              </div>
+              <SkeletonBlock className="block h-3 w-20" />
+            </GlassCard>
+          ))}
+        </div>
       </div>
     );
   }

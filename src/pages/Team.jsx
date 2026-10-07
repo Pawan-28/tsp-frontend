@@ -4,6 +4,7 @@ import { Maximize2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { apiGet, apiPost, apiDelete, invalidateCache } from "../lib/api.js";
 import { formatINR } from "../lib/indianFormat.js";
+import { roleLabel } from "../lib/roleLabel.js";
 import { formatCashINR, formatCashDateTime, resolveSlipUrl } from "../components/CashCollectedPanel.jsx";
 import { useDateRange } from "../context/DateRangeContext.jsx";
 import EmployeeDoodleAvatar from "../employee/components/EmployeeDoodleAvatar.jsx";
@@ -2408,7 +2409,7 @@ function EmpDetail({ emp, onEdit, onDelete, inDrawer = false }) {
               </span>
             </div>
             <p style={{ fontSize: compact ? 11 : 13, color: "#475569", marginTop: 2, fontWeight: 500 }}>
-              {activeEmp.role} {activeEmp.department ? ` · ${activeEmp.department}` : ""}
+              {roleLabel(activeEmp.role)} {activeEmp.department ? ` · ${activeEmp.department}` : ""}
             </p>
           </div>
         </div>
@@ -2531,10 +2532,10 @@ function EmpDetail({ emp, onEdit, onDelete, inDrawer = false }) {
         gap: compact ? 8 : 12,
       }}>
         {[
-          { label: "Response Time", value: `${activeEmp.responseTimeMin ?? 1.8} min`, sub: "Avg first reply", icon: Clock },
+          { label: "Avg Call Duration", value: activeEmp.responseTimeMin == null ? "—" : `${activeEmp.responseTimeMin} min`, sub: "Connected calls", icon: Clock },
           { label: "Pickup Rate", value: `${activeEmp.pickupRate ?? (assigned ? Math.round((calls / assigned) * 100) : 0)}%`, sub: "Calls answered", icon: PhoneCall },
           { label: "Qualification Rate", value: `${activeEmp.qualificationRate ?? (calls ? Math.round((meetings / calls) * 100) : (assigned ? Math.round((qualified / assigned) * 100) : 0))}%`, sub: "Meetings done vs total", icon: Target },
-          { label: "Objection Handling", value: `${activeEmp.objectionHandling ?? (assigned ? Math.min(99, Math.round((qualified / assigned) * 95)) : 0)}%`, sub: "Handling score", icon: MessageSquare },
+          { label: "Objection Handling", value: activeEmp.objectionHandling == null ? "—" : `${activeEmp.objectionHandling}%`, sub: "Handling score", icon: MessageSquare },
           { label: "Conversion Rate", value: `${activeEmp.conversionRate ?? (assigned ? ((converted / assigned) * 100).toFixed(1) : "0.0")}%`, sub: "Closed vs assigned", icon: TrendingUp },
         ].map(({ label, value, sub, icon: Icon }) => (
           <div
@@ -3399,7 +3400,7 @@ function EmpDrawer({ employee, onClose, onSaved, onDeleteRequest, members }) {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {mode === "view" ? employee?.role : `Editing ${employee?.name}`}
+                    {mode === "view" ? roleLabel(employee?.role) : `Editing ${employee?.name}`}
                   </p>
                 </div>
               </div>
@@ -3522,19 +3523,29 @@ function MemberCard({ p, onClick, compact = false, teamAvgActiveLeads = 0 }) {
   const totalLeads = Number(p.leads) || 0;
   const converted = Number(p.conv) || 0;
   const contacted = Number(p.contacted) || 0;
-  const conversionPct = totalLeads > 0 ? Math.round((converted / totalLeads) * 100) : 0;
+  // Same lead cohort as revenue (converted / total leads in the selected period). Sub-10% rates
+  // keep one decimal so 1 win in 250 leads reads "0.4%", not a contradictory "0%" next to revenue.
+  const conversionRaw = totalLeads > 0 ? (converted / totalLeads) * 100 : 0;
+  const conversionPct = conversionRaw >= 10 || Number.isInteger(conversionRaw)
+    ? Math.round(conversionRaw)
+    : Number(conversionRaw.toFixed(1));
   const activeLeads = memberActiveLeads(p);
   const workload = computeRelativeWorkloadPct(activeLeads, teamAvgActiveLeads);
   const workloadBarWidth = Math.min(100, workload);
   const revenue = Number(p.revenue) || 0;
   const fmtRev = fmtINR(revenue);
-  const avgDeal = converted > 0 ? fmtINR(revenue / converted) : "₹0";
+  // An average needs 2+ deals; with one deal it would just repeat the revenue figure.
+  const dealsLabel = converted >= 2
+    ? `Avg ${fmtINR(revenue / converted)}/deal`
+    : converted === 1 ? "1 deal won" : "No deals won";
 
   const perfTag =
-    conversionPct >= 25 ? "Top Performer"
-      : conversionPct >= 15 ? "Consistent"
-        : conversionPct >= 8 ? "Rising Star"
-          : "Developing";
+    totalLeads === 0 ? "No leads"
+      : converted === 0 ? "No conversions"
+        : conversionRaw >= 25 ? "Top Performer"
+          : conversionRaw >= 15 ? "Consistent"
+            : conversionRaw >= 8 ? "Rising Star"
+              : "Developing";
 
   const [hovered, setHovered] = useState(false);
   const colStyle = { display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 };
@@ -3598,7 +3609,7 @@ function MemberCard({ p, onClick, compact = false, teamAvgActiveLeads = 0 }) {
               {p.name}
             </p>
             <p style={{ fontSize: 9, color: "#64748b", margin: "1px 0 0", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {p.role}
+              {roleLabel(p.role)}
             </p>
           </div>
           <span style={{
@@ -3639,7 +3650,7 @@ function MemberCard({ p, onClick, compact = false, teamAvgActiveLeads = 0 }) {
           <div style={{ minWidth: 0, textAlign: "right" }}>
             <p style={{ fontSize: 11, fontWeight: 800, color: "#1e293b", margin: 0, lineHeight: 1 }}>{fmtRev}</p>
             <p style={{ fontSize: 8, color: "#64748b", margin: "2px 0 0", whiteSpace: "nowrap" }}>
-              Avg {avgDeal}
+              {dealsLabel}
             </p>
           </div>
         </div>
@@ -3684,7 +3695,7 @@ function MemberCard({ p, onClick, compact = false, teamAvgActiveLeads = 0 }) {
         {avatarNode}
         <div style={{ minWidth: 0 }}>
           <p style={{ fontWeight: 800, fontSize: 12, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{p.name}</p>
-          <p style={{ fontSize: 9, color: "#64748b", margin: "1px 0 0", fontWeight: 500 }}>{p.role}</p>
+          <p style={{ fontSize: 9, color: "#64748b", margin: "1px 0 0", fontWeight: 500 }}>{roleLabel(p.role)}</p>
         </div>
       </div>
 
@@ -3712,7 +3723,7 @@ function MemberCard({ p, onClick, compact = false, teamAvgActiveLeads = 0 }) {
       {/* Revenue */}
       <div style={colStyle}>
         <span style={{ fontSize: 12, fontWeight: 800, color: "#1e293b", lineHeight: 1 }}>{fmtRev}</span>
-        <span style={{ fontSize: 8, color: "#64748b", marginTop: 2, whiteSpace: "nowrap" }}>Avg {avgDeal}</span>
+        <span style={{ fontSize: 8, color: "#64748b", marginTop: 2, whiteSpace: "nowrap" }}>{dealsLabel}</span>
       </div>
 
       {/* Workload */}
@@ -3735,7 +3746,18 @@ function MemberCard({ p, onClick, compact = false, teamAvgActiveLeads = 0 }) {
 
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, icon: Icon, index, change, sub }) {
+// Delta colour comes from direction + whether higher is better for the metric
+// (e.g. a falling Pickup Rate is red). Neutral metrics (higherIsBetter = null, e.g. Avg Call Duration)
+// and "no delta" are muted.
+function kpiChangeTone(change, higherIsBetter = true) {
+  const text = String(change ?? "").trim();
+  if (higherIsBetter == null) return "muted"; // neutral metric: show the change without good/bad colour
+  if (text.startsWith("+")) return higherIsBetter ? "success" : "danger";
+  if (text.startsWith("-")) return higherIsBetter ? "danger" : "success";
+  return "muted";
+}
+
+function KpiCard({ label, value, icon: Icon, index, change, sub, higherIsBetter = true }) {
   const tones = ["info", "primary", "success", "purple", "warning", "primary"];
   const tone = tones[index % tones.length];
 
@@ -3744,11 +3766,26 @@ function KpiCard({ label, value, icon: Icon, index, change, sub }) {
       label={label}
       value={value}
       change={change ?? "—"}
+      changeTone={kpiChangeTone(change, higherIsBetter)}
       sub={sub ?? "vs last period"}
       icon={Icon}
       tone={tone}
       hover
     />
+  );
+}
+
+function KpiSkeletonCard({ label }) {
+  return (
+    <div
+      className="h-full min-h-[96px] sm:min-h-[104px] rounded-xl bg-white border border-slate-200/80 p-3.5 sm:p-4 animate-pulse"
+      aria-busy="true"
+      aria-label={label ? `Loading ${label}` : "Loading"}
+    >
+      <div className="h-2.5 w-20 rounded bg-slate-200" />
+      <div className="mt-3 h-6 w-14 rounded bg-slate-200" />
+      <div className="mt-4 h-2.5 w-24 rounded bg-slate-100" />
+    </div>
   );
 }
 
@@ -3778,6 +3815,10 @@ export default function Team() {
   const [newCredentials, setNewCredentials] = useState(null);
   const [newMemberName, setNewMemberName] = useState("");
   const [kpiData, setKpiData] = useState(null);
+  const [kpiLoading, setKpiLoading] = useState(true);
+  const [kpiError, setKpiError] = useState(null);
+  const kpiReqRef = useRef(0);
+  const membersReqRef = useRef(0);
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get("action") === "addMember") {
@@ -3785,28 +3826,57 @@ export default function Team() {
     }
   }, [location.search]);
 
-  // ── fetch KPIs (extracted so we can call it anywhere) ──────────────────
-  const fetchKPIs = useCallback(async (selectedRange = "month", custom = {}) => {
-    try {
-      let path = `/api/team/kpis?range=${encodeURIComponent(selectedRange)}`;
-      if ((selectedRange === "custom" || selectedRange === "Custom") && custom.s && custom.e) {
-        path += `&startDate=${custom.s}&endDate=${custom.e}`;
-      }
-      const data = await apiGet(path, { skipCache: true, cacheTtl: 0 });
-      if (data && (data.kpis || data.success)) {
-        setKpiData(data.kpis || data);
-      }
-    } catch (error) {
-      console.error("Failed to fetch KPIs:", error);
+  // Selected period (nav date filter) shared by the KPI tiles and the member table.
+  // Custom range without both dates yet => null (nothing to fetch).
+  const rangeQuery = useMemo(() => {
+    if (preset === "custom") {
+      return fromDate && toDate
+        ? `range=custom&startDate=${encodeURIComponent(fromDate)}&endDate=${encodeURIComponent(toDate)}`
+        : null;
     }
-  }, []);
+    return `range=${encodeURIComponent(preset || apiLabel || "month")}`;
+  }, [preset, apiLabel, fromDate, toDate]);
 
+  // ── fetch KPIs for the selected period ─────────────────────────────────
+  const fetchKPIs = useCallback(async () => {
+    if (!rangeQuery) {
+      // Custom range with no dates picked yet: show empty tiles, not a spinner or stale numbers.
+      setKpiData(null);
+      setKpiError(null);
+      setKpiLoading(false);
+      return;
+    }
+    const reqId = ++kpiReqRef.current;
+    setKpiLoading(true);
+    setKpiError(null);
+    try {
+      const data = await apiGet(`/api/team/kpis?${rangeQuery}`, { skipCache: true, cacheTtl: 0 });
+      if (reqId !== kpiReqRef.current) return;
+      if (!data?.success || !data.kpis) throw new Error(data?.message || "Could not load team KPIs");
+      setKpiData(data.kpis);
+    } catch (error) {
+      if (reqId !== kpiReqRef.current) return;
+      console.error("Failed to fetch KPIs:", error);
+      setKpiData(null);
+      setKpiError(error?.message || "Could not load team KPIs");
+    } finally {
+      if (reqId === kpiReqRef.current) setKpiLoading(false);
+    }
+  }, [rangeQuery]);
+
+  // Member rows (leads / conversion / revenue / workload) are scoped to the same period.
   const fetchEmployees = useCallback(async () => {
+    if (!rangeQuery) {
+      setMembersLoading(false);
+      return;
+    }
+    const reqId = ++membersReqRef.current;
     setMembersLoading(true);
     setMembersError(null);
     try {
       invalidateCache("/api/team/employees");
-      const data = await apiGet("/api/team/employees", { skipCache: true, cacheTtl: 0 });
+      const data = await apiGet(`/api/team/employees?${rangeQuery}`, { skipCache: true, cacheTtl: 0 });
+      if (reqId !== membersReqRef.current) return;
       if (data?.success && Array.isArray(data.employees)) {
         setMembers(data.employees.map(normalizeEmployee));
       } else {
@@ -3814,145 +3884,40 @@ export default function Team() {
         setMembersError(data?.message || "Could not load team members");
       }
     } catch (error) {
+      if (reqId !== membersReqRef.current) return;
       console.error("Failed to fetch employees:", error);
       setMembers([]);
       setMembersError(error.message || "Failed to load team members");
     } finally {
-      setMembersLoading(false);
+      if (reqId === membersReqRef.current) setMembersLoading(false);
     }
-  }, []);
+  }, [rangeQuery]);
 
-  // ── fetch employees on mount ────────────────────────────────────────────
+  // ── refetch both whenever the nav date range changes ───────────────────
   useEffect(() => {
+    fetchKPIs();
     fetchEmployees();
-  }, [fetchEmployees]);
+  }, [fetchKPIs, fetchEmployees]);
 
-  // ── fetch KPIs when nav date range changes ─────────────────────────────
-  useEffect(() => {
-    if (preset === "custom") {
-      if (fromDate && toDate) {
-        const custom = { s: fromDate, e: toDate };
-        fetchKPIs("custom", custom);
-      }
-      return;
-    }
-    fetchKPIs(preset || apiLabel || "month");
-  }, [preset, apiLabel, fromDate, toDate, fetchKPIs]);
+  const comparisonLabel = kpiData?.comparisonLabel || "";
+  const trends = kpiData?.trends || {};
+  const fmtPct = (v) => (v == null ? "—" : `${v}%`);
 
-
-  const teamPerformance = useMemo(() => {
-    const periodKey = String(preset || "month").toLowerCase();
-
-    // Period specific metrics tailored to selected date range
-    const periodDefaults = {
-      today: {
-        responseTimeMin: 0.7,
-        pickupRate: 60,
-        qualificationRate: 68,
-        objectionHandling: 78,
-        conversionRate: 42,
-        followUpQuality: 99,
-        comparisonLabel: "vs yesterday",
-        trends: { responseTimeMin: "-12s", pickupRate: "+5%", qualificationRate: "+3%", objectionHandling: "+4%", conversionRate: "+2%", followUpQuality: "+1%" },
-      },
-      week: {
-        responseTimeMin: 2.4,
-        pickupRate: 52,
-        qualificationRate: 72,
-        objectionHandling: 78,
-        conversionRate: 46,
-        followUpQuality: 99,
-        comparisonLabel: "vs last week",
-        trends: { responseTimeMin: "+6s", pickupRate: "-4%", qualificationRate: "-1%", objectionHandling: "+77%", conversionRate: "—", followUpQuality: "—" },
-      },
-      month: {
-        responseTimeMin: 2.3,
-        pickupRate: 53,
-        qualificationRate: 74,
-        objectionHandling: 78,
-        conversionRate: 48,
-        followUpQuality: 99,
-        comparisonLabel: "vs last month",
-        trends: { responseTimeMin: "+12s", pickupRate: "+4%", qualificationRate: "-14%", objectionHandling: "+65%", conversionRate: "-14%", followUpQuality: "+6%" },
-      },
-      custom: {
-        responseTimeMin: 1.8,
-        pickupRate: 65,
-        qualificationRate: 70,
-        objectionHandling: 80,
-        conversionRate: 45,
-        followUpQuality: 95,
-        comparisonLabel: "vs prior period",
-        trends: {},
-      },
-    };
-
-    const fallback = periodDefaults[periodKey] || periodDefaults.month;
-
-    if (kpiData != null) {
-      return {
-        responseTimeMin: kpiData.responseTimeMin ?? fallback.responseTimeMin,
-        pickupRate: kpiData.pickupRate ?? fallback.pickupRate,
-        qualificationRate: kpiData.qualificationRate ?? fallback.qualificationRate,
-        objectionHandling: kpiData.objectionHandling ?? fallback.objectionHandling,
-        conversionRate: kpiData.conversionRate ?? fallback.conversionRate,
-        followUpQuality: kpiData.followUpQuality ?? fallback.followUpQuality,
-        trends: kpiData.trends || fallback.trends,
-        comparisonLabel: kpiData.comparisonLabel || fallback.comparisonLabel,
-      };
-    }
-
-    return fallback;
-  }, [members, kpiData, preset]);
-
-
-
+  // higherIsBetter drives the delta colour: null = neutral (Avg Call Duration), true = up is good.
   const kpis = [
     {
-      label: "Response Time",
-      value: `${teamPerformance.responseTimeMin} min`,
+      label: "Avg Call Duration",
+      value: kpiData?.responseTimeMin == null ? "—" : `${kpiData.responseTimeMin} min`,
       icon: Clock,
-      change: teamPerformance.trends?.responseTimeMin,
-      sub: teamPerformance.comparisonLabel,
+      change: trends.responseTimeMin,
+      higherIsBetter: null, // neutral: a longer or shorter call is not automatically better
     },
-    {
-      label: "Pickup Rate",
-      value: `${teamPerformance.pickupRate}%`,
-      icon: PhoneCall,
-      change: teamPerformance.trends?.pickupRate,
-      sub: teamPerformance.comparisonLabel,
-    },
-    {
-      label: "Qualification Rate",
-      value: `${teamPerformance.qualificationRate}%`,
-      icon: Target,
-      change: teamPerformance.trends?.qualificationRate,
-      sub: teamPerformance.comparisonLabel,
-    },
-    {
-      label: "Objection Handling",
-      value: `${teamPerformance.objectionHandling}%`,
-      icon: MessageSquare,
-      change: teamPerformance.trends?.objectionHandling,
-      sub: teamPerformance.comparisonLabel,
-    },
-    {
-      label: "Conversion Rate",
-      value: `${teamPerformance.conversionRate}%`,
-      icon: TrendingUp,
-      change: teamPerformance.trends?.conversionRate,
-      sub: teamPerformance.comparisonLabel,
-    },
-    {
-      label: "Follow-up Quality",
-      value: `${teamPerformance.followUpQuality}%`,
-      icon: Repeat,
-      change: teamPerformance.trends?.followUpQuality,
-      sub: teamPerformance.comparisonLabel,
-    },
+    { label: "Pickup Rate", value: fmtPct(kpiData?.pickupRate), icon: PhoneCall, change: trends.pickupRate, higherIsBetter: true },
+    { label: "Qualification Rate", value: fmtPct(kpiData?.qualificationRate), icon: Target, change: trends.qualificationRate, higherIsBetter: true },
+    { label: "Objection Handling", value: fmtPct(kpiData?.objectionHandling), icon: MessageSquare, change: trends.objectionHandling, higherIsBetter: true },
+    { label: "Conversion Rate", value: fmtPct(kpiData?.conversionRate), icon: TrendingUp, change: trends.conversionRate, higherIsBetter: true },
+    { label: "Follow-up Quality", value: fmtPct(kpiData?.followUpQuality), icon: Repeat, change: trends.followUpQuality, higherIsBetter: true },
   ];
-
-
 
   const filtered = useMemo(
     () => members.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())),
@@ -4080,12 +4045,37 @@ export default function Team() {
       {/* ── KPI grid — Dashboard-style cards ── */}
       <div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3">
-          {kpis.map((k, i) => (
+          {kpiLoading && kpis.map((k) => (
+            <KpiSkeletonCard key={k.label} label={k.label} />
+          ))}
+          {!kpiLoading && !kpiError && kpis.map((k, i) => (
             <div key={k.label} className="h-full">
-              <KpiCard {...k} index={i} isActive={i === 0} />
+              <KpiCard {...k} sub={comparisonLabel} index={i} />
             </div>
           ))}
         </div>
+        {!kpiLoading && kpiError && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs sm:text-[13px] font-semibold text-rose-800">Couldn&apos;t load team KPIs</p>
+                <p className="text-[11px] text-rose-700 truncate">{kpiError}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={fetchKPIs}
+              className="inline-flex items-center gap-1.5 shrink-0 rounded-lg bg-primary px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-white border-none cursor-pointer hover:opacity-90"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Retry
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Search / filter bar ── */}

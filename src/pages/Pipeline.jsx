@@ -21,14 +21,44 @@ import { adminPipelineIdToDbStage } from "../lib/leadSync.js";
 import useIsMobile from "../lib/useIsMobile.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../lib/segmentPills.js";
 import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL } from "../lib/callMetrics.js";
-import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount } from "../lib/usePipelineBoard.js";
+import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount, KANBAN_SHOW_MORE_STEP } from "../lib/usePipelineBoard.js";
 import { usePipelineSync, invalidatePipelineBoardCache } from "../lib/usePipelineSync.js";
 import { resolveLeadKanbanColumn, getPipelineStagePillCount } from "../lib/leadKanban.js";
-import { filterLeadsByActivityPeriod } from "../lib/periodFilter.js";
+import { filterLeadsByActivityPeriod, encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../lib/periodFilter.js";
 import { buildLeadActivityLabelMap } from "../lib/callDisplay.js";
 import { onLeadChanged, onDashboardRefresh, markLocalLeadChange } from "../lib/realtime.js";
 import { CANONICAL_SERVICES } from "../lib/servicesRegistry.js";
 import { resolveLeadServiceName } from "../lib/meetingTitle.js";
+import { SkeletonBlock, StatValueSkeleton } from "../components/Skeleton.jsx";
+import { APP_TZ } from "../lib/timezone.js";
+
+/** "15 Jul" in the app timezone. */
+function formatShortDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: APP_TZ });
+}
+
+/** Placeholder cards for a kanban column while the board is still loading. */
+function ColumnSkeleton({ horizontal = false }) {
+  return (
+    <>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className={`rounded-xl border border-rose-100 bg-white p-3 space-y-2 ${horizontal ? "shrink-0 w-[min(78vw,215px)]" : ""}`}
+        >
+          <SkeletonBlock className="block h-3 w-3/4" />
+          <SkeletonBlock className="block h-2.5 w-1/2" />
+          <div className="flex items-center justify-between pt-2 border-t border-rose-50">
+            <SkeletonBlock className="h-3 w-12" />
+            <SkeletonBlock className="h-2.5 w-16" />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
 
 function startLeadCardDrag(e, leadId, onDragStart) {
   e.dataTransfer.setData("text/plain", String(leadId));
@@ -55,6 +85,12 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
   const displayName = hasValidName ? rawName : formattedPhone;
 
   const displayService = resolveLeadServiceName(lead) || "—";
+
+  // Meeting Booked card whose meeting time has already passed — it never advanced to Meeting Done.
+  const meetingMs = lead._meetingAt ? new Date(lead._meetingAt).getTime() : NaN;
+  const meetingOverdue = currentStage === "meeting_booked" && Number.isFinite(meetingMs) && meetingMs < Date.now();
+  // Manually staged lead kept on the board although its last activity is outside the selected period.
+  const olderLabel = lead._outsidePeriod && lead._olderAt ? formatShortDate(lead._olderAt) : "";
 
   return (
     <div
@@ -134,6 +170,26 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
             </select>
           </div>
         )}
+        {(meetingOverdue || olderLabel) && (
+          <div className="flex flex-wrap items-center gap-1 mb-1.5">
+            {meetingOverdue && (
+              <span
+                title="The scheduled meeting time has passed but the lead was never moved to Meeting Done"
+                className="inline-flex items-center text-[9px] font-black uppercase tracking-wide text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full"
+              >
+                Overdue
+              </span>
+            )}
+            {olderLabel && (
+              <span
+                title="Manually staged lead — kept on the board for every period although its last activity is outside the selected one"
+                className="inline-flex items-center text-[9px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded-full"
+              >
+                Older · {olderLabel}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between pt-2 border-t border-rose-50">
           <span className="text-xs font-black text-rose-700 tabular-nums">{formatPipelineValue(lead.value)}</span>
           <span className="text-[9px] font-medium text-slate-400">{lastLabel}</span>
@@ -157,10 +213,27 @@ export default function Pipeline() {
   const [dropStageId, setDropStageId] = useState(null);
   const columnRefs = useRef({});
   const dropDepthRef = useRef(0);
-  const period = String(searchParams.get("period") || "month").toLowerCase();
+  // Today | Yesterday | Week | Month | Custom. "Yesterday" has no backend preset: it is a one-day custom
+  // range, and Custom travels as "custom:FROM:TO" so every period-aware helper gets the exact range.
+  const rawPeriod = String(searchParams.get("period") || "month").toLowerCase();
+  const yesterdayKey = localDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  const customFrom = searchParams.get("from") || "";
+  const customTo = searchParams.get("to") || "";
+  const period = rawPeriod === "yesterday" && yesterdayKey
+    ? encodeCustomPeriod(yesterdayKey, yesterdayKey)
+    : rawPeriod === "custom"
+      ? (parseCustomPeriod(encodeCustomPeriod(customFrom, customTo)) ? encodeCustomPeriod(customFrom, customTo) : "month")
+      : (["today", "week", "month"].includes(rawPeriod) ? rawPeriod : "month");
+  const customRange = parseCustomPeriod(period);
   const deferredPeriod = useDeferredValue(period);
   const isBoardStale = deferredPeriod !== period;
-  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : "This Month";
+  const periodLabel = period === "today"
+    ? "Today"
+    : period === "week"
+      ? "This Week"
+      : rawPeriod === "yesterday"
+        ? "Yesterday"
+        : customRange ? `${customRange.startDate} → ${customRange.endDate}` : "This Month";
   const [groupRev, setGroupRev] = useState(0);
   const [expandedColumns, setExpandedColumns] = useState({});
 
@@ -210,6 +283,9 @@ export default function Pipeline() {
   const meetings = boardMeetings || [];
   const leadsLoading = boardLoading;
   const callsSyncing = boardSyncing;
+  // First load (nothing to show yet): render skeletons instead of ₹0 / 0 leads / "Drop leads here".
+  // Also covers the one render between the fetch landing and `leads` being copied from it.
+  const boardInitialLoading = !leads.length && (leadsLoading || (Array.isArray(syncedLeads) && syncedLeads.length > 0));
 
   const handleDragEnter = (stageId) => {
     dropDepthRef.current += 1;
@@ -372,6 +448,9 @@ export default function Pipeline() {
     [summaryLeads],
   );
 
+  // Cards shown only because a human staged them (kept on every period) — labelled "Older" on the card.
+  const olderCount = useMemo(() => kanbanLeads.filter((l) => l._outsidePeriod).length, [kanbanLeads]);
+
   const getColumnCount = (stageId, columnLeads) => columnLeads.length;
 
   const getStagePillCount = (stageId, columnLeads) => getPipelineStagePillCount(stageId, { grouped }) || columnLeads.length;
@@ -473,7 +552,7 @@ export default function Pipeline() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           <StatCard
             label="Pipeline Value"
-            value={formatPipelineValue(summary.value)}
+            value={boardInitialLoading ? <StatValueSkeleton className="h-6 w-20" /> : formatPipelineValue(summary.value)}
             icon={TrendingUp}
             iconBg="bg-emerald-50"
             iconColor="text-emerald-600"
@@ -482,12 +561,12 @@ export default function Pipeline() {
           />
           <StatCard
             label="Total Leads"
-            value={leadsLoading && !leads.length ? "…" : String(summary.total)}
+            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.total)}
             icon={Kanban}
             iconBg="bg-rose-50"
             iconColor="text-rose-600"
-            change={leadsLoading && !leads.length ? "Loading" : ""}
-            sub={leadsLoading && !leads.length ? "fetching leads" : ""}
+            change={boardInitialLoading ? "Loading" : ""}
+            sub={boardInitialLoading ? "fetching leads" : ""}
             corner={
               summary.hot > 0 ? (
                 <span className="sm:hidden inline-flex items-center gap-0.5 text-[9px] font-black text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full shadow-sm">
@@ -499,17 +578,17 @@ export default function Pipeline() {
           <div className="hidden sm:block">
             <StatCard
               label="Hot Leads"
-              value={String(summary.hot)}
+              value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.hot)}
               icon={Flame}
               iconBg="bg-red-50"
               iconColor="text-red-600"
               change="High intent"
-              sub=""
+              sub={`on ${periodLabel.toLowerCase()} board`}
             />
           </div>
           <StatCard
             label="Warm Leads"
-            value={String(summary.warm)}
+            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.warm)}
             icon={Thermometer}
             iconBg="bg-amber-50"
             iconColor="text-amber-500"
@@ -518,7 +597,7 @@ export default function Pipeline() {
           />
           <StatCard
             label="Cold Leads"
-            value={String(summary.cold)}
+            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.cold)}
             icon={Snowflake}
             iconBg="bg-sky-50"
             iconColor="text-sky-500"
@@ -527,7 +606,7 @@ export default function Pipeline() {
           />
           <StatCard
             label="Not Interested"
-            value={String(summary.notInterested)}
+            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.notInterested)}
             icon={ThumbsDown}
             iconBg="bg-slate-50"
             iconColor="text-slate-500"
@@ -627,13 +706,23 @@ export default function Pipeline() {
               >
                 <span className="sm:hidden">{stage.label.split(" ")[0]}</span>
                 <span className="hidden sm:inline">{stage.label}</span>
-                <span className={`tabular-nums ${active ? "text-rose-600" : "text-slate-400"}`}>{count}</span>
+                {boardInitialLoading
+                  ? <SkeletonBlock className="h-3 w-4" />
+                  : <span className={`tabular-nums ${active ? "text-rose-600" : "text-slate-400"}`}>{count}</span>}
               </button>
             );
           })}
         </div>
         <p className="text-[10px] text-slate-400 px-0.5">
-          {periodLabel} · Callyzer synced · {syncedShortCalls} short calls {CALL_SHORT_LABEL} ({grouped.short_call?.length || 0} leads) · {syncedConversationCalls} calls {CALL_CONVERSATION_LABEL} ({grouped.conversation_2min?.length || 0} leads) · {syncedNotPickupCalls} client no pickup ({grouped.not_pick?.length || 0} leads) · {periodMeetings.length} meetings
+          {boardInitialLoading ? (
+            <>{periodLabel} · loading pipeline board…</>
+          ) : (
+            <>
+              {periodLabel} · {kanbanLeads.length} cards on board
+              {olderCount > 0 ? ` (${olderCount} older: manually staged leads stay on every period)` : ""}
+              {" "}· Callyzer synced · {syncedShortCalls} short calls {CALL_SHORT_LABEL} ({grouped.short_call?.length || 0} leads) · {syncedConversationCalls} calls {CALL_CONVERSATION_LABEL} ({grouped.conversation_2min?.length || 0} leads) · {syncedNotPickupCalls} client no pickup ({grouped.not_pick?.length || 0} leads) · {periodMeetings.length} meetings
+            </>
+          )}
           {(callsSyncing) ? " · syncing in background…" : ""}
         </p>
       </GlassCard>
@@ -648,7 +737,7 @@ export default function Pipeline() {
         <div className="sm:hidden space-y-4">
           {PIPELINE_STAGES.map((stage) => {
             const columnLeads = grouped[stage.id] || [];
-            const columnExpanded = Boolean(expandedColumns[stage.id]);
+            const columnExpanded = expandedColumns[stage.id] || 0;
             const visibleLeads = visibleKanbanColumnLeads(columnLeads, columnExpanded);
             const hiddenCount = hiddenKanbanColumnCount(columnLeads, columnExpanded);
             const isDropTarget = dropStageId === stage.id;
@@ -666,11 +755,11 @@ export default function Pipeline() {
                   <div className="min-w-0">
                     <Badge tone={stage.badgeTone}>{stage.label}</Badge>
                     <p className="text-[9px] text-slate-400 tabular-nums mt-0.5 h-[14px] leading-[14px]">
-                      {columnLeads.length} leads
+                      {boardInitialLoading ? <SkeletonBlock className="h-2 w-10" /> : `${columnLeads.length} leads`}
                     </p>
                   </div>
                   <span className="w-6 h-6 rounded-lg bg-rose-50 border border-rose-100 text-[10px] font-black text-rose-700 grid place-items-center tabular-nums shrink-0">
-                    {getColumnCount(stage.id, columnLeads)}
+                    {boardInitialLoading ? <SkeletonBlock className="h-2.5 w-3" /> : getColumnCount(stage.id, columnLeads)}
                   </span>
                 </button>
 
@@ -687,7 +776,9 @@ export default function Pipeline() {
                       : "border-rose-100 bg-[#fffbfb]/80"
                   } flex flex-row gap-2 overflow-x-auto overflow-y-hidden snap-x snap-mandatory scrollbar-thin min-h-[108px] -mx-0.5 px-0.5`}
                 >
-                  {columnLeads.length === 0 ? (
+                  {boardInitialLoading ? (
+                    <ColumnSkeleton horizontal />
+                  ) : columnLeads.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-rose-200 bg-white/60 p-4 text-center shrink-0 w-[min(72vw,200px)] min-h-[88px] flex items-center justify-center">
                       <p className="text-[11px] text-slate-400">No leads here</p>
                     </div>
@@ -709,10 +800,10 @@ export default function Pipeline() {
                     {hiddenCount > 0 && (
                       <button
                         type="button"
-                        onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: true }))}
+                        onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: (prev[stage.id] || 0) + KANBAN_SHOW_MORE_STEP }))}
                         className="shrink-0 w-[min(72vw,200px)] rounded-xl border border-dashed border-rose-200 bg-white/80 px-3 py-2 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 transition"
                       >
-                        Show {hiddenCount} more
+                        Show {Math.min(hiddenCount, KANBAN_SHOW_MORE_STEP)} more{hiddenCount > KANBAN_SHOW_MORE_STEP ? ` (${hiddenCount} hidden)` : ""}
                       </button>
                     )}
                     </>
@@ -728,7 +819,7 @@ export default function Pipeline() {
           <div className="flex items-start gap-3 min-w-max">
             {PIPELINE_STAGES.map((stage) => {
               const columnLeads = grouped[stage.id] || [];
-              const columnExpanded = Boolean(expandedColumns[stage.id]);
+              const columnExpanded = expandedColumns[stage.id] || 0;
               const visibleLeads = visibleKanbanColumnLeads(columnLeads, columnExpanded);
               const hiddenCount = hiddenKanbanColumnCount(columnLeads, columnExpanded);
               const isDropTarget = dropStageId === stage.id;
@@ -746,11 +837,11 @@ export default function Pipeline() {
                     <div className="min-w-0">
                       <Badge tone={stage.badgeTone}>{stage.label}</Badge>
                       <p className="text-[9px] text-slate-400 tabular-nums mt-0.5 h-[14px] leading-[14px]">
-                        {columnLeads.length} leads
+                        {boardInitialLoading ? <SkeletonBlock className="h-2 w-10" /> : `${columnLeads.length} leads`}
                       </p>
                     </div>
                     <span className="w-6 h-6 rounded-lg bg-rose-50 border border-rose-100 text-[10px] font-black text-rose-700 grid place-items-center tabular-nums shrink-0">
-                      {getColumnCount(stage.id, columnLeads)}
+                      {boardInitialLoading ? <SkeletonBlock className="h-2.5 w-3" /> : getColumnCount(stage.id, columnLeads)}
                     </span>
                   </button>
 
@@ -768,7 +859,9 @@ export default function Pipeline() {
                         : "border-rose-100 bg-[#fffbfb]/80"
                     }`}
                   >
-                    {columnLeads.length === 0 ? (
+                    {boardInitialLoading ? (
+                      <ColumnSkeleton />
+                    ) : columnLeads.length === 0 ? (
                       <div className="rounded-xl border border-dashed border-rose-200 bg-white/60 p-4 text-center">
                         <p className="text-[11px] text-slate-400">Drop leads here</p>
                       </div>
@@ -790,10 +883,10 @@ export default function Pipeline() {
                       {hiddenCount > 0 && (
                         <button
                           type="button"
-                          onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: true }))}
+                          onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: (prev[stage.id] || 0) + KANBAN_SHOW_MORE_STEP }))}
                           className="w-full rounded-xl border border-dashed border-rose-200 bg-white/80 px-3 py-2 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 transition"
                         >
-                          Show {hiddenCount} more
+                          Show {Math.min(hiddenCount, KANBAN_SHOW_MORE_STEP)} more{hiddenCount > KANBAN_SHOW_MORE_STEP ? ` (${hiddenCount} hidden)` : ""}
                         </button>
                       )}
                       </>

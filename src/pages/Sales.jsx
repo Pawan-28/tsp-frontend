@@ -442,6 +442,7 @@ function SalesPipelineStatus({ service, employee, periodPreset, periodBounds }) 
   });
   const [tempTotals,  setTempTotals]  = useState({ Hot: 0, Warm: 0, Cold: 0 });
   const [hoveredBubble, setHoveredBubble] = useState(null);
+  const [statsLoaded, setStatsLoaded] = useState(false);
   const bubbleRefs = useRef({});
 
   useEffect(() => {
@@ -460,7 +461,8 @@ function SalesPipelineStatus({ service, employee, periodPreset, periodBounds }) 
           setTempTotals(d.tempTotals  || {});
         }
       })
-      .catch(e => console.error("pipeline-stats failed", e));
+      .catch(e => console.error("pipeline-stats failed", e))
+      .finally(() => setStatsLoaded(true));
   }, [service, employee, periodPreset, periodBounds?.start, periodBounds?.end]);
 
   const hotData = useMemo(() => STAGES.map(s => stats?.Hot?.[s] ?? 0), [stats]);
@@ -495,8 +497,8 @@ function SalesPipelineStatus({ service, employee, periodPreset, periodBounds }) 
     { offset: "100%", color: "#5eead4" }
   ];
 
-  // Skeleton
-  if (!stats) return (
+  // Skeleton — shown until the first pipeline-stats response lands (state starts as all-zero placeholders)
+  if (!stats || !statsLoaded) return (
     <SectionCard title="Sales Pipeline Status" subtitle="Temperature segmented conversion progression and deal flow" bodyClassName="lg:p-4 lg:pt-3">
       <div className="flex-1 overflow-x-auto scrollbar-hide -mx-1 sm:-mx-2 px-1 sm:px-2 pb-1 sm:pb-2">
         <div className="min-w-[460px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-3 md:space-y-4 lg:space-y-2">
@@ -755,7 +757,7 @@ function IMMetrics({ metrics }) {
    5. REVENUE OPPORTUNITY — no tabs, count values, pipeline+closed only
 ══════════════════════════════════════════════════════════ */
 
-function RevenueOpportunitySection({ oppData = {}, selectedService, selectedEmployee, periodPreset, periodBounds }) {
+function RevenueOpportunitySection({ oppData = {}, loading = false, selectedService, selectedEmployee, periodPreset, periodBounds }) {
   const isMobile = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTitle, setDrawerTitle] = useState("");
@@ -802,7 +804,20 @@ function RevenueOpportunitySection({ oppData = {}, selectedService, selectedEmpl
         subtitle={isMobile ? "Deal status counts" : "Smart distribution & deal status"}
       >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-3 min-w-0">
-          {dynamicCards.map((c, i) => (
+          {loading && dynamicCards.map((c) => (
+            <div
+              key={c.label}
+              role="status"
+              aria-label={`Loading ${c.label}`}
+              className="p-2.5 sm:p-4 rounded-lg sm:rounded-xl border min-w-0 animate-pulse"
+              style={{ background: "#fff5f5", borderColor: "#fecdd3" }}
+            >
+              <div className="h-3 w-3/4 rounded bg-rose-100 mb-2" />
+              {!isMobile && <div className="h-2.5 w-1/2 rounded bg-rose-100/70 mb-2" />}
+              <div className="h-7 w-12 rounded bg-rose-100" />
+            </div>
+          ))}
+          {!loading && dynamicCards.map((c, i) => (
             <motion.div
               key={c.label}
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 + 0.1 }}
@@ -927,16 +942,16 @@ function RevenueOpportunitySection({ oppData = {}, selectedService, selectedEmpl
 }
 
 
-function SalesAIInsights({ showToast, employee }) {
+function SalesAIInsights({ showToast, employee, service, preset, bounds }) {
   const [refreshing, setRefreshing] = useState(false);
   const [cards, setCards] = useState([]);
   const [funnelData, setFunnelData] = useState({
-    value: "₹0", growth: "0%", comparison: "0% vs Target", pct: "0%", matchText: "0% target match"
+    label: "Open pipeline value", value: "₹0", growth: "0%", comparison: "0 open leads", pct: "0%", matchText: "0 of 0 closed", inputs: ""
   });
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (employee) params.set("employee", employee);
+    // Same period object (preset or custom From/To) + service + employee as the rest of the Sales page.
+    const params = buildSalesQueryParams({ selectedService: service, selectedEmployee: employee, preset, bounds });
 
     apiGet(`/api/sales/emp-leads/sales-ai-insights?${params.toString()}`, { skipCache: true, cacheTtl: 0 })
       .then((data) => {
@@ -946,12 +961,12 @@ function SalesAIInsights({ showToast, employee }) {
         }
       })
       .catch((err) => console.error("Sales AI Insights fetch error:", err));
-  }, [employee]);
+  }, [employee, service, preset, bounds?.start, bounds?.end]);
 
   const handleRefresh = () => {
     setRefreshing(true);
-    const params = new URLSearchParams();
-    if (employee) params.set("employee", employee);
+    // Same period object (preset or custom From/To) + service + employee as the rest of the Sales page.
+    const params = buildSalesQueryParams({ selectedService: service, selectedEmployee: employee, preset, bounds });
 
     apiGet(`/api/sales/emp-leads/sales-ai-insights?${params.toString()}`, { skipCache: true, cacheTtl: 0 })
       .then((data) => {
@@ -972,7 +987,7 @@ function SalesAIInsights({ showToast, employee }) {
   return (
     <SectionCard
       title="AI Insights Center"
-      subtitle="Smart actions & pipeline predictions"
+      subtitle="Next-best actions from live lead data"
       className="self-start h-fit"
       bodyClassName="!p-3 !pt-2"
       action={
@@ -1046,7 +1061,7 @@ function SalesAIInsights({ showToast, employee }) {
 
           <div className="flex items-start justify-between mb-1.5">
             <div>
-              <p className="text-[8px] uppercase tracking-wider text-slate-400 font-extrabold">Predictive Win Funnel</p>
+              <p className="text-[8px] uppercase tracking-wider text-slate-400 font-extrabold" title={funnelData.inputs || undefined}>{funnelData.label || "Open pipeline value"} · live data</p>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-lg font-black tracking-tight text-white">{funnelData.value}</span>
                 <span className="text-[9px] text-emerald-400 font-bold flex items-center gap-0.5">
@@ -1062,7 +1077,7 @@ function SalesAIInsights({ showToast, employee }) {
 
           <div className="space-y-1">
             <div className="flex justify-between items-center text-[9px] text-slate-400 font-bold">
-              <span>Conversion Rate Prediction</span>
+              <span title={funnelData.inputs || undefined}>Win rate (closed / total leads)</span>
               <span className="text-emerald-400">{funnelData.matchText}</span>
             </div>
             <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
@@ -1109,6 +1124,7 @@ export default function Sales() {
   const [kpiData, setKpiData] = useState([]);
   const [oppData, setOppData] = useState({});
   const [metricsData, setMetricsData] = useState(null);
+  const [kpiLoading, setKpiLoading] = useState(true);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type });
@@ -1131,14 +1147,19 @@ export default function Sales() {
       bounds: periodBounds,
     });
 
+    let cancelled = false;
+    setKpiLoading(true);
     apiGet(`/api/sales/emp-leads/sales-kpis?${q.toString()}`, { skipCache: true, cacheTtl: 0 })
       .then(d => {
+        if (cancelled) return;
         if (d && d.success) {
           setKpiData(d.kpiData || []);
           setOppData(d.oppData || {});
           setMetricsData(d.metrics || null);
         }
-      }).catch(e => console.error(e));
+      }).catch(e => console.error(e))
+      .finally(() => { if (!cancelled) setKpiLoading(false); });
+    return () => { cancelled = true; };
   }, [selectedService, selectedEmployee, periodPreset, periodBounds?.start, periodBounds?.end]);
   return (
     <div className="space-y-4 sm:space-y-6 page-shell min-w-0">
@@ -1172,7 +1193,19 @@ export default function Sales() {
 
       {/* ── 1. KPI row ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 sm:gap-2.5">
-        {(kpiData.length ? kpiData : []).map((k, i) => <PremiumKPICard key={k.label} k={k} index={i} />)}
+        {kpiLoading && !kpiData.length
+          ? [0, 1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                role="status"
+                aria-label="Loading KPI"
+                className="rounded-xl border border-rose-100 bg-white p-3 sm:p-4 min-h-[96px] animate-pulse space-y-3"
+              >
+                <div className="h-2.5 w-2/3 rounded bg-rose-100" />
+                <div className="h-6 w-1/2 rounded bg-rose-100" />
+              </div>
+            ))
+          : (kpiData.length ? kpiData : []).map((k, i) => <PremiumKPICard key={k.label} k={k} index={i} />)}
       </div>
 
       {/* ── 2. Revenue Opportunity + IMP Metrics (left) + AI Insights (right) ── */}
@@ -1180,6 +1213,7 @@ export default function Sales() {
         <div className="xl:col-span-2 flex flex-col gap-3 sm:gap-6 min-w-0">
           <RevenueOpportunitySection
             oppData={oppData}
+            loading={kpiLoading && !Object.keys(oppData).length}
             selectedService={selectedService}
             selectedEmployee={selectedEmployee}
             periodPreset={periodPreset}
@@ -1188,7 +1222,7 @@ export default function Sales() {
           <IMMetrics metrics={metricsData} />
         </div>
 
-        <SalesAIInsights showToast={showToast} employee={selectedEmployee} />
+        <SalesAIInsights showToast={showToast} employee={selectedEmployee} service={selectedService} preset={periodPreset} bounds={periodBounds} />
       </div>
 
       {/* ── 3. Sales Pipeline Status ── */}

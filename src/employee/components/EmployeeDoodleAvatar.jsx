@@ -1,20 +1,25 @@
 /** Friendly hand-drawn avatar for the logged-in employee */
 
+import { useEffect, useState } from "react";
+
 const DOODLE_STROKE = {
   strokeLinecap: "round",
   strokeLinejoin: "round",
 };
 
 export default function EmployeeDoodleAvatar({ size = 48, className = "", shape = "rounded", photoUrl = "" }) {
+  // A broken / unreachable photo URL falls back to the doodle instead of a broken-image icon.
+  const [photoFailed, setPhotoFailed] = useState(false);
+  useEffect(() => { setPhotoFailed(false); }, [photoUrl]);
   const radius = shape === "circle" ? "rounded-full" : size >= 44 ? "rounded-2xl" : "rounded-xl";
 
-  if (photoUrl) {
+  if (photoUrl && !photoFailed) {
     return (
       <div
         className={`relative shrink-0 overflow-hidden border-2 border-slate-200/90 bg-slate-50 shadow-[0_2px_8px_rgba(15,23,42,0.06)] ${radius} ${className}`}
         style={{ width: size, height: size }}
       >
-        <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+        <img src={photoUrl} alt="" className="w-full h-full object-cover" onError={() => setPhotoFailed(true)} />
       </div>
     );
   }
