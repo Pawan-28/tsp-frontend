@@ -7,10 +7,10 @@ import toast from "react-hot-toast";
 import { GlassCard, StatCard, Badge } from "../../components/Primitives.jsx";
 import { CustomSelect } from "../../components/CustomSelect.jsx";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
-import { EMP_APP_TODAY, isFollowUpCompleted, isTodayUncontactedNewLead, isStaleUncontactedAdminLead } from "../../data/employeeMock.js";
+import { EMP_APP_TODAY } from "../../data/employeeMock.js";
 import { dedupePeriodCalls, phonesMatchLoose } from "../../lib/callMetrics.js";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
-import { formatRelativeTime } from "../../lib/leadSync.js";
+import { classifyFollowUps, formatAssignedLabel } from "../../lib/followUpCounts.js";
 import { formatTelUrl } from "../../lib/phoneUtils.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import {
@@ -38,8 +38,8 @@ const URGENCY = {
   upcoming: {
     label: "Upcoming",
     section: "Upcoming",
-    tone: "success",
-    time: "text-emerald-700",
+    tone: "info",
+    time: "text-sky-700",
     icon: CalendarClock,
   },
   completed: {
@@ -48,6 +48,46 @@ const URGENCY = {
     tone: "success",
     time: "text-emerald-700",
     icon: CheckCircle2,
+  },
+};
+
+const filterSection = (filterId) => (filterId === "new" ? "newLeads" : filterId);
+
+const SECTION_META = {
+  overdue: {
+    title: "Overdue",
+    subtitle: "Scheduled follow-ups that were missed",
+    icon: AlertCircle,
+    iconBox: "bg-red-100 text-red-700 border border-red-200",
+    countBox: "bg-red-50 border-red-200 text-red-700",
+  },
+  today: {
+    title: "Due Today",
+    subtitle: "Scheduled for today",
+    icon: Clock,
+    iconBox: "bg-amber-100 text-amber-800 border border-amber-200",
+    countBox: "bg-amber-50 border-amber-200 text-amber-800",
+  },
+  newLeads: {
+    title: "New Leads",
+    subtitle: "Assigned to you, first call still pending — call or WhatsApp now",
+    icon: UserPlus,
+    iconBox: "bg-rose-100 text-rose-700 border border-rose-200",
+    countBox: "bg-rose-100 border-rose-200 text-rose-800",
+  },
+  upcoming: {
+    title: "Upcoming",
+    subtitle: "Scheduled for a later date",
+    icon: CalendarClock,
+    iconBox: "bg-sky-100 text-sky-700 border border-sky-200",
+    countBox: "bg-sky-50 border-sky-200 text-sky-700",
+  },
+  completed: {
+    title: "Completed",
+    subtitle: "Finished follow-ups with completion date & time",
+    icon: CheckCircle2,
+    iconBox: "bg-emerald-100 text-emerald-700 border border-emerald-200",
+    countBox: "bg-emerald-100 border-emerald-200 text-emerald-800",
   },
 };
 
@@ -122,7 +162,7 @@ function CompletedFollowUpCard({ item }) {
 
 function NewLeadCard({ lead, onLiveCall, onWhatsApp }) {
   const phone = lead?.phone || "";
-  const assignedLabel = formatRelativeTime(lead.assignedAt || lead.createdAt || lead.updatedAt);
+  const assignedLabel = formatAssignedLabel(lead);
 
   return (
     <article className="group flex flex-col rounded-xl sm:rounded-2xl border border-rose-200 bg-gradient-to-b from-rose-50/40 to-white p-2.5 sm:p-4 hover:border-rose-300 hover:shadow-[0_8px_24px_rgba(225,29,72,0.08)] transition-all duration-200 min-w-0">
@@ -148,7 +188,7 @@ function NewLeadCard({ lead, onLiveCall, onWhatsApp }) {
             <p className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 tabular-nums">{formatIndianPhone(phone)}</p>
           ) : null}
         </div>
-        <span className="text-[9px] sm:text-[10px] font-bold text-rose-600 tabular-nums shrink-0">{assignedLabel}</span>
+        <span className="text-[9px] sm:text-[10px] font-semibold text-slate-500 tabular-nums shrink-0">{assignedLabel}</span>
       </div>
 
       <div className="grid grid-cols-3 gap-1 mt-2.5 pt-2.5 border-t border-rose-100">
@@ -206,23 +246,6 @@ function NewLeadGrid({ leads, onLiveCall, onWhatsApp }) {
   );
 }
 
-function leadToStaleFollowUp(lead) {
-  const assignedLabel = formatRelativeTime(lead.assignedAt || lead.createdAt || lead.updatedAt);
-  return {
-    id: `stale-admin-${lead.id}`,
-    leadId: lead.id,
-    name: lead.name,
-    company: lead.company || "—",
-    note: "Admin assigned — first contact pending",
-    urgency: "overdue",
-    type: "Call",
-    time: assignedLabel,
-    av: lead.av,
-    color: lead.color,
-    _fromStaleAdminLead: true,
-  };
-}
-
 function FollowUpCard({ item, onCall, onWhatsApp, leads = [] }) {
   const u = URGENCY[item.urgency] || URGENCY.upcoming;
   const statusLabel = item.notPicked
@@ -235,7 +258,7 @@ function FollowUpCard({ item, onCall, onWhatsApp, leads = [] }) {
   const statusPill = {
     overdue: "bg-red-50 text-red-700 border-red-200",
     today: "bg-amber-50 text-amber-800 border-amber-200",
-    upcoming: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    upcoming: "bg-sky-50 text-sky-700 border-sky-200",
     notpicked: "bg-slate-100 text-slate-700 border-slate-300",
   }[item.notPicked ? "notpicked" : item.urgency] || "bg-slate-50 text-slate-600 border-slate-200";
 
@@ -330,6 +353,30 @@ function FollowUpCard({ item, onCall, onWhatsApp, leads = [] }) {
   );
 }
 
+const PAGE_SIZE = 30;
+
+/** "Showing 30 of 906" + a "Show more" button (loads PAGE_SIZE more per click). */
+function ShowMore({ shown, total, onMore }) {
+  if (total <= PAGE_SIZE) return null;
+  const remaining = total - shown;
+  return (
+    <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 pt-3 sm:pt-4">
+      <span className="text-[10px] sm:text-[11px] font-semibold text-slate-500 tabular-nums">
+        Showing {shown} of {total}
+      </span>
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={onMore}
+          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition"
+        >
+          Show {Math.min(PAGE_SIZE, remaining)} more
+        </button>
+      )}
+    </div>
+  );
+}
+
 function FollowUpGrid({ items, onCall, onWhatsApp, leads = [] }) {
   return (
     <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-2 xl:grid-cols-3 sm:gap-3">
@@ -387,56 +434,24 @@ export default function EmployeeFollowUps() {
 
   const allCalls = useMemo(() => dedupePeriodCalls(calls || []), [calls]);
 
-  const newAssignedLeads = useMemo(() => {
-    let list = leads.filter((l) => isTodayUncontactedNewLead(l, allCalls, employee?.id));
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (l) =>
-          (l.name || "").toLowerCase().includes(q) ||
-          (l.company || "").toLowerCase().includes(q) ||
-          (l.phone || "").includes(q),
-      );
-    }
-    return list.sort((a, b) => {
-      const ta = new Date(a.assignedAt || a.createdAt || 0).getTime();
-      const tb = new Date(b.assignedAt || b.createdAt || 0).getTime();
-      return tb - ta;
-    });
-  }, [leads, search, allCalls, employee?.id]);
-
-  const staleAdminFollowUps = useMemo(() => {
-    return leads
-      .filter((l) => isStaleUncontactedAdminLead(l, allCalls, employee?.id))
-      .map(leadToStaleFollowUp);
-  }, [leads, allCalls, employee?.id]);
-
-  const openFollowUps = useMemo(
-    () => followUps.filter((f) => !isFollowUpCompleted(f)),
-    [followUps],
-  );
-
-  const openFollowUpsWithStale = useMemo(() => {
-    const seenLeadIds = new Set(openFollowUps.map((f) => String(f.leadId)).filter(Boolean));
-    const extra = staleAdminFollowUps.filter((f) => !seenLeadIds.has(String(f.leadId)));
-    return [...openFollowUps, ...extra];
-  }, [openFollowUps, staleAdminFollowUps]);
-
-  const completedFollowUps = useMemo(
-    () => followUps
-      .filter((f) => isFollowUpCompleted(f))
-      .sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0)),
-    [followUps],
+  // One classification shared with Dashboard / My Tasks (lib/followUpCounts.js).
+  // Overdue / Today / Upcoming = real scheduled follow-up rows only.
+  // New Leads = assigned leads with no outbound call yet (never "overdue").
+  const sets = useMemo(
+    () => classifyFollowUps({ followUps, leads, calls: allCalls, employeeId: employee?.id }),
+    [followUps, leads, allCalls, employee?.id],
   );
 
   const filterCounts = useMemo(() => ({
-    all: openFollowUpsWithStale.length,
-    new: newAssignedLeads.length,
-    overdue: openFollowUpsWithStale.filter((f) => f.urgency === "overdue").length,
-    today: openFollowUpsWithStale.filter((f) => f.urgency === "today").length,
-    upcoming: openFollowUpsWithStale.filter((f) => f.urgency === "upcoming").length,
-    completed: completedFollowUps.length,
-  }), [openFollowUpsWithStale, completedFollowUps, newAssignedLeads.length]);
+    all: sets.overdue.length + sets.today.length + sets.upcoming.length + sets.newLeads.length,
+    new: sets.newLeads.length,
+    overdue: sets.overdue.length,
+    today: sets.today.length,
+    upcoming: sets.upcoming.length,
+    completed: sets.completed.length,
+  }), [sets]);
+
+  const scheduledOpen = filterCounts.overdue + filterCounts.today + filterCounts.upcoming;
 
   const stats = useMemo(() => ({
     overdue: filterCounts.overdue,
@@ -446,41 +461,26 @@ export default function EmployeeFollowUps() {
     completed: filterCounts.completed,
   }), [filterCounts]);
 
-  const filtered = useMemo(() => {
-    if (filter === "new") return [];
-    let list = filter === "completed" ? completedFollowUps : openFollowUpsWithStale;
-    if (filter !== "all" && filter !== "completed") {
-      list = list.filter((f) => f.urgency === filter);
-    }
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (f) =>
-          f.name.toLowerCase().includes(q) ||
-          f.company.toLowerCase().includes(q) ||
-          f.note.toLowerCase().includes(q) ||
-          f.type.toLowerCase().includes(q) ||
-          (f.momSnippet || "").toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [filter, search, openFollowUps, completedFollowUps]);
+  const matches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return () => true;
+    const has = (v) => String(v || "").toLowerCase().includes(q);
+    return (f) => has(f.name) || has(f.company) || has(f.note) || has(f.type) || has(f.momSnippet) || has(f.phone);
+  }, [search]);
 
-  const filteredCompleted = useMemo(() => {
-    if (filter !== "all") return [];
-    let list = completedFollowUps;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (f) =>
-          f.name.toLowerCase().includes(q) ||
-          f.company.toLowerCase().includes(q) ||
-          f.note.toLowerCase().includes(q) ||
-          (f.momSnippet || "").toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [filter, search, completedFollowUps]);
+  const view = useMemo(() => ({
+    newLeads: sets.newLeads.filter(matches),
+    overdue: sets.overdue.filter(matches),
+    today: sets.today.filter(matches),
+    upcoming: sets.upcoming.filter(matches),
+    completed: sets.completed.filter(matches),
+  }), [sets, matches]);
+
+  // Per-section page size: 30 initially, +30 per "Show more" click. Reset when the view changes.
+  const [limits, setLimits] = useState({});
+  useEffect(() => { setLimits({}); }, [filter, search]);
+  const limitOf = (key) => limits[key] || PAGE_SIZE;
+  const showMore = (key) => setLimits((prev) => ({ ...prev, [key]: (prev[key] || PAGE_SIZE) + PAGE_SIZE }));
 
   const leadOptions = useMemo(() => {
     return [...leads]
@@ -497,16 +497,11 @@ export default function EmployeeFollowUps() {
       });
   }, [leads]);
 
-  const grouped = useMemo(() => {
-    if (filter !== "all") return null;
-    return ["overdue", "today", "upcoming"]
-      .map((key) => ({
-        key,
-        meta: URGENCY[key],
-        items: filtered.filter((f) => f.urgency === key),
-      }))
-      .filter((g) => g.items.length > 0);
-  }, [filter, filtered]);
+  // Overdue first so a real missed follow-up is never buried under new-lead cards.
+  const sectionOrder = ["overdue", "today", "newLeads", "upcoming", "completed"];
+  const nothingToShow = sectionOrder.every((key) => (
+    view[key].length === 0 || (filter !== "all" && filterSection(filter) !== key)
+  ));
 
   const handleCall = (item) => {
     const params = new URLSearchParams();
@@ -613,9 +608,10 @@ export default function EmployeeFollowUps() {
           value={String(stats.overdue)}
           icon={AlertCircle}
           tone="danger"
-          change="needs action"
-          changeTone="danger"
+          change={stats.overdue > 0 ? "needs action" : "none overdue"}
+          changeTone={stats.overdue > 0 ? "danger" : "muted"}
           sub=""
+          title="Scheduled follow-ups whose date has passed and are not completed. New leads waiting for a first call are not counted here."
         />
         <StatCard
           compact
@@ -623,17 +619,21 @@ export default function EmployeeFollowUps() {
           value={String(stats.today)}
           icon={Clock}
           tone="warning"
-          change="scheduled today"
+          change={stats.today > 0 ? "scheduled today" : "none today"}
+          changeTone={stats.today > 0 ? "warning" : "muted"}
           sub=""
+          title="Scheduled follow-ups dated today that are not completed."
         />
         <StatCard
           compact
           label="Upcoming"
           value={String(stats.upcoming)}
           icon={CalendarClock}
-          tone="success"
-          change="this week"
+          tone="info"
+          change={stats.upcoming > 0 ? "after today" : "none scheduled"}
+          changeTone="muted"
           sub=""
+          title="Scheduled follow-ups dated after today that are not completed."
         />
         <StatCard
           compact
@@ -641,9 +641,10 @@ export default function EmployeeFollowUps() {
           value={String(stats.total)}
           icon={List}
           tone="primary"
-          change={`${stats.completed} completed`}
-          changeTone="success"
+          change={`${filterCounts.new} new · ${scheduledOpen} scheduled`}
+          changeTone="muted"
           sub=""
+          title={`Total Open = Overdue + Due Today + Upcoming + New Leads (assigned, first call still pending). Completed follow-ups (${stats.completed}) are not included.`}
         />
       </div>
 
@@ -705,86 +706,35 @@ export default function EmployeeFollowUps() {
           </div>
 
           <p className="text-[9px] sm:text-[11px] font-semibold text-slate-400">
-            {filterCounts.new} new · {filterCounts.overdue} overdue · {filterCounts.today} today · {filtered.length} open shown
-            <span className="hidden sm:inline"> · {filterCounts.upcoming} upcoming · {filterCounts.completed} completed</span>
+            {filterCounts.new} new · {filterCounts.overdue} overdue · {filterCounts.today} today · {filterCounts.upcoming} upcoming · {filterCounts.completed} completed
           </p>
         </div>
       </GlassCard>
 
-      {filter === "new" ? (
-        newAssignedLeads.length === 0 ? (
-          <GlassCard className="py-4">
-            <EmpEmptyState
-              icon=""
-              title={search ? "No new leads match your search" : "No new leads today"}
-              subtitle={search ? "Try a different keyword" : "Leads you add or receive today appear here until first outbound call"}
-            />
-          </GlassCard>
-        ) : (
-          <GlassCard className="p-2.5 sm:p-4 md:p-5">
-            <div className="flex items-center gap-2 mb-2 sm:mb-4">
-              <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl grid place-items-center shrink-0 bg-rose-100 text-rose-700 border border-rose-200">
-                <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">New Leads</h3>
-                  <span className="inline-flex items-center justify-center min-w-[1.125rem] h-4 px-1 rounded-full bg-rose-100 border border-rose-200 text-[9px] sm:text-[10px] font-bold text-rose-800 tabular-nums">
-                    {newAssignedLeads.length}
-                  </span>
-                </div>
-                <p className="hidden sm:block text-[11px] text-slate-500 font-medium">
-                  Added or assigned today — call or WhatsApp now
-                </p>
-              </div>
-            </div>
-            <NewLeadGrid
-              leads={newAssignedLeads}
-              onLiveCall={handleNewLeadLiveCall}
-              onWhatsApp={handleWhatsApp}
-            />
-          </GlassCard>
-        )
-      ) : filter === "completed" ? (
-        filtered.length === 0 ? (
-          <GlassCard className="py-4">
-            <EmpEmptyState
-              icon=""
-              title="No completed follow-ups yet"
-              subtitle="Mark follow-ups done or finish a call — completed items appear here with date & time"
-            />
-          </GlassCard>
-        ) : (
-          <GlassCard className="p-2.5 sm:p-4 md:p-5">
-            <div className="flex items-center gap-2 mb-2 sm:mb-4">
-              <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl grid place-items-center shrink-0 bg-emerald-100 text-emerald-700 border border-emerald-200">
-                <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">Completed</h3>
-                  <span className="inline-flex items-center justify-center min-w-[1.125rem] h-4 px-1 rounded-full bg-emerald-100 border border-emerald-200 text-[9px] sm:text-[10px] font-bold text-emerald-800 tabular-nums">
-                    {filtered.length}
-                  </span>
-                </div>
-                <p className="hidden sm:block text-[11px] text-slate-500 font-medium">
-                  Finished follow-ups with completion date & time
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-2 xl:grid-cols-3 sm:gap-3">
-              {filtered.map((item) => (
-                <CompletedFollowUpCard key={`completed-${item.id}`} item={item} />
-              ))}
-            </div>
-          </GlassCard>
-        )
-      ) : filtered.length === 0 && filteredCompleted.length === 0 && newAssignedLeads.length === 0 ? (
+      {nothingToShow ? (
         <GlassCard className="py-4">
           <EmpEmptyState
             icon=""
-            title={search ? "No follow-ups match your search" : "All caught up"}
-            subtitle={search ? "Try a different keyword" : "Nothing pending in this category"}
+            title={
+              search
+                ? "No follow-ups match your search"
+                : filter === "new"
+                  ? "No new leads waiting"
+                  : filter === "completed"
+                    ? "No completed follow-ups yet"
+                    : filter === "all"
+                      ? "All caught up"
+                      : "Nothing pending in this category"
+            }
+            subtitle={
+              search
+                ? "Try a different keyword"
+                : filter === "new"
+                  ? "Leads assigned to you appear here until your first outbound call"
+                  : filter === "completed"
+                    ? "Mark follow-ups done or finish a call — completed items appear here with date & time"
+                    : "Use Schedule to add a follow-up for a lead"
+            }
           />
           {!search && filter !== "all" && (
             <div className="flex justify-center pb-6">
@@ -792,103 +742,47 @@ export default function EmployeeFollowUps() {
             </div>
           )}
         </GlassCard>
-          ) : (
+      ) : (
         <div className="space-y-2 sm:space-y-5">
-          {filter === "all" && newAssignedLeads.length > 0 && (
-            <GlassCard className="p-2.5 sm:p-4 md:p-5">
-              <div className="flex items-center gap-2 mb-2 sm:mb-4">
-                <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl grid place-items-center shrink-0 bg-rose-100 text-rose-700 border border-rose-200">
-                  <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 sm:gap-2">
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">New Leads</h3>
-                    <span className="inline-flex items-center justify-center min-w-[1.125rem] h-4 px-1 rounded-full bg-rose-100 border border-rose-200 text-[9px] sm:text-[10px] font-bold text-rose-800 tabular-nums">
-                      {newAssignedLeads.length}
-                    </span>
+          {sectionOrder.map((key) => {
+            const meta = SECTION_META[key];
+            const items = view[key];
+            if (!items.length) return null;
+            if (filter !== "all" && filterSection(filter) !== key) return null;
+            const SectionIcon = meta.icon;
+            const shown = Math.min(limitOf(key), items.length);
+            const page = items.slice(0, shown);
+            return (
+              <GlassCard key={key} className="p-2.5 sm:p-4 md:p-5">
+                <div className="flex items-center gap-2 mb-2 sm:mb-4">
+                  <div className={`w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl grid place-items-center shrink-0 ${meta.iconBox}`}>
+                    <SectionIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </div>
-                  <p className="hidden sm:block text-[11px] text-slate-500 font-medium">
-                    Added or assigned today — also in Pipeline → Lead (Today)
-                  </p>
-                </div>
-              </div>
-              <NewLeadGrid
-                leads={newAssignedLeads}
-                onLiveCall={handleNewLeadLiveCall}
-                onWhatsApp={handleWhatsApp}
-              />
-            </GlassCard>
-          )}
-
-          {grouped ? (
-            grouped.map(({ key, meta, items }) => {
-              const SectionIcon = meta.icon;
-              return (
-                <GlassCard key={key} className="p-2.5 sm:p-4 md:p-5">
-                  <div className="flex items-center gap-2 mb-2 sm:mb-4">
-                    <div className={`w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl grid place-items-center shrink-0 ${
-                      key === "overdue" ? "bg-red-100 text-red-700 border border-red-200" :
-                      key === "today" ? "bg-amber-100 text-amber-800 border border-amber-200" :
-                      "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                    }`}>
-                      <SectionIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">{meta.title}</h3>
+                      <span className={`inline-flex items-center justify-center min-w-[1.125rem] h-4 px-1 rounded-full border text-[9px] sm:text-[10px] font-bold tabular-nums ${meta.countBox}`}>
+                        {items.length}
+                      </span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">{meta.section}</h3>
-                        <span className="inline-flex items-center justify-center min-w-[1.125rem] h-4 px-1 rounded-full bg-slate-100 border border-slate-200 text-[9px] sm:text-[10px] font-bold text-slate-600 tabular-nums">
-                          {items.length}
-                        </span>
-                      </div>
-                      <p className="hidden sm:block text-[11px] text-slate-500 font-medium">
-                        {key === "overdue" ? "Past due — includes uncontacted admin assignments" :
-                         key === "today" ? "Scheduled for today" : "Later this week"}
-                      </p>
-                    </div>
+                    <p className="hidden sm:block text-[11px] text-slate-500 font-medium">{meta.subtitle}</p>
                   </div>
-                  <FollowUpGrid items={items} onCall={handleCall} onWhatsApp={handleWhatsApp} leads={leads} />
-                </GlassCard>
-              );
-            })
-          ) : (
-            <GlassCard className="p-2.5 sm:p-4 md:p-5">
-              <div className="flex items-center justify-between gap-2 mb-2 sm:mb-4">
-                <div>
-                  <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">
-                    {FILTERS.find((f) => f.id === filter)?.label}
-                  </h3>
-                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">{filtered.length} follow-ups</p>
                 </div>
-              </div>
-              <FollowUpGrid items={filtered} onCall={handleCall} onWhatsApp={handleWhatsApp} leads={leads} />
-            </GlassCard>
-          )}
-
-          {filter === "all" && filteredCompleted.length > 0 && (
-            <GlassCard className="p-2.5 sm:p-4 md:p-5">
-              <div className="flex items-center gap-2 mb-2 sm:mb-4">
-                <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg sm:rounded-xl grid place-items-center shrink-0 bg-emerald-100 text-emerald-700 border border-emerald-200">
-                  <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 sm:gap-2">
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-slate-900">Completed</h3>
-                    <span className="inline-flex items-center justify-center min-w-[1.125rem] h-4 px-1 rounded-full bg-emerald-100 border border-emerald-200 text-[9px] sm:text-[10px] font-bold text-emerald-800 tabular-nums">
-                      {filteredCompleted.length}
-                    </span>
+                {key === "newLeads" ? (
+                  <NewLeadGrid leads={page} onLiveCall={handleNewLeadLiveCall} onWhatsApp={handleWhatsApp} />
+                ) : key === "completed" ? (
+                  <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-2 xl:grid-cols-3 sm:gap-3">
+                    {page.map((item) => (
+                      <CompletedFollowUpCard key={`completed-${item.id}`} item={item} />
+                    ))}
                   </div>
-                  <p className="hidden sm:block text-[11px] text-slate-500 font-medium">
-                    Finished follow-ups with completion date & time
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-2 xl:grid-cols-3 sm:gap-3">
-                {filteredCompleted.map((item) => (
-                  <CompletedFollowUpCard key={`completed-${item.id}`} item={item} />
-                ))}
-              </div>
-            </GlassCard>
-          )}
+                ) : (
+                  <FollowUpGrid items={page} onCall={handleCall} onWhatsApp={handleWhatsApp} leads={leads} />
+                )}
+                <ShowMore shown={shown} total={items.length} onMore={() => showMore(key)} />
+              </GlassCard>
+            );
+          })}
         </div>
       )}
 

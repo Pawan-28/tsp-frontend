@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Calendar, CalendarClock, Check, CheckCircle2, Copy, ExternalLink, History, Link2, MessageCircle, Pencil, Plus,
+  AlertTriangle, Calendar, CalendarClock, Check, CheckCircle2, Copy, ExternalLink, History, Link2, MessageCircle, Pencil, Plus,
   Search, Sparkles, Trash2, Video, X,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { GlassCard, StatCard, Badge, Drawer } from "../../components/Primitives.jsx";
+import { MEETING_METRIC_INFO } from "../../lib/metricInfo.js";
 import { CustomSelect } from "../../components/CustomSelect.jsx";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
@@ -15,6 +16,7 @@ import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } f
 import { apiGet, apiPost } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
 import { localDateKey } from "../../lib/periodFilter.js";
+import { isMeetingOverdue, countMeetingTiles } from "../../lib/meetingStatus.js";
 import {
   MEETING_PLATFORMS,
   getEmpAppToday,
@@ -386,9 +388,15 @@ function BookMeetingDrawer({
 }
 
 function leadInitials(name) {
-  if (!name || name === "—") return "?";
-  return name.split(" ").filter(Boolean).slice(0, 2).map((n) => n[0]).join("").toUpperCase();
+  const text = String(name || "").trim();
+  if (!text || text === "—") return "?";
+  // An e-mail used as the lead name ("test139@newlead.com") -> initials from the part before "@".
+  const base = text.includes("@") ? text.split("@")[0] : text;
+  const letters = base.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((n) => n[0]).join("").toUpperCase();
+  return letters || "?";
 }
+
+const OVERDUE_BADGE = "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[9px] font-bold border border-amber-300";
 
 function splitScheduledAt(scheduledAt) {
   if (!scheduledAt) return { date: getEmpAppToday(), time: "14:00" };
@@ -414,16 +422,22 @@ function PlatformBadge({ platform }) {
   return <Badge tone={PLATFORM_TONE[platform] || "muted"}>{platform}</Badge>;
 }
 
-function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onReschedule }) {
+function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onReschedule, onMarkHeld }) {
   const isLeadMeeting = meeting.source === "lead" || Boolean(meeting.leadId) || (meeting.lead && meeting.lead !== "—");
+  const overdue = isMeetingOverdue(meeting);
   return (
-    <div className="px-3 py-3 hover:bg-rose-50/50 transition group">
+    <div className={`px-3 py-3 hover:bg-rose-50/50 transition group ${overdue ? "bg-amber-50/40" : ""}`}>
       <div className="flex gap-2.5">
         <AvatarCircle initials={leadInitials(meeting.lead)} color="#be123c" size={32} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-[11px] font-bold text-slate-900 truncate">{meeting.title}</p>
+          <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+            <p className="text-[11px] font-bold text-slate-900 break-words min-w-0 basis-[8rem] flex-1 line-clamp-2" title={meeting.title}>{meeting.title}</p>
             <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+              {overdue && (
+                <span className={OVERDUE_BADGE} title="The meeting time has passed and it is still marked as booked">
+                  <AlertTriangle className="w-2.5 h-2.5" /> Overdue
+                </span>
+              )}
               {isLeadMeeting && (
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[9px] font-bold border border-rose-200" title="Meeting from Lead">
                   Source: Lead
@@ -457,8 +471,21 @@ function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
             {meeting.lead}
             {meeting.leadService && <span className="text-rose-600 font-normal"> · {meeting.leadService}</span>}
           </p>
-          <div className="flex gap-1.5 mt-2">
-            {meeting.meetLink ? (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {overdue ? (
+              <>
+                {onMarkHeld && (
+                  <BtnPrimary className="!py-1 !px-2.5 !text-[10px] !rounded-lg" onClick={() => onMarkHeld(meeting)}>
+                    <CheckCircle2 className="w-3 h-3" /> Mark held
+                  </BtnPrimary>
+                )}
+                {onReschedule && (
+                  <BtnSecondary className="!py-1 !px-2.5 !text-[10px] !rounded-lg" onClick={() => onReschedule(meeting)}>
+                    <Pencil className="w-3 h-3" /> Reschedule
+                  </BtnSecondary>
+                )}
+              </>
+            ) : meeting.meetLink ? (
               <a
                 href={meeting.meetLink}
                 target="_blank"
@@ -472,7 +499,7 @@ function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
                 <Video className="w-3 h-3" /> Join
               </BtnPrimary>
             )}
-            {meeting.meetLink && (
+            {!overdue && meeting.meetLink && (
               <>
                 <button
                   type="button"
@@ -494,12 +521,15 @@ function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
   );
 }
 
-function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, onDelete, onReschedule }) {
+function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, onDelete, onReschedule, onMarkHeld }) {
+  const overdueCount = upcoming.filter((m) => isMeetingOverdue(m)).length;
   return (
     <GlassCard className={`p-0 overflow-hidden flex flex-col ${PANEL_HEIGHT}`}>
       <div className="px-4 py-3 border-b border-rose-50 bg-rose-50/40 shrink-0">
         <p className="text-sm font-black text-slate-900">Today&apos;s Schedule</p>
-        <p className="text-[10px] text-slate-500">{upcoming.length} upcoming · quick join</p>
+        <p className="text-[10px] text-slate-500">
+          {upcoming.length - overdueCount} upcoming{overdueCount > 0 ? ` · ${overdueCount} overdue` : ""} · quick join
+        </p>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin divide-y divide-rose-50">
@@ -511,7 +541,7 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
           </div>
         ) : (
           upcoming.map((m) => (
-            <ScheduleItem key={m.id} meeting={m} onJoin={onJoin} onCopyLink={onCopyLink} onShare={onShare} onDelete={onDelete} onReschedule={onReschedule} />
+            <ScheduleItem key={m.id} meeting={m} onJoin={onJoin} onCopyLink={onCopyLink} onShare={onShare} onDelete={onDelete} onReschedule={onReschedule} onMarkHeld={onMarkHeld} />
           ))
         )}
 
@@ -522,7 +552,7 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
               {history.slice(0, 3).map((m) => (
                 <div key={m.id} className="flex items-center justify-between gap-2 px-3 py-2">
                   <div className="min-w-0">
-                    <p className="text-[11px] font-bold text-slate-800 truncate">{m.title}</p>
+                    <p className="text-[11px] font-bold text-slate-800 break-words line-clamp-2" title={m.title}>{m.title}</p>
                     <p className="text-[9px] text-slate-400">{m.time}</p>
                   </div>
                   <Badge tone="success">{m.outcome}</Badge>
@@ -536,21 +566,28 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
   );
 }
 
-function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onReschedule }) {
+function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onReschedule, onMarkHeld }) {
   const isLeadMeeting = meeting.source === "lead" || Boolean(meeting.leadId) || (meeting.lead && meeting.lead !== "—");
+  const overdue = isMeetingOverdue(meeting);
   return (
-    <article className="group rounded-2xl border border-rose-100/80 bg-white p-4 hover:border-rose-200 hover:shadow-[0_8px_24px_rgba(244,63,94,0.06)] transition-all">
+    <article className={`group rounded-2xl border bg-white p-4 hover:shadow-[0_8px_24px_rgba(244,63,94,0.06)] transition-all ${
+      overdue ? "border-amber-300 bg-amber-50/30" : "border-rose-100/80 hover:border-rose-200"
+    }`}>
       <div className="flex gap-3">
-        <div className="w-11 h-11 rounded-xl bg-rose-50 border border-rose-100 grid place-items-center shrink-0">
-          <Video className="w-4 h-4 text-rose-600" />
-        </div>
+        {/* Avatar = the LEAD's initials (never the first letter of the meeting title). */}
+        <AvatarCircle initials={leadInitials(meeting.lead)} color="#be123c" size={44} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-slate-900 truncate group-hover:text-rose-900 transition">{meeting.title}</p>
+          <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
+            <div className="min-w-0 basis-[10rem] flex-1">
+              <p className="text-sm font-bold text-slate-900 break-words line-clamp-2 group-hover:text-rose-900 transition" title={meeting.title}>{meeting.title}</p>
               <p className="text-[11px] text-slate-500 mt-0.5">{meeting.time}</p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              {overdue && (
+                <span className={OVERDUE_BADGE} title="The meeting time has passed and it is still marked as booked">
+                  <AlertTriangle className="w-3 h-3" /> Overdue
+                </span>
+              )}
               {isLeadMeeting && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-bold tracking-wide border border-rose-200 shadow-2xs" title="Meeting associated with a Lead">
                   <span className="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse"></span>
@@ -595,7 +632,20 @@ function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
         </div>
       </div>
       <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-rose-50">
-        {meeting.meetLink ? (
+        {overdue ? (
+          <>
+            {onMarkHeld && (
+              <BtnPrimary className="!py-1.5 !px-3 !text-[11px] !rounded-xl" onClick={() => onMarkHeld(meeting)}>
+                <CheckCircle2 className="w-3.5 h-3.5" /> Mark held
+              </BtnPrimary>
+            )}
+            {onReschedule && (
+              <BtnSecondary className="!py-1.5 !px-3 !text-[11px] !rounded-xl" onClick={() => onReschedule(meeting)}>
+                <Pencil className="w-3.5 h-3.5" /> Reschedule
+              </BtnSecondary>
+            )}
+          </>
+        ) : meeting.meetLink ? (
           <a
             href={meeting.meetLink}
             target="_blank"
@@ -609,7 +659,7 @@ function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
             <Video className="w-3.5 h-3.5" /> Join
           </BtnPrimary>
         )}
-        {meeting.meetLink && (
+        {!overdue && meeting.meetLink && (
           <>
             <button
               type="button"
@@ -623,7 +673,7 @@ function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
             </BtnSecondary>
           </>
         )}
-        {onReschedule && (
+        {!overdue && onReschedule && (
           <BtnSecondary className="!py-1.5 !px-3 !text-[11px] !rounded-xl" onClick={() => onReschedule(meeting)}>
             <Pencil className="w-3.5 h-3.5" /> Reschedule
           </BtnSecondary>
@@ -642,6 +692,7 @@ export default function EmployeeMeetings() {
     createMeeting,
     cancelMeeting,
     rescheduleMeeting,
+    completeMeeting,
     addLead,
     refreshLeads,
     refreshMeetings,
@@ -776,33 +827,56 @@ export default function EmployeeMeetings() {
     return [customOpt, ...scopedLeads];
   }, [leads]);
 
-  const stats = useMemo(() => ({
-    today: meetingsUpcoming.filter((m) => String(m.time || "").toLowerCase().includes("today")).length,
-    week: meetingsUpcoming.length,
-    completed: meetingsHistory.length,
-    googleMeet: meetingsUpcoming.filter((m) => m.platform === "Google Meet").length,
-  }), [meetingsUpcoming, meetingsHistory]);
+  // Meetings whose time has passed but are still "booked" (the context files those under History as "Held").
+  // They are surfaced FIRST in Upcoming with an Overdue badge + Mark held / Reschedule — nothing is auto-changed.
+  const { overdueMeetings, upcomingOnly, historyOnly } = useMemo(() => {
+    const overdueList = [];
+    const seen = new Set();
+    for (const m of [...meetingsUpcoming, ...meetingsHistory]) {
+      if (!m || seen.has(String(m.id)) || !isMeetingOverdue(m)) continue;
+      seen.add(String(m.id));
+      overdueList.push(m);
+    }
+    overdueList.sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt));
+    return {
+      overdueMeetings: overdueList,
+      upcomingOnly: meetingsUpcoming.filter((m) => !seen.has(String(m.id))),
+      historyOnly: meetingsHistory.filter((m) => !seen.has(String(m.id))),
+    };
+  }, [meetingsUpcoming, meetingsHistory]);
+
+  // Today ⊂ This week: both count upcoming meetings from NOW; "this week" runs to the end of Sunday.
+  const stats = useMemo(() => {
+    const { today, week } = countMeetingTiles(upcomingOnly);
+    return {
+      today,
+      week,
+      completed: historyOnly.filter((m) => String(m.status || "").toLowerCase() === "completed").length,
+      googleMeet: upcomingOnly.filter((m) => m.platform === "Google Meet").length,
+    };
+  }, [upcomingOnly, historyOnly]);
 
   const filteredUpcoming = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return meetingsUpcoming;
-    return meetingsUpcoming.filter(
+    const all = [...overdueMeetings, ...upcomingOnly];
+    if (!q) return all;
+    return all.filter(
       (m) =>
-        m.title.toLowerCase().includes(q) ||
-        m.lead.toLowerCase().includes(q) ||
-        m.platform.toLowerCase().includes(q),
+        String(m.title || "").toLowerCase().includes(q) ||
+        String(m.lead || "").toLowerCase().includes(q) ||
+        String(m.platform || "").toLowerCase().includes(q),
     );
-  }, [meetingsUpcoming, search]);
+  }, [overdueMeetings, upcomingOnly, search]);
 
   const filteredHistory = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return meetingsHistory;
-    return meetingsHistory.filter(
+    if (!q) return historyOnly;
+    return historyOnly.filter(
       (m) =>
-        m.title.toLowerCase().includes(q) ||
+        String(m.title || "").toLowerCase().includes(q) ||
         (m.outcome || "").toLowerCase().includes(q),
     );
-  }, [meetingsHistory, search]);
+  }, [historyOnly, search]);
 
   const closeDrawer = () => {
     setDrawerOpen(false);
@@ -887,7 +961,16 @@ export default function EmployeeMeetings() {
 
   const handleDelete = async (meetingId) => {
     await cancelMeeting(meetingId);
+    await refreshMeetings?.();
     toast.success("Meeting deleted");
+  };
+
+  const handleMarkHeld = async (meeting) => {
+    if (!completeMeeting) return;
+    const done = await completeMeeting(meeting.id);
+    if (!done) return;
+    await refreshLeads?.();
+    toast.success("Meeting marked as held");
   };
 
   const openReschedule = (meeting) => {
@@ -921,6 +1004,10 @@ export default function EmployeeMeetings() {
     const { date: origDate, time: origTime } = splitScheduledAt(meeting.scheduledAt);
     const updates = {};
     if (date !== origDate || time !== origTime) {
+      if (new Date(`${date}T${time}:00`).getTime() < Date.now()) {
+        toast.error("Pick a date and time in the future");
+        return;
+      }
       updates.scheduledAt = `${date}T${time}:00`;
     }
     if ((meetLink || "") !== (meeting.meetLink || "")) {
@@ -1024,9 +1111,9 @@ export default function EmployeeMeetings() {
   return (
     <div className="space-y-3 sm:space-y-5 page-shell min-w-0 animate-fade-in">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
-        <StatCard compact label="Today" value={String(stats.today)} icon={Calendar} tone="primary" change="scheduled" sub="" />
-        <StatCard compact label="This Week" value={String(stats.week)} icon={CalendarClock} tone="warning" change="upcoming" sub="" />
-        <StatCard compact label="Completed" value={String(stats.completed)} icon={CheckCircle2} tone="success" change="last 30 days" sub="" />
+        <StatCard compact label="Today (upcoming)" value={String(stats.today)} icon={Calendar} tone="primary" change="still to come today" sub="" title={`Upcoming today: ${MEETING_METRIC_INFO.upcoming} Only meetings dated today.`} />
+        <StatCard compact label="This week (upcoming)" value={String(stats.week)} icon={CalendarClock} tone="warning" change="now to Sunday · incl. today" sub="" title={`Upcoming this week: ${MEETING_METRIC_INFO.upcoming} Only meetings from now to Sunday night.`} />
+        <StatCard compact label="Held (completed)" value={String(stats.completed)} icon={CheckCircle2} tone="success" change="marked completed · last 30 days" sub="" title={`Held: ${MEETING_METRIC_INFO.held} Last 30 days.`} />
         <StatCard compact label="Google Meet" value={String(stats.googleMeet)} icon={Link2} tone="success" change="with live links" sub="" />
       </div>
 
@@ -1065,6 +1152,16 @@ export default function EmployeeMeetings() {
         </div>
       </GlassCard>
 
+      {overdueMeetings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <p>
+            <span className="font-bold">{overdueMeetings.length} meeting{overdueMeetings.length === 1 ? " is" : "s are"} overdue</span>
+            {" "}— the time has passed but {overdueMeetings.length === 1 ? "it is" : "they are"} still booked. Open Upcoming and choose <span className="font-semibold">Mark held</span> or <span className="font-semibold">Reschedule</span>.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-3 sm:gap-4 items-stretch">
         <div className="min-w-0 flex flex-col">
           {tab === "upcoming" ? (
@@ -1085,6 +1182,7 @@ export default function EmployeeMeetings() {
                         onShare={handleOpenShareModal}
                         onDelete={handleDelete}
                         onReschedule={openReschedule}
+                        onMarkHeld={handleMarkHeld}
                       />
                     ))}
                   </div>
@@ -1106,7 +1204,7 @@ export default function EmployeeMeetings() {
                   {filteredHistory.map((m) => (
                     <div key={m.id} className="flex items-start justify-between gap-3 px-4 py-3.5 hover:bg-rose-50/30 transition">
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-slate-900">{m.title}</p>
+                        <p className="text-sm font-bold text-slate-900 break-words">{m.title}</p>
                         <p className="text-[11px] text-slate-500 mt-0.5">{m.time}</p>
                         {m.platform && (
                           <span className="inline-block mt-1.5">
@@ -1132,6 +1230,7 @@ export default function EmployeeMeetings() {
             onShare={handleOpenShareModal}
             onDelete={handleDelete}
             onReschedule={openReschedule}
+            onMarkHeld={handleMarkHeld}
           />
         </div>
       </div>

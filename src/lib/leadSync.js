@@ -127,6 +127,8 @@ function workflowStatusFromStage(stageRaw) {
   const s = String(stageRaw || "").toLowerCase();
   if (!s) return null;
   if (s === "new lead" || s === "new" || s === "lead") return "new";
+  // "Not Contacted" / "Un-Qualified" are NEW leads, not "contacted" (the includes("contacted") rule below would catch them).
+  if (/^(not|un)[\s_-]*(contacted|qualified)$/.test(s.trim())) return "new";
   if (s.includes("not pick")) return "notpick";
   if (s.includes("attempted")) return "attempted";
   if (s.includes("contacted") || s.includes("qualified") || s.includes("conversation")) return "contacted";

@@ -1,11 +1,10 @@
 import {
-  isConversationCall,
-  isMissedCall,
+  callBucket,
   isNotPickupByClientCall,
   isOutboundCall,
   isShortConnectedCall,
   phonesMatchLoose,
-  parseCallDurationSeconds,
+  summarizeCalls,
 } from "./callMetrics.js";
 import { mapStageToId, PIPELINE_STAGE_DEFINITIONS } from "./pipelineStages.js";
 import { isDateKeyInPeriod, isMeetingDateKeyInPeriod, localDateKey, parseCustomPeriod, resolveCallDateKey } from "./periodFilter.js";
@@ -284,22 +283,24 @@ function resolveEarlyFunnelColumn(lead, periodCalls = [], options = {}) {
   return null;
 }
 
+// Pipeline column rules = the shared call definitions (lib/callMetrics.js, mirror of the backend):
+//   Conversation = answered, >= 2 min, any direction
+//   Short Call   = answered OUTBOUND < 2 min
+//   Not Pick     = OUTBOUND call the client did not answer (Rejected is NOT Not Pick)
+// Rejected, Missed (incoming) and Incoming short calls never create a Not Pick / Short Call card.
 export function callKanbanColumn(call) {
-  const sec = Number.isFinite(call?.durationSec)
-    ? call.durationSec
-    : parseCallDurationSeconds(call?.duration);
-  if (isConversationCall(sec)) return "conversation_2min";
-  if (!isOutboundCall(call)) return null;
-  if (isNotPickupByClientCall(call)) return "not_pick";
-  if (isShortConnectedCall(call)) return "short_call";
-  return null;
+  switch (callBucket(call || {})) {
+    case "conversation": return "conversation_2min";
+    case "short": return "short_call";
+    case "no_pickup": return "not_pick";
+    default: return null;
+  }
 }
 
 export function leadHasConversation2MinPlus(calls = [], { outboundOnly = false } = {}) {
   return calls.some((c) => {
     if (outboundOnly && !isOutboundCall(c)) return false;
-    const sec = Number.isFinite(c.durationSec) ? c.durationSec : parseCallDurationSeconds(c.duration);
-    return isConversationCall(sec);
+    return callBucket(c) === "conversation";
   });
 }
 
@@ -641,8 +642,8 @@ function latestOutboundCallToday(calls = [], todayKey) {
  * NOT PICK column order.
  *
  * A card drops to the bottom of NOT PICK only when the employee actually dialled
- * the lead TODAY and that latest dial was not picked up (Callyzer/DB call record:
- * outbound + 0 sec / "Not connected" / "Rejected" / "No answer" …).
+ * the lead TODAY and that latest dial was a Not pick (shared definition: outbound dial the client
+ * did not answer; a Rejected dial is NOT a Not pick).
  *  - Leads not dialled today keep the existing order (getLeadTimestampMs, newest first).
  *  - Dialled-and-unanswered-today leads follow, oldest attempt first, so the most
  *    recently attempted lead is always last.
@@ -914,50 +915,34 @@ function conversationContactKey(call) {
   return `call:${call?.id ?? ""}`;
 }
 
+/**
+ * Call counts for the Pipeline note / stage hints. Thin wrapper over summarizeCalls (lib/callMetrics.js) -
+ * the ONE call definition: total = connected + notConnected,
+ * connected = conversations + shortCalls + incomingShort, notConnected = notPickupByClient (Not pick) + missed
+ * (incoming) + rejected. `*Leads` are DISTINCT leads (calls with no lead are de-duplicated by phone) and never
+ * exceed the matching call count - always show both.
+ */
 export function countPipelineCallMetrics(periodCalls = []) {
-  const list = Array.isArray(periodCalls) ? periodCalls : [];
-  let conversations = 0;
-  let missed = 0;
-  let notPickupByClient = 0;
-  let shortCalls = 0;
-  let connected = 0;
-  const conversationContacts = new Set();
-  const missedLeadIds = new Set();
-  const notPickupLeadIds = new Set();
-  const shortCallLeadIds = new Set();
-
-  for (const call of list) {
-    const sec = Number.isFinite(call.durationSec)
-      ? call.durationSec
-      : parseCallDurationSeconds(call.duration);
-    if (isConversationCall(sec)) {
-      conversations += 1;
-      conversationContacts.add(conversationContactKey(call));
-    } else if (isNotPickupByClientCall(call)) {
-      notPickupByClient += 1;
-      if (call.leadId != null) notPickupLeadIds.add(String(call.leadId));
-    } else if (isShortConnectedCall(call)) {
-      shortCalls += 1;
-      if (call.leadId != null) shortCallLeadIds.add(String(call.leadId));
-    } else if (isMissedCall(call)) {
-      missed += 1;
-      if (call.leadId != null) missedLeadIds.add(String(call.leadId));
-    } else if (sec > 0) {
-      connected += 1;
-    }
-  }
-
+  const s = summarizeCalls(periodCalls);
   return {
-    totalCalls: list.length,
-    conversations,
-    missed,
-    notPickupByClient,
-    shortCalls,
-    connected,
-    conversationLeads: conversationContacts.size,
-    missedLeads: missedLeadIds.size,
-    notPickupLeads: notPickupLeadIds.size,
-    shortCallLeads: shortCallLeadIds.size,
+    totalCalls: s.total,
+    connected: s.connected,
+    conversations: s.conversation,
+    shortCalls: s.short,
+    incomingShort: s.incomingShort,
+    notConnected: s.notConnected,
+    notPickupByClient: s.noPickup,
+    missed: s.missedIncoming,
+    rejected: s.rejected,
+    totalLeads: s.leads.total,
+    connectedLeads: s.leads.connected,
+    conversationLeads: s.leads.conversation,
+    shortCallLeads: s.leads.short,
+    incomingShortLeads: s.leads.incomingShort,
+    notPickupLeads: s.leads.noPickup,
+    missedLeads: s.leads.missedIncoming,
+    rejectedLeads: s.leads.rejected,
+    summary: s,
   };
 }
 

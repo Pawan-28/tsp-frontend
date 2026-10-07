@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, startTransition } from "react";
+import { useState, useEffect, useRef, useCallback, startTransition } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, Bell, Menu, Plus, ChevronDown, X,
@@ -12,6 +12,10 @@ import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } f
 import PipelineDateFilter from "../../components/PipelineDateFilter.jsx";
 import { useDismissable } from "../../hooks/useDismissable.js";
 import { useActiveHeaderPopover, closeHeaderPopovers } from "../../hooks/useHeaderPopover.js";
+import { apiGet, apiPost } from "../../lib/api.js";
+import { getCrmHeaders } from "../../lib/crmContext.js";
+import { formatActivityDate, formatAbsoluteDateTime } from "../../lib/formatActivityDate.js";
+import { resolvePeriodSelection } from "../../lib/periodSelection.js";
 
 const QUICK_ACTIONS = [
   { label: "Add Lead",            icon: Plus,          to: "/employee/leads",        search: "?action=add" },
@@ -28,6 +32,8 @@ const PAGE_META = {
   "/employee/follow-ups": { title: "Follow-Up", sub: "Overdue · Due Today · Upcoming" },
   "/employee/whatsapp-scripts": { title: "WhatsApp Scripts", sub: "Create · Edit · Share on follow-ups" },
   "/employee/calls": { title: "Call Reporting", sub: "Analytics · Team Performance · Lead Activity" },
+  "/employee/call-detail": { title: "Call Detail", sub: "Recording · Transcript · Summary" },
+  "/employee/call-assistant": { title: "Call Assistant", sub: "Live call workspace" },
   "/employee/leads": { title: "Pipeline", sub: "Real-time overview of your sales pipeline" },
   "/employee/pipeline": { title: "Pipeline", sub: "Real-time overview of your sales pipeline" },
   "/employee/sales-process": { title: "Sales Process", sub: "SOP · Cross-Selling · Scripts · Checklist" },
@@ -44,6 +50,11 @@ const CANONICAL_SERVICES = [
   "Custom Software Dev",
   "Strategic Consulting",
 ];
+
+// Real notifications: GET /api/v1/notifications (crm_notifications written by notify() in operationalServices —
+// lead assigned, meeting scheduled, ...). The backend scopes it to the signed-in employee.
+const NOTIF_LIMIT = 30;
+const NOTIF_POLL_MS = 60_000;
 
 const CALL_PERIODS = [
   { id: "today", label: "Today" },
@@ -76,14 +87,23 @@ export default function EmployeeTopbar({ onMenu }) {
   const [searchQ, setSearchQ] = useState("");
   const quickRef = useRef(null);
   const userRef = useRef(null);
+  const notifRef = useRef(null);
+  const [notifications, setNotifications] = useState([]);
+  const [notifStatus, setNotifStatus] = useState("loading"); // loading | ready | error
+  const unreadNotifs = notifications.filter((n) => !n.isRead);
+  const unreadCount = unreadNotifs.length;
   const isCallsPage = pathname === "/employee/calls";
   const isDashboardPage = pathname === "/employee";
   const isPipelinePage = pathname === "/employee/leads" || pathname === "/employee/pipeline" || pathname === "/employee/sales-process";
   const showPeriodFilter = isCallsPage || isPipelinePage || isDashboardPage;
   const defaultPeriod = isCallsPage || isDashboardPage ? "today" : "month";
-  const currentPeriod = String(searchParams.get("period") || defaultPeriod).toLowerCase();
-  // Today | Week | Month | Custom (Admin Dashboard style) on the Pipeline board.
+  // Dashboard, Call Reporting and the Pipeline board share ONE filter: Today | Yesterday | Week | Month | Custom
+  // (PipelineDateFilter). The highlighted pill is the RESOLVED period, so an invalid URL (custom without dates,
+  // From > To, unknown value) highlights the page default instead of nothing / an empty Custom pill.
   const isLeadBoardPage = pathname === "/employee/leads" || pathname === "/employee/pipeline";
+  const usesDateFilter = isLeadBoardPage || isCallsPage || isDashboardPage;
+  const periodSelection = resolvePeriodSelection(searchParams, { defaultPeriod });
+  const currentPeriod = usesDateFilter ? periodSelection.key : String(searchParams.get("period") || defaultPeriod).toLowerCase();
 
   const setPeriod = (nextPeriod) => {
     closeHeaderPopovers();
@@ -117,11 +137,72 @@ export default function EmployeeTopbar({ onMenu }) {
     navigate(`${action.to}${action.search ?? ""}`);
   };
 
-  // Esc / outside click close the open menu. (The notifications panel has its own full-screen backdrop for
-  // outside clicks, so it only needs Esc here.)
+  // Esc / outside click close the open menu.
   useDismissable({ open: quickOpen, onDismiss: () => setQuickOpen(false), refs: [quickRef] });
   useDismissable({ open: userMenuOpen, onDismiss: () => setUserMenuOpen(false), refs: [userRef] });
-  useDismissable({ open: notifOpen, onDismiss: () => setNotifOpen(false), outside: false });
+  useDismissable({ open: notifOpen, onDismiss: () => setNotifOpen(false), refs: [notifRef] });
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const res = await apiGet(`/api/v1/notifications?limit=${NOTIF_LIMIT}`, {
+        headers: getCrmHeaders(),
+        skipCache: true,
+        cacheTtl: 0,
+      });
+      if (res?.success === false) throw new Error(res.message || "notifications failed");
+      setNotifications(Array.isArray(res?.data) ? res.data : []);
+      setNotifStatus("ready");
+    } catch {
+      setNotifStatus((prev) => (prev === "ready" ? prev : "error"));
+    }
+  }, []);
+
+  // The red dot is driven by real unread items: load on mount, poll lightly, refresh when the tab regains focus.
+  useEffect(() => {
+    if (!employee?.id) return undefined;
+    loadNotifications();
+    const timer = window.setInterval(() => {
+      if (!document.hidden) loadNotifications();
+    }, NOTIF_POLL_MS);
+    const onVisible = () => { if (!document.hidden) loadNotifications(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [employee?.id, loadNotifications]);
+
+  const markNotificationsRead = useCallback(async (ids) => {
+    // ids omitted = every unread notification of this employee.
+    const idSet = ids ? new Set(ids.map(String)) : null;
+    setNotifications((prev) => prev.map((n) => (!idSet || idSet.has(String(n.id)) ? { ...n, isRead: true } : n)));
+    try {
+      await apiPost("/api/v1/notifications/read", ids ? { ids } : {}, { headers: getCrmHeaders() });
+    } catch {
+      loadNotifications();
+    }
+  }, [loadNotifications]);
+
+  // Opening refreshes the list; closing marks what was just shown as read (so the dot clears once you have seen it).
+  const wasNotifOpenRef = useRef(false);
+  const shownUnreadRef = useRef([]);
+  useEffect(() => {
+    if (notifOpen && !wasNotifOpenRef.current) {
+      loadNotifications();
+    }
+    if (notifOpen) {
+      if (!wasNotifOpenRef.current) shownUnreadRef.current = [];
+      for (const n of unreadNotifs) {
+        if (!shownUnreadRef.current.includes(n.id)) shownUnreadRef.current.push(n.id);
+      }
+    }
+    if (!notifOpen && wasNotifOpenRef.current && shownUnreadRef.current.length) {
+      markNotificationsRead(shownUnreadRef.current);
+      shownUnreadRef.current = [];
+    }
+    wasNotifOpenRef.current = notifOpen;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifOpen, notifications]);
 
   // Navigating to another page closes any open popover.
   useEffect(() => {
@@ -194,18 +275,18 @@ export default function EmployeeTopbar({ onMenu }) {
           </div>
 
           {/* Web Period Filter — in top navbar for desktop/tablet */}
-          {showPeriodFilter && isLeadBoardPage && (
+          {showPeriodFilter && usesDateFilter && (
             <div className="hidden md:inline-flex items-center mx-2 shrink-0">
               <PipelineDateFilter
                 currentPeriod={currentPeriod}
-                fromDate={searchParams.get("from") || ""}
-                toDate={searchParams.get("to") || ""}
+                fromDate={periodSelection.customFrom}
+                toDate={periodSelection.customTo}
                 onSelect={setPeriod}
                 onApplyCustom={setCustomRange}
               />
             </div>
           )}
-          {showPeriodFilter && !isLeadBoardPage && (
+          {showPeriodFilter && !usesDateFilter && (
             <div className="hidden md:inline-flex items-center mx-2 shrink-0">
               <div className={SEGMENT_WRAP}>
                 {CALL_PERIODS.map(({ id, label }) => (
@@ -277,15 +358,82 @@ export default function EmployeeTopbar({ onMenu }) {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => setNotifOpen((v) => !v)}
-              className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-[#E5E7EB] bg-white grid place-items-center text-slate-500 hover:border-rose-200 hover:text-rose-600 transition shrink-0"
-              aria-label="Notifications"
-            >
-              <Bell className="w-4 h-4 text-[#DC143C]" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-600 border-2 border-white" />
-            </button>
+            <div ref={notifRef} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setNotifOpen((v) => !v)}
+                className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-[#E5E7EB] bg-white grid place-items-center text-slate-500 hover:border-rose-200 hover:text-rose-600 transition shrink-0"
+                aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : "Notifications"}
+                aria-haspopup="dialog"
+                aria-expanded={notifOpen}
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4 text-[#DC143C]" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-600 border-2 border-white" aria-hidden="true" />
+                )}
+              </button>
+              {notifOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Notifications"
+                  className="fixed inset-x-3 top-[3.25rem] sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 z-50 rounded-2xl border border-[#FFD6E5] bg-white shadow-[0_12px_40px_rgba(220,20,60,0.12)] animate-fade-in"
+                >
+                  <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2 border-b border-rose-50">
+                    <span className="text-sm font-display font-bold text-slate-900">
+                      Notifications
+                      {unreadCount > 0 && (
+                        <span className="ml-1.5 align-middle text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-1.5 py-0.5">{unreadCount} new</span>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => markNotificationsRead()}
+                          className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 px-1.5 py-1 rounded-lg hover:bg-rose-50 transition"
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setNotifOpen(false)}
+                        className="w-7 h-7 grid place-items-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                        aria-label="Close notifications"
+                        title="Close"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="max-h-[min(20rem,calc(100dvh-9rem))] overflow-y-auto overscroll-contain scrollbar-thin">
+                    {notifStatus === "error" && notifications.length === 0 ? (
+                      <p className="text-xs text-slate-400 py-6 px-4 text-center">Couldn&apos;t load notifications. Try again in a moment.</p>
+                    ) : notifStatus === "loading" && notifications.length === 0 ? (
+                      <p className="text-xs text-slate-400 py-6 px-4 text-center">Loading…</p>
+                    ) : notifications.length === 0 ? (
+                      <p className="text-xs text-slate-400 py-6 px-4 text-center">No new notifications</p>
+                    ) : (
+                      <ul className="divide-y divide-rose-50">
+                        {notifications.map((n) => (
+                          <li key={n.id} className={`px-4 py-2.5 ${n.isRead ? "" : "bg-rose-50/50"}`}>
+                            <div className="flex items-start gap-2">
+                              <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.isRead ? "bg-transparent" : "bg-rose-600"}`} aria-hidden="true" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-bold text-slate-900 break-words">{n.title || "Notification"}</p>
+                                {n.body ? <p className="text-[11px] text-slate-600 mt-0.5 break-words line-clamp-2">{n.body}</p> : null}
+                                <p className="text-[10px] text-slate-400 mt-0.5" title={formatAbsoluteDateTime(n.createdAt)}>{formatActivityDate(n.createdAt)}</p>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div ref={userRef} className="relative shrink-0">
               <button
@@ -325,12 +473,12 @@ export default function EmployeeTopbar({ onMenu }) {
         {showPeriodFilter && (
           <div className="md:hidden px-2.5 pb-2 pt-1 border-t border-[#F3F4F6] bg-[#FAFAFA]/80">
             <div className="flex items-center gap-2 min-w-0">
-              {isLeadBoardPage ? (
+              {usesDateFilter ? (
                 <PipelineDateFilter
                   compact
                   currentPeriod={currentPeriod}
-                  fromDate={searchParams.get("from") || ""}
-                  toDate={searchParams.get("to") || ""}
+                  fromDate={periodSelection.customFrom}
+                  toDate={periodSelection.customTo}
                   onSelect={setPeriod}
                   onApplyCustom={setCustomRange}
                 />
@@ -375,18 +523,6 @@ export default function EmployeeTopbar({ onMenu }) {
           </div>
         )}
       </header>
-
-      {notifOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
-          <div className="fixed top-[3.25rem] right-3 sm:right-6 z-50 w-[min(100vw-1.5rem,320px)] rounded-2xl border border-[#FFD6E5] bg-white shadow-[0_12px_40px_rgba(220,20,60,0.12)] p-4 animate-fade-in">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-display font-bold text-slate-900">Notifications</span>
-            </div>
-            <p className="text-xs text-slate-400 py-4 text-center">No new notifications</p>
-          </div>
-        </>
-      )}
 
       <PrivateContactsModal
         isOpen={privateModalOpen}

@@ -707,9 +707,9 @@ export default function Pipeline() {
             if (stage.id === "conversation_2min") {
               callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads with 2 min+`;
             } else if (stage.id === "short_call") {
-              callHint = `${syncedShortCalls} connected calls ${CALL_SHORT_LABEL} · ${columnLeads.length} leads in Short Call`;
+              callHint = `${syncedShortCalls} short calls (answered outgoing ${CALL_SHORT_LABEL}) · ${columnLeads.length} leads in Short Call`;
             } else if (stage.id === "not_pick") {
-              callHint = `${syncedNotPickupCalls} client no pickup · ${columnLeads.length} leads in Not Pick`;
+              callHint = `${syncedNotPickupCalls} not pick (outgoing, not answered; rejected excluded) · ${columnLeads.length} leads in Not Pick`;
             } else if (stage.id === "meeting_booked") {
               callHint = `${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} scheduled`;
             } else if (stage.id === "meeting_done") {
@@ -741,7 +741,7 @@ export default function Pipeline() {
             <>
               {periodLabel} · {kanbanLeads.length} cards on board
               {olderCount > 0 ? ` (${olderCount} older: manually staged leads stay on every period)` : ""}
-              {" "}· Callyzer synced · {syncedShortCalls} short calls {CALL_SHORT_LABEL} ({grouped.short_call?.length || 0} leads) · {syncedConversationCalls} calls {CALL_CONVERSATION_LABEL} ({grouped.conversation_2min?.length || 0} leads) · {syncedNotPickupCalls} client no pickup ({grouped.not_pick?.length || 0} leads) · {periodMeetings.length} meetings
+              {" "}· Callyzer synced · {syncedShortCalls} short calls {CALL_SHORT_LABEL} ({grouped.short_call?.length || 0} leads) · {syncedConversationCalls} calls {CALL_CONVERSATION_LABEL} ({grouped.conversation_2min?.length || 0} leads) · {syncedNotPickupCalls} not pick ({grouped.not_pick?.length || 0} leads) · {periodMeetings.length} meetings
             </>
           )}
           {(callsSyncing) ? " · syncing in background…" : ""}

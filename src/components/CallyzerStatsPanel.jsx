@@ -4,16 +4,18 @@ import {
   Clock,
   MessageCircle,
   Phone,
+  PhoneCall,
   PhoneIncoming,
   PhoneMissed,
   PhoneOff,
-  PhoneOutgoing,
   RefreshCw,
   UserX,
   Users,
 } from "lucide-react";
 import { GlassCard, StatCard } from "./Primitives.jsx";
-import { CALL_CONVERSATION_LABEL } from "../lib/callMetrics.js";
+import MetricInfoTip from "./MetricInfoTip.jsx";
+import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL, formatCallsAndLeads } from "../lib/callMetrics.js";
+import { callMetricTooltip, CALL_METRIC_INFO } from "../lib/metricInfo.js";
 
 function formatLastUpdated(date) {
   if (!date) return "Syncing…";
@@ -51,96 +53,129 @@ function LiveStatusBadge({ syncing, lastUpdated, onRefresh }) {
   );
 }
 
+/**
+ * Tiles follow ONE partition (definitions: lib/callMetrics.js / backend utils/callMetrics.js):
+ *   Total = Connected + Not connected;  Connected = Conversation + Short call + Incoming short;
+ *   Not connected = Not pick + Rejected + Missed (incoming).
+ * Counts are CALLS; the "leads" figures are DISTINCT leads - both are always labelled.
+ */
 function buildMetrics(stats) {
+  const leads = stats.leads || {};
+  const total = Number(stats.totalCalls) || 0;
+  const connected = Number(stats.connectedCalls) || 0;
+  const notConnected = stats.notConnectedCalls ?? Math.max(0, total - connected);
+  const conversations = Number(stats.conversations5MinPlus) || 0;
+  const incomingShort = Number(stats.incomingShortCalls) || 0;
+  const short = stats.shortCalls ?? Math.max(0, connected - conversations - incomingShort);
+  const pctOfCalls = (n) => (total ? `${Math.round(((Number(n) || 0) / total) * 100)}% of calls` : "—");
   return [
     {
       key: "total",
       label: "Total Calls",
-      value: String(stats.totalCalls ?? 0),
-      change: stats.totalDuration || "—",
+      value: String(total),
+      change: `${stats.incomingCalls ?? 0} in · ${stats.outgoingCalls ?? 0} out`,
       icon: Phone,
       tone: "primary",
     },
     {
       key: "connected",
       label: "Connected",
-      value: String(stats.connectedCalls ?? 0),
-      change: stats.workingHours ? `Working ${stats.workingHours}` : "—",
-      icon: Phone,
+      value: String(connected),
+      change: `${conversations} conv. + ${short} short + ${incomingShort} in. short`,
+      icon: PhoneCall,
       tone: "success",
     },
     {
-      key: "incoming",
-      label: "Incoming",
-      value: String(stats.incomingCalls ?? 0),
-      change: stats.incomingDuration || "—",
+      key: "conversation",
+      label: `Conversation (${CALL_CONVERSATION_LABEL})`,
+      value: String(conversations),
+      change: formatCallsAndLeads(conversations, leads.conversation),
+      icon: MessageCircle,
+      tone: "success",
+    },
+    {
+      key: "short",
+      label: `Short call (${CALL_SHORT_LABEL})`,
+      value: String(short),
+      change: formatCallsAndLeads(short, leads.short),
+      icon: Clock,
+      tone: "info",
+    },
+    {
+      key: "incomingShort",
+      label: `Incoming short (${CALL_SHORT_LABEL})`,
+      value: String(incomingShort),
+      change: formatCallsAndLeads(incomingShort, leads.incomingShort),
       icon: PhoneIncoming,
-      tone: "success",
+      tone: "info",
+      changeTone: "muted",
     },
     {
-      key: "outgoing",
-      label: "Outgoing",
-      value: String(stats.outgoingCalls ?? 0),
-      change: stats.outgoingDuration || "—",
-      icon: PhoneOutgoing,
+      key: "notConnected",
+      label: "Not connected",
+      value: String(notConnected),
+      change: pctOfCalls(notConnected),
+      icon: PhoneOff,
       tone: "warning",
+      changeTone: "warning",
+    },
+    {
+      key: "noPickup",
+      label: "Not pick",
+      value: String(stats.notPickupByClient ?? 0),
+      change: formatCallsAndLeads(stats.notPickupByClient, leads.noPickup),
+      icon: UserX,
+      tone: "warning",
+      changeTone: "muted",
     },
     {
       key: "missed",
-      label: "Missed",
+      label: "Missed (incoming)",
       value: String(stats.missedCalls ?? 0),
-      change: stats.totalCalls
-        ? `${Math.round(((stats.missedCalls ?? 0) / stats.totalCalls) * 100)}% of dials`
-        : "—",
+      change: formatCallsAndLeads(stats.missedCalls, leads.missedIncoming),
       icon: PhoneMissed,
-      tone: "danger",
-      changeTone: "danger",
+      tone: "warning",
+      changeTone: "muted",
     },
     {
       key: "rejected",
       label: "Rejected",
       value: String(stats.rejectedCalls ?? 0),
-      change: "Declined by rep",
+      change: formatCallsAndLeads(stats.rejectedCalls, leads.rejected),
       icon: Ban,
-      tone: "purple",
+      tone: "danger",
       changeTone: "muted",
     },
     {
-      key: "never",
-      label: "Never Attended",
+      key: "neverAttended",
+      label: "Never attended",
       value: String(stats.neverAttended ?? 0),
-      change: "No answer logged",
+      change: `subset of Missed · of ${stats.missedCalls ?? 0}`,
       icon: PhoneOff,
       tone: "purple",
       changeTone: "muted",
     },
     {
-      key: "nopickup",
-      label: "Client No Pickup",
-      value: String(stats.notPickupByClient ?? 0),
-      change: "Client did not pick",
-      icon: UserX,
-      tone: "purple",
-      changeTone: "muted",
-    },
-    {
       key: "unique",
-      label: "Unique Clients",
+      label: "Unique Leads",
       value: String(stats.uniqueClients ?? 0),
-      change: "Distinct numbers",
+      change: "Distinct leads · all calls",
       icon: Users,
       tone: "info",
       changeTone: "muted",
     },
-    {
-      key: "conversations",
-      label: `${CALL_CONVERSATION_LABEL} Conversations`,
-      value: String(stats.conversations5MinPlus ?? 0),
-      change: stats.conversations5MinDuration || `Connected calls ≥ ${CALL_CONVERSATION_LABEL}`,
-      icon: MessageCircle,
-      tone: "success",
-    },
   ];
+}
+
+/** One-line reconciliation so the tiles can be checked at a glance. */
+function buildReconciliation(stats) {
+  const total = Number(stats.totalCalls) || 0;
+  const connected = Number(stats.connectedCalls) || 0;
+  const conversations = Number(stats.conversations5MinPlus) || 0;
+  const incomingShort = Number(stats.incomingShortCalls) || 0;
+  const notConnected = stats.notConnectedCalls ?? Math.max(0, total - connected);
+  const short = stats.shortCalls ?? Math.max(0, connected - conversations - incomingShort);
+  return `Total ${total} = Connected ${connected} (${conversations} conversation + ${short} short + ${incomingShort} incoming short) + Not connected ${notConnected} (${stats.notPickupByClient ?? 0} not pick + ${stats.rejectedCalls ?? 0} rejected + ${stats.missedCalls ?? 0} missed incoming)`;
 }
 
 export default function CallyzerStatsPanel({
@@ -154,6 +189,7 @@ export default function CallyzerStatsPanel({
   title = "Callyzer Call Analytics",
   subtitle,
   compact = false,
+  period = null,
 }) {
   if (!configured) return null;
 
@@ -215,9 +251,25 @@ export default function CallyzerStatsPanel({
             sub=""
             icon={metric.icon}
             tone={metric.tone}
+            corner={(
+              <MetricInfoTip
+                text={period ? callMetricTooltip(metric.key, period) : CALL_METRIC_INFO[metric.key]}
+              />
+            )}
             className="!min-h-[96px] sm:!min-h-[108px]"
           />
         ))}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 space-y-1">
+        <p className="font-semibold text-slate-700">{buildReconciliation(stats)}</p>
+        <p>
+          <span className="font-semibold text-slate-700">Pickup rate {stats.pickupRate ?? 0}%</span>
+          {` (${stats.connectedOutbound ?? 0} answered outgoing / ${stats.outgoingCalls ?? 0} outgoing dials)`}
+          {" · "}
+          <span className="font-semibold text-slate-700">Avg call duration {stats.avgDurationSec ? `${Math.floor(stats.avgDurationSec / 60)}:${String(stats.avgDurationSec % 60).padStart(2, "0")}` : "—"}</span>
+          {` · Talk time ${stats.workingHours || "—"} (connected calls only)`}
+        </p>
       </div>
 
       {!compact && stats.lastCallLog?.client_name && (

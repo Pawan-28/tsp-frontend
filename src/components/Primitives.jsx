@@ -33,6 +33,7 @@ export function StatCard({
   compact = false,
   className = "",
   corner = null,
+  title,
 }) {
   const toneMap = {
     primary: "bg-rose-50 text-rose-600 border border-rose-100",
@@ -62,6 +63,7 @@ export function StatCard({
   return (
     <GlassCard
       hover={hover}
+      title={title}
       className={`h-full ${compact ? "p-2.5 sm:p-3.5 min-h-[84px] sm:min-h-[96px]" : "p-3.5 sm:p-4 min-h-[96px] sm:min-h-[104px]"} flex flex-col justify-between !bg-white !border-slate-200/80 !from-white !via-white !to-white !shadow-[0_2px_8px_rgba(15,23,42,0.04)] ${className}`}
     >
       <div className="flex justify-between items-start gap-1.5 sm:gap-2 w-full">

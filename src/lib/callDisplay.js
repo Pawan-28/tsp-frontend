@@ -1,4 +1,4 @@
-import { parseCallDurationSeconds, phonesMatchLoose } from "./callMetrics.js";
+import { isConnectedCall, parseCallDurationSeconds, phonesMatchLoose } from "./callMetrics.js";
 import { localDateKey } from "./periodFilter.js";
 import { APP_TZ, parseAppDateTime } from "./timezone.js";
 
@@ -261,9 +261,13 @@ export function resolveCallDurationSec(call = {}) {
   return fromDuration > 0 ? fromDuration : 0;
 }
 
-/** Connected = client picked up (duration > 0). */
+/**
+ * Connected = answered call: Conversation (2 min+), Short call or Incoming short (shared definition in
+ * callMetrics.js - exact outcome sets + direction + duration). Ring seconds logged on an unanswered dial are NOT
+ * talk time, so no duration is shown for them.
+ */
 export function isCallConnected(call = {}) {
-  return resolveCallDurationSec(call) > 0;
+  return isConnectedCall({ ...call, durationSec: resolveCallDurationSec(call) });
 }
 
 export function formatCallDurationLabel(call = {}) {

@@ -1,4 +1,4 @@
-import { useState, useRef, Component } from "react";
+import { useState, useRef, useEffect, Component } from "react";
 import { useDismissable } from "../../hooks/useDismissable.js";
 import { Outlet, useOutletContext, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
@@ -54,6 +54,20 @@ export default function EmployeeLayout() {
   const [fabOpen, setFabOpen] = useState(false);
   const fabRef = useRef(null);
   useDismissable({ open: fabOpen, onDismiss: () => setFabOpen(false), refs: [fabRef] });
+  // The round "Quick actions" (+) button floats over the page on phones/tablets (< lg). Slide it out of the way
+  // while scrolling down (so it never covers card content you are reading) and bring it back on scroll up.
+  const [fabHidden, setFabHidden] = useState(false);
+  useEffect(() => {
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y > lastY + 8 && y > 120) setFabHidden(true);
+      else if (y < lastY - 8 || y <= 120) setFabHidden(false);
+      lastY = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
   const navigate = useNavigate();
 
   const quickActions = [
@@ -89,8 +103,12 @@ export default function EmployeeLayout() {
             <button
               type="button"
               onClick={() => setFabOpen(!fabOpen)}
-              className="lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] right-3 sm:right-4 z-40 w-12 h-12 sm:w-14 sm:h-14 rounded-full gradient-primary text-primary-foreground shadow-glow grid place-items-center hover:opacity-90 transition"
+              className={`lg:hidden fixed bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] right-3 sm:right-4 z-40 w-12 h-12 sm:w-14 sm:h-14 rounded-full gradient-primary text-primary-foreground shadow-glow grid place-items-center hover:opacity-90 transition-all duration-200 ${
+                fabHidden && !fabOpen ? "translate-y-24 opacity-0 pointer-events-none" : ""
+              }`}
               aria-label="Quick actions"
+              aria-expanded={fabOpen}
+              title="Quick actions: add lead, task, follow-up, call or meeting"
             >
               <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>

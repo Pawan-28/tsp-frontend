@@ -23,7 +23,8 @@ import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
 import { getMomSections, getMomPlainText, stripGeminiCharges } from "../../lib/momFormat.js";
 import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
-import { isOutboundCall } from "../../lib/callMetrics.js";
+import { isOutboundCall, isMissedCall, callStatusMeta } from "../../lib/callMetrics.js";
+import { sourceLabel } from "../../lib/sourceLabels.js";
 import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal.jsx";
 import LeadFollowUpModal from "../../employee/components/LeadFollowUpModal.jsx";
 import WhatsAppScriptPicker from "../../employee/components/WhatsAppScriptPicker.jsx";
@@ -78,9 +79,19 @@ function normalizeCallForDisplay(call, liveLead) {
   };
 }
 
+// Source keys an employee can pick; the stored key is the option value, sourceLabel() is what is shown.
+const SELECTABLE_SOURCE_KEYS = [
+  "manual", "meta_ads", "google_ads", "website", "whatsapp", "landing_page", "linkedin", "referral", "form",
+];
+
+/** A call that never connected (Not pick / Rejected / Missed incoming / 0:00): no AI summary exists for it. */
+function isCallNotConnected(call) {
+  return !isCallConnected(call) || isMissedCall(call);
+}
+
 const CUSTOM_FIELD_OPTION = "__custom__";
 
-function DetailField({ label, value, onChange, readOnly = false, type = "text", options, allowCustom = false }) {
+function DetailField({ label, value, onChange, readOnly = false, type = "text", options, allowCustom = false, getOptionLabel, wide = false, footer = null }) {
   // Only the user's "+ Add new…" opens free-text mode. A stored value that isn't in `options`
   // is appended to them so the select shows it instead of silently falling back to "—".
   const [customMode, setCustomMode] = useState(false);
@@ -88,11 +99,14 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
     ? [...options, value]
     : options;
 
+  const optionText = (opt) => (getOptionLabel ? getOptionLabel(opt) : opt);
+  const shownValue = value ? optionText(value) : "";
+
   return (
-    <div className={fieldCardClass}>
+    <div className={`${fieldCardClass}${wide ? " col-span-2" : ""}`}>
       <p className={labelClass}>{label}</p>
       {readOnly ? (
-        <p className="text-xs font-black text-slate-800 mt-1.5 truncate">{value || "—"}</p>
+        <p className="text-xs font-black text-slate-800 mt-1.5 truncate" title={shownValue || undefined}>{shownValue || "—"}</p>
       ) : options && customMode ? (
         <div className="relative">
           <input
@@ -124,9 +138,10 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
             onChange(e.target.value);
           }}
           className={inputClass}
+          title={shownValue || undefined}
         >
           {selectOptions.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
+            <option key={opt} value={opt}>{optionText(opt)}</option>
           ))}
           {allowCustom && <option value={CUSTOM_FIELD_OPTION}>+ Add new…</option>}
         </select>
@@ -138,6 +153,7 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
           className={inputClass}
         />
       )}
+      {footer}
     </div>
   );
 }
@@ -174,7 +190,8 @@ const getCheckedQuestionsForCall = (call, sops) => {
   }
 
   // If call was missed or rejected or not connected -> no questions completed!
-  const isMissed = call.type === "miss" || (call.outcome || "").toLowerCase().includes("missed") || (call.outcome || "").toLowerCase().includes("not answered");
+  // Shared call definition: only answered calls can have a checklist (no outcome-text guessing).
+  const isMissed = !callStatusMeta(call).connected;
   if (isMissed || call.durationSec === 0) {
     return {};
   }
@@ -243,8 +260,7 @@ export default function LeadDetailPanel({
   const [fetchedCalls, setFetchedCalls] = useState([]);
   const [callsLoading, setCallsLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
-  // Catalog entries ({ name, serviceId, priceNum }) — used to resolve the lead's stored service
-  // and to default the budget to the service price.
+  // Catalog entries ({ name, serviceId, priceNum }) — used to resolve the lead's stored service.
   const [serviceCatalog, setServiceCatalog] = useState([]);
   // Once the user picks a service themselves, never overwrite it with the lead's stored value.
   const serviceTouchedRef = useRef(false);
@@ -256,6 +272,10 @@ export default function LeadDetailPanel({
 
   const handleGenerateAiMom = async (callToProcess) => {
     if (!callToProcess || isProcessingAi) return;
+    if (isCallNotConnected(callToProcess)) {
+      toast("No AI summary for calls that did not connect.");
+      return;
+    }
     try {
       setIsProcessingAi(true);
       const toastId = toast.loading("Generating AI MoM…");
@@ -333,15 +353,8 @@ export default function LeadDetailPanel({
 
   const handleServiceChange = (val) => {
     serviceTouchedRef.current = true;
-    setDraft((prev) => {
-      const next = { ...prev, service: val };
-      const priced = matchCatalogService(val, serviceCatalog);
-      // Default the budget to the service price, but never overwrite one the rep already set.
-      if (priced?.priceNum > 0 && !(Number(prev.expectedRevenue) > 0)) {
-        next.expectedRevenue = String(priced.priceNum);
-      }
-      return next;
-    });
+    // Budget is only what the rep/sender entered — never defaulted from the catalog price.
+    setDraft((prev) => ({ ...prev, service: val }));
   };
 
   useEffect(() => {
@@ -446,21 +459,23 @@ export default function LeadDetailPanel({
     return hit ? { sop: hit, byService: true } : null;
   }, [draft.sop, draft.sopId, draft.service, liveLead?.sop, liveLead?.sopId, liveLead?.service, sopCatalog]);
 
+  // ONE human SOP identifier (SOP-007). The numeric DB id stays internal and is never shown.
   const resolvedSopLabel = useMemo(() => {
     const own = String(draft.sop || "").trim();
-    if (own && own !== "—") return own;
-    if (!resolvedSopRecord) return String(draft.sopId || "").trim();
-    const { sop, byService } = resolvedSopRecord;
-    return [sop.sop_code, sop.title].filter(Boolean).join(" · ") + (byService ? " (by service)" : "");
+    const rec = resolvedSopRecord?.sop;
+    if (own && own !== "—" && !/^\d+$/.test(own)) return own;
+    if (rec) return rec.sop_code || rec.title || "";
+    const sopIdText = String(draft.sopId || "").trim();
+    return /^\d+$/.test(sopIdText) ? "" : sopIdText;
   }, [draft.sop, draft.sopId, resolvedSopRecord]);
 
-  // Always the short code (SOP-007), never the long title.
-  const resolvedSopCode = useMemo(() => {
-    const rec = resolvedSopRecord?.sop;
-    if (rec?.sop_code) return rec.sop_code;
-    if (rec?.id != null) return String(rec.id);
-    return String(draft.sopId || liveLead?.sopId || "").trim();
-  }, [resolvedSopRecord, draft.sopId, liveLead?.sopId]);
+  // Source: the stored key is the option value; the current stored value is always selectable.
+  const sourceOptions = useMemo(() => {
+    const current = String(draft.source || "").trim();
+    const currentNorm = current.toLowerCase().replace(/[\s-]+/g, "_");
+    const keys = SELECTABLE_SOURCE_KEYS.filter((k) => k !== currentNorm);
+    return current ? [current, ...keys] : ["", ...keys];
+  }, [draft.source]);
 
   const allNotesAndSummaries = useMemo(() => {
     const userNotes = notesList.map((n) => ({
@@ -474,9 +489,25 @@ export default function LeadDetailPanel({
     }));
 
     const callSummaries = leadCalls.map((c, idx) => {
+      const createdAt = c.callAt ? new Date(c.callAt).getTime() : Date.now() - idx * 1000;
+      // Calls that never connected get a compact one-line call-log entry, never an AI summary block
+      // (older stored "not connected" AI text is hidden here, not deleted).
+      if (isCallNotConnected(c)) {
+        const notConnectedLabel = callStatusMeta(c).label; // Not pick / Rejected / Missed (shared call definition)
+        return {
+          id: `call-log-${c.id}`,
+          authorType: "call-log",
+          authorName: `${notConnectedLabel} call`,
+          body: `${notConnectedLabel} call · ${c.date || "Call log"} · Not connected`,
+          createdAt,
+          dateStr: c.date || "Call Log",
+          isAiCallSummary: false,
+          isCallLogEntry: true,
+        };
+      }
       const summaryText = c.aiSummary || c.ai_summary || c.notes || c.note || (c.connected ? `Call completed (${c.duration}). Outcome: ${c.outcome}` : null);
       if (!summaryText) return null;
-      
+
       const callNum = leadCalls.length - idx;
       return {
         id: `call-summary-${c.id}`,
@@ -486,7 +517,7 @@ export default function LeadDetailPanel({
         duration: c.duration,
         recordingUrl: c.recordingUrl || c.recording_url || c.audioUrl,
         body: summaryText,
-        createdAt: c.callAt ? new Date(c.callAt).getTime() : Date.now() - idx * 1000,
+        createdAt,
         dateStr: c.date || "Call Log",
         isAiCallSummary: true,
       };
@@ -496,6 +527,9 @@ export default function LeadDetailPanel({
     combined.sort((a, b) => b.createdAt - a.createdAt);
     return combined;
   }, [notesList, leadCalls]);
+
+  // Header counter: only notes written by people — not auto-logged call summaries / not-connected entries.
+  const humanNoteCount = notesList.length;
 
   const patchDraft = (key) => (val) => setDraft((prev) => ({ ...prev, [key]: typeof val === "function" ? val(prev[key]) : val }));
 
@@ -747,6 +781,7 @@ export default function LeadDetailPanel({
             <h4 className="text-xs font-extrabold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-rose-600 animate-pulse" /> AI Call Summary & MoM
             </h4>
+            {!isCallNotConnected(c) && (
             <button
               type="button"
               disabled={isProcessingAi}
@@ -764,6 +799,7 @@ export default function LeadDetailPanel({
                 </>
               )}
             </button>
+            )}
           </div>
           <div className="bg-white/90 border border-rose-100 p-3.5 rounded-xl shadow-2xs">
             <MomSections call={c} emptyText="No AI MoM generated yet for this call." />
@@ -951,32 +987,14 @@ export default function LeadDetailPanel({
                 <LeadStatusBadge status={liveLead.status} label={LEAD_STATUS_LABELS[liveLead.status]} />
               )}
               {variant === "employee" && !readOnly && (
-                <div className="inline-flex gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (draft.stage === "Not Interested") return;
-                      patchDraft("stage")("Not Interested");
-                      onStageChange?.("Not Interested");
-                    }}
-                    aria-pressed={draft.stage === "Not Interested"}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-bold border transition ${
-                      draft.stage === "Not Interested"
-                        ? "bg-violet-50 text-violet-700 border-violet-300"
-                        : "bg-white/90 border-rose-100 text-slate-500 hover:bg-violet-50/60 hover:text-violet-700"
-                    }`}
-                  >
-                    Not Interested
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFollowUpOpen(true)}
-                    disabled={typeof scheduleFollowUp !== "function"}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition disabled:opacity-40"
-                  >
-                    <CalendarClock className="w-3 h-3" /> Follow-up
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setFollowUpOpen(true)}
+                  disabled={typeof scheduleFollowUp !== "function"}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition disabled:opacity-40"
+                >
+                  <CalendarClock className="w-3 h-3" /> Follow-up
+                </button>
               )}
               <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-50 border border-rose-100 text-[10px] font-bold text-rose-800">
  {currentAssignee}
@@ -992,11 +1010,11 @@ export default function LeadDetailPanel({
         </div>
       </div>
 
-      {/* Lead Notes & Call Summaries (AI MoM) — shown right below the lead header card. */}
+      {/* Notes (written by people) + call log / AI call summaries — shown right below the lead header card. */}
       <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3.5 shadow-sm">
         <div className="flex items-center justify-between border-b border-rose-50 pb-2">
           <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-            <MessageCircle className="w-3.5 h-3.5 text-rose-500" /> Lead Notes & Call Summaries ({allNotesAndSummaries.length})
+            <MessageCircle className="w-3.5 h-3.5 text-rose-500" /> Notes ({humanNoteCount})
           </label>
         </div>
 
@@ -1025,6 +1043,15 @@ export default function LeadDetailPanel({
         ) : (
           <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
             {allNotesAndSummaries.map((item) => (
+              item.isCallLogEntry ? (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-1.5 text-[10.5px] font-semibold text-slate-500"
+                >
+                  <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                  <span className="truncate">{item.body}</span>
+                </div>
+              ) : (
               <div
                 key={item.id}
                 className={`rounded-xl p-3 space-y-1.5 text-xs transition-all ${
@@ -1058,6 +1085,7 @@ export default function LeadDetailPanel({
                     : formatAiSummaryText(item.body)}
                 </p>
               </div>
+              )
             ))}
           </div>
         )}
@@ -1079,8 +1107,33 @@ export default function LeadDetailPanel({
           }}
           options={CANONICAL_STAGE_LABELS}
           readOnly={readOnly}
+          footer={variant === "employee" && !readOnly ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (draft.stage === "Not Interested") return;
+                patchDraft("stage")("Not Interested");
+                onStageChange?.("Not Interested");
+              }}
+              aria-pressed={draft.stage === "Not Interested"}
+              className={`mt-2 w-full px-2 py-1 rounded-md text-[10px] font-bold border border-dashed transition ${
+                draft.stage === "Not Interested"
+                  ? "bg-violet-50 text-violet-700 border-violet-300"
+                  : "bg-white border-slate-300 text-slate-500 hover:bg-violet-50/60 hover:text-violet-700 hover:border-violet-300"
+              }`}
+            >
+              {draft.stage === "Not Interested" ? "Marked Not Interested" : "Mark as Not Interested"}
+            </button>
+          ) : null}
         />
-        <DetailField label="Source" value={draft.source} onChange={patchDraft("source")} readOnly={readOnly} />
+        <DetailField
+          label="Source"
+          value={draft.source}
+          onChange={patchDraft("source")}
+          options={sourceOptions}
+          getOptionLabel={(opt) => (opt ? sourceLabel(opt) : "—")}
+          readOnly={readOnly}
+        />
         <DetailField
           label="Budget (₹)"
           value={draft.expectedRevenue}
@@ -1096,6 +1149,7 @@ export default function LeadDetailPanel({
           onChange={handleServiceChange}
           options={serviceOptions}
           allowCustom
+          wide
           readOnly={readOnly}
         />
         <DetailField
@@ -1106,13 +1160,12 @@ export default function LeadDetailPanel({
         />
         <DetailField label="City" value={draft.city} onChange={patchDraft("city")} readOnly={readOnly} />
         <DetailField label="Company" value={draft.company} onChange={patchDraft("company")} readOnly={readOnly} />
-        {/* UTM + SOP code shown right here in the details grid */}
+        {/* UTM fields shown right here in the details grid */}
         <DetailField label="UTM Source" value={draft.utm_source} onChange={patchDraft("utm_source")} readOnly={readOnly} />
         <DetailField label="UTM Medium" value={draft.utm_medium} onChange={patchDraft("utm_medium")} readOnly={readOnly} />
         <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
         {/* <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} /> */}
         <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
-        <DetailField label="SOP Code / ID" value={resolvedSopCode || "—"} readOnly />
       </div>
 
       {isDirty && !readOnly && (
@@ -1207,6 +1260,7 @@ export default function LeadDetailPanel({
             {leadCalls.map((c) => {
               const isIncoming = c.type === "in";
               const isMissed = c.type === "miss";
+              const cBucket = callStatusMeta(c).bucket; // shared call definition: Not pick / Rejected are outgoing dials
 
               return (
                 <div key={c.id} className="w-full text-left p-3 rounded-xl border border-rose-100 bg-white transition-all space-y-2">
@@ -1214,9 +1268,9 @@ export default function LeadDetailPanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
-                          isIncoming ? "bg-emerald-50 text-emerald-700" : isMissed ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
+                          isIncoming ? "bg-emerald-50 text-emerald-700" : (isMissed || cBucket === "no_pickup") ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
                         }`}>
-                          {isIncoming ? "Inbound" : isMissed ? "Missed" : "Outbound"}
+                          {isIncoming ? "Inbound" : isMissed ? "Missed" : cBucket === "no_pickup" ? "Not pick" : cBucket === "rejected" ? "Rejected" : "Outbound"}
                         </span>
                         <span className="text-[10px] text-slate-400 font-semibold">{c.date}</span>
                       </div>
@@ -1227,17 +1281,23 @@ export default function LeadDetailPanel({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveViewCallMom(c)}
-                    className="w-full text-left text-[9.5px] text-rose-800 hover:text-rose-600 font-bold flex items-center justify-between pt-1.5 border-t border-rose-50 cursor-pointer group"
-                  >
-                    <span className="flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
-                      View AI MoM & SOP Checklist
-                    </span>
-                    <ChevronDown className="w-3.5 h-3.5 text-rose-400 group-hover:translate-x-0.5 transition-transform" />
-                  </button>
+                  {isCallNotConnected(c) ? (
+                    <p className="text-[9.5px] text-slate-400 font-semibold pt-1.5 border-t border-rose-50">
+                      Not connected — no recording or AI summary
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setActiveViewCallMom(c)}
+                      className="w-full text-left text-[9.5px] text-rose-800 hover:text-rose-600 font-bold flex items-center justify-between pt-1.5 border-t border-rose-50 cursor-pointer group"
+                    >
+                      <span className="flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
+                        View AI MoM & SOP Checklist
+                      </span>
+                      <ChevronDown className="w-3.5 h-3.5 text-rose-400 group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+                  )}
                 </div>
               );
             })}

@@ -18,6 +18,8 @@ import { TimeOfDaySelects } from "../components/TimeOfDaySelects.jsx";
 import { LOCAL_SOPS, LEAD_STATUS_LABELS, EMP_KANBAN_STAGES, getEmpStageMeta, mapEmpLeadKanbanStage, resolveLeadForCall } from "../../data/employeeMock.js";
 import { temperatureToApi, workflowStatusFromTemperature, apiLeadToEmployee, unwrapApiList } from "../../lib/leadSync.js";
 import { formatCallDisplayDate, formatCallDurationLabel } from "../../lib/callDisplay.js";
+import { callStatusMeta, isOutboundCall, normalizeCallOutcome } from "../../lib/callMetrics.js";
+import { formatIndianPhone } from "../../lib/indianFormat.js";
 
 import SaveContactModal from "../../components/SaveContactModal.jsx";
 
@@ -177,7 +179,8 @@ const getCheckedQuestionsForCall = (call, sops) => {
   }
 
   // If call was missed or rejected or not connected -> no questions completed!
-  const isMissed = call.type === "miss" || (call.outcome || "").toLowerCase().includes("missed") || (call.outcome || "").toLowerCase().includes("not answered");
+  // (shared call definition: only answered calls can have a checklist - no outcome-text guessing)
+  const isMissed = !callStatusMeta(call).connected;
   if (isMissed || call.durationSec === 0) {
     return {};
   }
@@ -342,11 +345,11 @@ export default function EmployeeCallDetail() {
       }
 
       const isNotConnected =
-        call.type === "miss" ||
+        !callStatusMeta(call).connected ||
         call.duration === "—" ||
         call.duration === "0:00" ||
         call.durationSec === 0 ||
-        /not connected|missed|rejected|unanswered|busy|failed|not picked/i.test(String(call.outcome || ""));
+        normalizeCallOutcome(call.outcome) === "failed";
 
       if (!generatedMoM) {
         const clientName = lead?.name || call.name || "Client";
@@ -893,7 +896,7 @@ export default function EmployeeCallDetail() {
             </div>
             
             <p className="text-xs text-slate-500 font-medium leading-none">
-              {lead?.company || call.company} · {lead?.phone || call.phone || "+91 99999 99999"}
+              {lead?.company || call.company} · {formatIndianPhone(lead?.phone || call.phone)}
             </p>
             
             <div className="flex items-center gap-3 text-[11px] text-slate-400 pt-0.5 flex-wrap">
@@ -910,7 +913,7 @@ export default function EmployeeCallDetail() {
               ) : null}
               <span>•</span>
               <span className="flex items-center gap-1 font-semibold">
-                <Volume2 className="w-3.5 h-3.5 text-rose-500" /> {call.type === "out" ? "Outbound Call" : "Inbound Call"}
+                <Volume2 className="w-3.5 h-3.5 text-rose-500" /> {isOutboundCall(call) ? "Outgoing" : "Incoming"} · {callStatusMeta(call).label}
               </span>
             </div>
 
@@ -1270,8 +1273,8 @@ Lead Notes & Comments
               ) : (
                 leadCalls.map((c) => {
                   const isActive = String(c.id) === String(call.id);
-                  const isIncoming = c.type === "in";
-                  const isMissed = c.type === "miss";
+                  const cStatus = callStatusMeta(c);
+                  const cDirection = isOutboundCall(c) ? "Outgoing" : "Incoming";
                   return (
                     <button
                       key={c.id}
@@ -1289,10 +1292,11 @@ Lead Notes & Comments
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* status colours: connected = green, not connected / missed = amber, rejected = red */}
                           <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
-                            isIncoming ? "bg-emerald-50 text-emerald-700" : isMissed ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
+                            cStatus.tone === "success" ? "bg-emerald-50 text-emerald-700" : cStatus.tone === "danger" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"
                           }`}>
-                            {isIncoming ? "Inbound" : isMissed ? "Missed" : "Outbound"}
+                            {cDirection} · {cStatus.label}
                           </span>
                           <span className="text-[10px] text-slate-400 font-semibold">{c.date}</span>
                           {isActive && (

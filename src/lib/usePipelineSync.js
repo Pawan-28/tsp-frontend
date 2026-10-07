@@ -75,7 +75,14 @@ function statsFromCalls(calls = []) {
     conversations5MinPlus: m.conversations,
     notPickupByClient: m.notPickupByClient,
     missedCalls: m.missed,
+    rejectedCalls: m.rejected,
+    shortCalls: m.shortCalls,
+    incomingShortCalls: m.incomingShort,
     connectedCalls: m.connected,
+    notConnectedCalls: m.notConnected,
+    outgoingCalls: m.summary.outbound,
+    connectedOutbound: m.summary.connectedOutbound,
+    pickupRate: m.summary.pickupRate,
   };
 }
 

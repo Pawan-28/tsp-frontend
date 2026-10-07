@@ -142,7 +142,7 @@ export function useAdminPipelineData({
   );
 
   const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : "This Month";
-  const callSummary = `${periodLabel} · ${board.syncedShortCalls} short calls ${CALL_SHORT_LABEL} · ${board.syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${board.syncedNotPickupCalls} client no pickup`;
+  const callSummary = `${periodLabel} · ${board.syncedShortCalls} short calls ${CALL_SHORT_LABEL} · ${board.syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${board.syncedNotPickupCalls} not pick`;
 
   const tempTotals = useMemo(() => {
     const totals = { Hot: 0, Warm: 0, Cold: 0 };

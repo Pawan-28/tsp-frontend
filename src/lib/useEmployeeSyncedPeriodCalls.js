@@ -3,6 +3,7 @@ import { apiGet } from "./api.js";
 import { getCrmHeaders } from "./crmContext.js";
 import { callFromApiLite } from "./callFromApiLite.js";
 import { unwrapApiList } from "./leadSync.js";
+import { periodQueryString } from "./periodSelection.js";
 
 const SYNC_COOLDOWN_MS = 90_000;
 const CACHE_TTL_MS = 60_000;
@@ -22,9 +23,13 @@ function isCallCacheFresh(key) {
 /**
  * Period calls with Callyzer sync — same flow as Employee Call Reporting page.
  * Period switches use cached / DB reads first; full sync is throttled.
+ * `period` is "today" | "week" | "month" or an exact range "custom:YYYY-MM-DD:YYYY-MM-DD" (Yesterday / Custom),
+ * which is requested from the API as period=custom&startDate&endDate.
  */
 export function useEmployeeSyncedPeriodCalls(employeeId, period = "month", leads = [], enabled = true) {
   const rawRef = useRef([]);
+  // Which cache key rawRef belongs to: raw rows of one period must never be re-cached under another period's key.
+  const rawKeyRef = useRef("");
   const leadsRef = useRef(leads);
   leadsRef.current = leads;
   const reqIdRef = useRef(0);
@@ -39,6 +44,7 @@ export function useEmployeeSyncedPeriodCalls(employeeId, period = "month", leads
       ? rawItems.map((c) => callFromApiLite(c, leadsRef.current))
       : [];
     rawRef.current = rawItems || [];
+    rawKeyRef.current = key || "";
     if (key) {
       sharedCache.set(key, mapped);
       callCacheMeta.set(key, { ts: Date.now(), synced });
@@ -68,7 +74,7 @@ export function useEmployeeSyncedPeriodCalls(employeeId, period = "month", leads
     const reqId = ++reqIdRef.current;
     try {
       const res = await apiGet(
-        `/api/v1/employee/${employeeId}/calls?period=${encodeURIComponent(period)}&sync=${sync ? 1 : 0}&limit=5000`,
+        `/api/v1/employee/${employeeId}/calls?${periodQueryString(period)}&sync=${sync ? 1 : 0}&limit=5000`,
         {
           headers: getCrmHeaders("employee"),
           skipCache: sync,
@@ -158,12 +164,14 @@ export function useEmployeeSyncedPeriodCalls(employeeId, period = "month", leads
 
   useEffect(() => {
     const key = `${employeeId}:${period}`;
-    if (rawRef.current.length) {
+    if (rawRef.current.length && rawKeyRef.current === key) {
       applyMapped(rawRef.current, key);
       return;
     }
     const cached = sharedCache.get(key);
+    // No data for this period yet (e.g. just switched to another range): show nothing rather than the previous period's calls.
     if (cached?.length) setCalls(cached);
+    else setCalls((prev) => (prev.length ? [] : prev));
   }, [leads, employeeId, period, applyMapped]);
 
   return {

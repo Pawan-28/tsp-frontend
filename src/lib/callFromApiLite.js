@@ -1,28 +1,12 @@
-import { CALL_CONVERSATION_MIN_SEC, isMissedCall, parseCallDurationSeconds, dedupePeriodCalls } from "./callMetrics.js";
+import { callTypeCode, inferApiCallDirection, isConnectedCall, parseCallDurationSeconds, dedupePeriodCalls } from "./callMetrics.js";
 import { buildLeadLookupIndex, resolveLeadForCall, resolveLeadForCallFromIndex } from "./leadKanban.js";
 import { localDateKey } from "./periodFilter.js";
 import { formatCallDisplayDate, formatCallDuration } from "./callDisplay.js";
 
-/** Infer direction; client no-pick outcomes are always outbound dials. */
+/** Infer direction (shared rule in lib/callMetrics.js: an unanswered "Not Connected" dial is always outbound). */
 export function inferCallDirection(apiCall, durationSec = 0) {
-  const outcome = String(apiCall?.outcome || "").toLowerCase();
-  const callType = String(apiCall?.callType || apiCall?.call_type || "").toLowerCase();
-  const rawDirection = String(apiCall?.direction || "").toLowerCase();
   const sec = Number.isFinite(durationSec) ? durationSec : parseCallDurationSeconds(durationSec);
-
-  // Client did not answer — treat as outbound even if legacy rows say inbound.
-  if (
-    sec < CALL_CONVERSATION_MIN_SEC
-    && /not connected|not pick|rejected|no answer|busy|unanswered|not answered/.test(outcome)
-  ) {
-    return "outbound";
-  }
-  if (callType === "outgoing" || callType === "rejected") return "outbound";
-  if (callType === "incoming") return "inbound";
-  if (callType === "missed") return "inbound";
-  if (rawDirection === "inbound" || rawDirection === "in" || rawDirection === "incoming") return "inbound";
-  if (rawDirection === "outbound" || rawDirection === "out" || rawDirection === "outgoing") return "outbound";
-  return "outbound";
+  return inferApiCallDirection(apiCall, sec);
 }
 
 function resolveCallDay(apiCall) {
@@ -47,12 +31,11 @@ export function callFromApiLite(apiCall, leads = [], resolvedLead = null) {
     ? durationRaw
     : parseCallDurationSeconds(durationRaw);
   const direction = inferCallDirection(apiCall, durationSec);
-  const dir = direction === "inbound" ? "in" : "out";
-  const type = isMissedCall({ type: dir, direction, outcome: apiCall.outcome, durationSec })
-    ? "miss"
-    : dir;
+  // type: "miss" = missed INCOMING call, "in" = other incoming, "out" = outbound dial (see callTypeCode).
+  const type = callTypeCode({ direction, outcome: apiCall.outcome, durationSec });
   const callAt = apiCall.startedAt || apiCall.started_at || apiCall.createdAt || apiCall.created_at || null;
-  const connected = durationSec > 0;
+  // Connected = answered call (Conversation / Short / Incoming short); ring seconds on unanswered dials are not talk time.
+  const connected = isConnectedCall({ outcome: apiCall.outcome, durationSec });
   const phone = lead?.phone || apiCall.clientPhone || apiCall.client_phone || apiCall.phone || "";
 
   return {

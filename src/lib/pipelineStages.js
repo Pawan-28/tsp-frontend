@@ -24,11 +24,16 @@ export function getStageLabelById(stageId) {
   return getStageMetaById(stageId).label;
 }
 
-/** Map any legacy or canonical stage string to a pipeline stage id. */
+// Legacy workflow labels, compared AFTER normalising (lower-case, "_" and "-" -> space, spaces collapsed).
+const LEAD_LABELS = new Set(["not contacted", "uncontacted", "un contacted", "unqualified", "un qualified", "not qualified"]);
+const CONVERSATION_LABELS = new Set(["contacted", "qualified"]);
+const NOT_PICK_LABELS = new Set(["attempted"]);
+
+/** Map any legacy or canonical stage string to a pipeline stage id. (Keep in sync with backend/src/utils/pipelineStages.js.) */
 export function mapStageToId(stage, status = "") {
   const raw = String(stage || "").trim();
   const s = raw.toLowerCase();
-  const normalized = s.replace(/_/g, " ");
+  const normalized = s.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   const st = String(status || "").toLowerCase();
 
   if (s === "conversation_5") return "conversation_2min";
@@ -40,6 +45,13 @@ export function mapStageToId(stage, status = "") {
       || item.label.toLowerCase() === normalized,
   );
   if (direct) return direct.id;
+
+  // Exact (normalised) matches for the legacy workflow labels - NOT substring checks, so "Not Contacted" and
+  // "Un-Qualified" can never be mistaken for "Contacted" / "Qualified".
+  //   Contacted -> Conversation · Qualified -> Conversation · Attempted -> Not Pick · Not Contacted -> Lead
+  if (LEAD_LABELS.has(normalized)) return "lead";
+  if (CONVERSATION_LABELS.has(normalized)) return "conversation_2min";
+  if (NOT_PICK_LABELS.has(normalized)) return "not_pick";
 
   if (normalized.includes("not interested") || st === "ni" || st.includes("not interested")) {
     return "not_interested";
@@ -90,12 +102,11 @@ export function mapStageToId(stage, status = "") {
   if (normalized.includes("not pick") || st === "notpick" || st.includes("not pick")) {
     return "not_pick";
   }
-  if (s.includes("attempted") || st.includes("attempted")) return "not_pick";
+  if (st === "attempted") return "not_pick";
   if (s === "new" || s.includes("new lead") || st === "new" || st.includes("new lead")) {
     return "lead";
   }
   if (s === "lead") return "lead";
-  if (s.includes("not contacted")) return "lead";
   if (s.includes("stuck in pipeline")) {
     if (s.includes("booked")) return "meeting_booked";
     if (s.includes("done")) return "meeting_done";
@@ -107,10 +118,7 @@ export function mapStageToId(stage, status = "") {
   if (s === "closed_won") return "payment_complete";
   if (s === "negotiation") return "objection";
   if (s === "proposal") return "proposal_sent";
-  if (s === "qualified") return "meeting_booked";
-  // Same as backend utils/pipelineStages.js (source of truth): "Contacted" -> Conversation.
-  // ("Not Contacted" already returned "lead" above.)
-  if (s.includes("contacted")) return "conversation_2min";
+
 
   return DEFAULT_PIPELINE_STAGE_ID;
 }

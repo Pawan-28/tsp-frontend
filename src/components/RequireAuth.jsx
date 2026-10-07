@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext.jsx";
 import { getAuthToken, getStoredAuthUser, normalizeAuthUser } from "../lib/crmContext.js";
 import PageLoader from "./PageLoader.jsx";
@@ -31,6 +32,11 @@ export default function RequireAuth({ roles }) {
       return;
     }
     if (roles?.length && !roles.includes(user.role)) {
+      // Landing on "/" is the normal post-login hop for employees; any OTHER role-restricted URL
+      // (e.g. an employee opening /settings) gets an explanation instead of a silent redirect.
+      if (location.pathname !== "/") {
+        toast.error("You don't have access to that page", { id: "route-no-access" });
+      }
       navigate(user.role === "admin" ? "/" : "/employee", { replace: true });
     }
   }, [loading, storedUser, user, location.pathname, location.search, navigate, roles]);

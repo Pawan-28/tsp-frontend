@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet } from "./api.js";
+import { parseCustomPeriod } from "./periodFilter.js";
+import { periodQueryString } from "./periodSelection.js";
 
 export const CALLYZER_PERIOD_MAP = {
   Today: "today",
@@ -9,6 +11,20 @@ export const CALLYZER_PERIOD_MAP = {
   week: "week",
   month: "month",
 };
+
+/**
+ * Callyzer period key for a UI period: "Today" / "This Week" / "This Month" / today|week|month, or an exact
+ * custom range "custom:YYYY-MM-DD:YYYY-MM-DD" (also used for Yesterday), which is passed through as-is.
+ */
+export function resolveCallyzerPeriod(period) {
+  if (parseCustomPeriod(period)) return String(period);
+  return CALLYZER_PERIOD_MAP[period] || "today";
+}
+
+/** Query string for the employee stats endpoint: period=today|week|month or period=custom&startDate&endDate. */
+function statsPeriodQuery(mapped) {
+  return periodQueryString(mapped);
+}
 
 /** How often the UI polls for fresh Callyzer stats while the tab is visible. */
 export const CALLYZER_POLL_INTERVAL_MS = 45_000;
@@ -37,7 +53,7 @@ function fetchCallyzerStats(employeeId, mapped, { force = false, sync = false } 
   const syncQuery = sync ? "sync=1" : "sync=0";
   const forceQuery = force && sync ? "&force=1" : "";
   const promise = apiGet(
-    `/api/v1/employee/${employeeId}/callyzer/stats?period=${mapped}&${syncQuery}${forceQuery}`,
+    `/api/v1/employee/${employeeId}/callyzer/stats?${statsPeriodQuery(mapped)}&${syncQuery}${forceQuery}`,
     { cacheTtl: sync ? 0 : CACHE_TTL, skipCache: sync || force },
   )
     .then((res) => {
@@ -59,7 +75,7 @@ function fetchCallyzerStats(employeeId, mapped, { force = false, sync = false } 
 
 export function invalidateCallyzerStatsCache(employeeId, period) {
   if (employeeId != null && period != null) {
-    const mapped = CALLYZER_PERIOD_MAP[period] || period || "today";
+    const mapped = resolveCallyzerPeriod(period);
     resultCache.delete(`callyzer_emp_${employeeId}_${mapped}_sync0`);
     resultCache.delete(`callyzer_emp_${employeeId}_${mapped}_sync1`);
     return;
@@ -69,8 +85,10 @@ export function invalidateCallyzerStatsCache(employeeId, period) {
 }
 
 export function useCallyzerStats(employeeId, period, enabled = true) {
-  const mapped = CALLYZER_PERIOD_MAP[period] || "today";
+  const mapped = resolveCallyzerPeriod(period);
   const statsCacheRef = useRef({});
+  const activeKeyRef = useRef(mapped);
+  activeKeyRef.current = mapped;
   const [stats, setStats] = useState(() => statsCacheRef.current[mapped] ?? null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -84,7 +102,8 @@ export function useCallyzerStats(employeeId, period, enabled = true) {
     setConfigured(Boolean(data?.configured));
     if (data?.stats) {
       statsCacheRef.current[mappedPeriod] = data.stats;
-      setStats(data.stats);
+      // A slow response for a period the user already switched away from must not overwrite the current one.
+      if (mappedPeriod === activeKeyRef.current) setStats(data.stats);
     }
     setMessage(data?.message || null);
     setLastUpdated(data?.syncedAt ? new Date(data.syncedAt) : new Date());
@@ -93,7 +112,7 @@ export function useCallyzerStats(employeeId, period, enabled = true) {
   const loadStats = useCallback(async ({ silent = false, force = false, sync = false } = {}) => {
     if (!enabled || !employeeId) return;
 
-    const periodKey = CALLYZER_PERIOD_MAP[period] || "today";
+    const periodKey = resolveCallyzerPeriod(period);
     const hasCached = Boolean(statsCacheRef.current[periodKey]);
 
     if (!silent && !hasCached) setLoading(true);
@@ -118,10 +137,9 @@ export function useCallyzerStats(employeeId, period, enabled = true) {
   useEffect(() => {
     if (!enabled || !employeeId) return undefined;
 
-    const periodKey = CALLYZER_PERIOD_MAP[period] || "today";
-    if (statsCacheRef.current[periodKey]) {
-      setStats(statsCacheRef.current[periodKey]);
-    }
+    const periodKey = resolveCallyzerPeriod(period);
+    // Never keep showing another period's numbers while this one loads.
+    setStats(statsCacheRef.current[periodKey] ?? null);
 
     loadStats({ silent: Boolean(statsCacheRef.current[periodKey]), force: false, sync: false });
 
@@ -170,7 +188,7 @@ export function useCallyzerStats(employeeId, period, enabled = true) {
   useEffect(() => {
     if (!enabled || !employeeId) return undefined;
     ["today", "week", "month"].forEach((p) => {
-      const active = CALLYZER_PERIOD_MAP[period] || "today";
+      const active = resolveCallyzerPeriod(period);
       if (p === active || statsCacheRef.current[p]) return;
       fetchCallyzerStats(employeeId, p, { sync: false })
         .then((data) => {

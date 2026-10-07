@@ -12,7 +12,7 @@ import { useEmployee } from "../../context/EmployeeContext.jsx";
 
 const TABS = [
   { id: "sops", label: "All SOPs", short: "SOPs", icon: BookOpen },
-  { id: "scripts", label: "Call Scripts", short: "Scripts", icon: MessageSquare },
+  { id: "scripts", label: "SOP Call Scripts", short: "Scripts", icon: MessageSquare },
   { id: "cross", label: "Cross Selling", short: "Cross", icon: Target },
   { id: "checklist", label: "Daily Checklist", short: "List", icon: CheckCircle2 },
 ];
@@ -165,10 +165,10 @@ export default function EmployeeSalesProcess() {
   return (
     <div className="space-y-3 sm:space-y-5 page-shell min-w-0 animate-fade-in">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
-        <StatCard compact label="Total SOPs" value={String(stats.sops)} icon={BookOpen} tone="primary" change="from admin" sub="" />
-        <StatCard compact label="Call Scripts" value={String(stats.scripts)} icon={MessageSquare} tone="info" change="read-only" sub="" />
-        <StatCard compact label="Categories" value={String(stats.categories)} icon={Layers} tone="success" change="segments" sub="" />
-        <StatCard compact label="Cross-Sell" value={String(stats.cross)} icon={Target} tone="warning" change="guides" sub="" />
+        <StatCard compact label="Published SOPs" value={String(stats.sops)} icon={BookOpen} tone="primary" change={stats.sops > 0 ? "managed by admin" : "none published yet"} changeTone="muted" sub="" title="Playbooks your admin has published. Drafts are only visible to admins." />
+        <StatCard compact label="SOP Call Scripts" value={String(stats.scripts)} icon={MessageSquare} tone="info" change="from SOPs · view only" changeTone="muted" sub="" title="Opening scripts and overviews taken from the published SOPs (view only). Your own WhatsApp templates are under WhatsApp Scripts." />
+        <StatCard compact label="Categories" value={String(stats.categories)} icon={Layers} tone="success" change={stats.categories > 0 ? "SOP segments" : "none yet"} changeTone="muted" sub="" />
+        <StatCard compact label="Cross-Sell" value={String(stats.cross)} icon={Target} tone="warning" change="guides" changeTone="muted" sub="" />
       </div>
 
       <GlassCard className="p-2.5 sm:p-4">
@@ -207,7 +207,7 @@ export default function EmployeeSalesProcess() {
             </div>
             {tab === "sops" && (
               <p className="text-[10px] text-slate-500 lg:ml-auto shrink-0">
-                SOPs are managed by admin · view only
+                SOPs are managed by admin · view only (only published playbooks are shown)
               </p>
             )}
           </div>
@@ -245,9 +245,13 @@ export default function EmployeeSalesProcess() {
         <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-1 xl:grid-cols-2 sm:gap-3">
           {filteredSops.length === 0 ? (
             <GlassCard className="xl:col-span-2 py-10 text-center px-4">
-              <p className="text-sm font-bold text-slate-600">No SOPs available yet</p>
+              <p className="text-sm font-bold text-slate-600">
+                {sops.length === 0 ? "No published playbooks yet" : "No playbooks match your filters"}
+              </p>
               <p className="text-xs text-slate-500 mt-2 max-w-sm mx-auto leading-relaxed">
-                SOPs are created and updated in the admin panel. Draft, review, and active SOPs appear here automatically (archived SOPs are hidden).
+                {sops.length === 0
+                  ? "Playbooks (SOPs) are created and published by your admin. Only published ones appear here — drafts stay hidden until they are ready."
+                  : "Try a different search, category or service."}
               </p>
             </GlassCard>
           ) : (
@@ -262,8 +266,8 @@ export default function EmployeeSalesProcess() {
         <div className="flex flex-col gap-1.5 sm:grid sm:grid-cols-2 sm:gap-3">
           {filteredScripts.length === 0 ? (
             <GlassCard className="sm:col-span-2 py-10 text-center px-4">
-              <p className="text-sm font-bold text-slate-600">No scripts yet</p>
-              <p className="text-xs text-slate-500 mt-2">Scripts come from admin SOPs — add opening scripts in admin SOP Management.</p>
+              <p className="text-sm font-bold text-slate-600">No SOP call scripts yet</p>
+              <p className="text-xs text-slate-500 mt-2">These come from published admin SOPs (view only). For your own WhatsApp message templates, open WhatsApp Scripts.</p>
             </GlassCard>
           ) : (
             filteredScripts.map((script) => (

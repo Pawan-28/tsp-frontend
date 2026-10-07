@@ -1,26 +1,30 @@
 import { useEffect, useMemo, useRef, useState, useDeferredValue, memo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff, Video } from "lucide-react";
+import { Search, Plus, Kanban, Flame, TrendingUp, ThumbsDown, Wallet, Phone, Eye, EyeOff, Video, AlertTriangle, CheckCircle2, Pencil } from "lucide-react";
 import toast from "react-hot-toast";
 import { GlassCard, Badge, StatCard } from "../../components/Primitives.jsx";
 import AddLeadDrawer from "../../components/AddLeadDrawer.jsx";
 import { formatTelUrl } from "../../lib/phoneUtils.js";
+import { formatIndianPhone } from "../../lib/indianFormat.js";
+import { StatValueSkeleton } from "../../components/Skeleton.jsx";
+import { buildOverdueMeetingByLead } from "../../lib/meetingStatus.js";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import {
   EMP_KANBAN_STAGES,
   LEAD_STATUS_LABELS,
   formatEmpPipelineValue,
-  getEmpPipelineSummary,
   getEmpStageMeta,
   getEmpAppToday,
 } from "../../data/employeeMock.js";
 import { leadHasOutboundCalls, resolveLeadKanbanColumn, getPipelineStagePillCount, isAdminPanelAssignedLead, isLeadAssignedInPeriod } from "../../lib/leadKanban.js";
 import { buildLeadActivityLabelMap } from "../../lib/callDisplay.js";
-import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL } from "../../lib/callMetrics.js";
-import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount } from "../../lib/usePipelineBoard.js";
-import { usePipelineSync } from "../../lib/usePipelineSync.js";
+import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL, formatCallsAndLeads } from "../../lib/callMetrics.js";
+import { MEETING_METRIC_INFO } from "../../lib/metricInfo.js";
+import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount, KANBAN_SHOW_MORE_STEP } from "../../lib/usePipelineBoard.js";
+import { usePipelineSync, boardPeriodQuery } from "../../lib/usePipelineSync.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
-import { filterLeadsByActivityPeriod, encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../../lib/periodFilter.js";
+import { parseCustomPeriod, localDateKey } from "../../lib/periodFilter.js";
+import { resolvePeriodSelection } from "../../lib/periodSelection.js";
 import useIsMobile from "../../lib/useIsMobile.js";
 import EmployeeLeadDrawer from "../components/EmployeeLeadDrawer.jsx";
 import MeetingBookedWhatsAppModal from "../components/MeetingBookedWhatsAppModal.jsx";
@@ -176,7 +180,7 @@ function PipelineBookMeetingModal({
 
 const LeadCard = memo(function LeadCard({
   lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage,
-  dialCount = 0,
+  dialCount = 0, overdueMeeting = null, onMarkHeld, onReschedule,
 }) {
   const canDrag = isDraggablePipelineLead(lead);
   const stop = (fn) => (e) => {
@@ -192,6 +196,8 @@ const LeadCard = memo(function LeadCard({
   const rawName = String(lead.name || "").trim();
   const hasValidName = rawName && !/^unknown$/i.test(rawName) && rawName !== "Lead";
   const displayName = hasValidName ? rawName : formattedPhone;
+  // Phone under the name (shared Indian phone formatter) — skipped when the name already IS the number.
+  const phoneLine = hasValidName && rawPhone ? formatIndianPhone(rawPhone) : "";
 
   const displayService = resolveLeadServiceName(lead) || "—";
 
@@ -232,6 +238,11 @@ const LeadCard = memo(function LeadCard({
             <p className="text-xs font-black text-slate-900 truncate group-hover:text-rose-800 transition tabular-nums" title={displayName}>
               {displayName}
             </p>
+            {phoneLine ? (
+              <p className="text-[10px] text-slate-500 truncate mt-0.5 tabular-nums" title={rawPhone}>
+                {phoneLine}
+              </p>
+            ) : null}
             <p className="text-[10px] text-slate-500 truncate mt-0.5" title={displayService}>
               {displayService}
             </p>
@@ -253,6 +264,30 @@ const LeadCard = memo(function LeadCard({
             ) : null}
           </div>
         </div>
+
+        {overdueMeeting && (
+          <div className="mb-2 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5">
+            <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wide text-amber-800" title="The meeting time has passed and it is still marked as booked">
+              <AlertTriangle className="w-3 h-3" /> Overdue
+            </span>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <button
+                type="button"
+                onClick={stop(() => onMarkHeld?.(overdueMeeting, lead))}
+                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-2 py-1 transition"
+              >
+                <CheckCircle2 className="w-3 h-3" /> Mark held
+              </button>
+              <button
+                type="button"
+                onClick={stop(() => onReschedule?.(overdueMeeting, lead))}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white hover:bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-1 transition"
+              >
+                <Pencil className="w-3 h-3" /> Reschedule
+              </button>
+            </div>
+          </div>
+        )}
 
         {canDrag && onMoveStage && (
           <div className="block sm:hidden mb-2">
@@ -305,6 +340,8 @@ export default function EmployeeLeads() {
     updateLeadStage,
     updateLeadTemperature,
     createMeeting,
+    rescheduleMeeting,
+    completeMeeting,
     refreshLeads,
     employee,
     selectedService,
@@ -326,27 +363,52 @@ export default function EmployeeLeads() {
   const dropDepthRef = useRef(0);
   // Today | Week | Month | Custom — Custom is carried as "custom:FROM:TO" so the
   // board API (usePipelineSync) and all period helpers get the exact range.
-  const rawPeriod = String(searchParams.get("period") || "month").toLowerCase();
-  const customFrom = searchParams.get("from") || "";
-  const customTo = searchParams.get("to") || "";
-  // "Yesterday" has no backend preset: it is sent as a one-day custom range (yesterday → yesterday).
-  const yesterdayKey = localDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
-  const period = rawPeriod === "yesterday" && yesterdayKey
-    ? encodeCustomPeriod(yesterdayKey, yesterdayKey)
-    : rawPeriod === "custom"
-      ? (parseCustomPeriod(encodeCustomPeriod(customFrom, customTo)) ? encodeCustomPeriod(customFrom, customTo) : "month")
-      : (["today", "week", "month"].includes(rawPeriod) ? rawPeriod : "month");
+  // Same resolver as the Dashboard and Call Reporting (lib/periodSelection.js): "yesterday" has no backend preset,
+  // it is sent as a one-day custom range (yesterday → yesterday); invalid / incomplete custom falls back to Month.
+  const periodSelection = resolvePeriodSelection(searchParams, { defaultPeriod: "month" });
+  const rawPeriod = periodSelection.key;
+  const period = periodSelection.period;
   const customRange = parseCustomPeriod(period);
   const deferredPeriod = useDeferredValue(period);
   const isBoardStale = deferredPeriod !== period;
-  const periodLabel = period === "today"
-    ? "Today"
-    : period === "week"
-      ? "This Week"
-      : rawPeriod === "yesterday" ? "Yesterday"
-      : customRange ? `${customRange.startDate} → ${customRange.endDate}` : "This Month";
+  const periodLabel = periodSelection.label;
+  // Lower-cased for use inside sentences ("created this week") — a date range keeps its capital month names.
+  const periodLabelLower = rawPeriod === "custom" ? periodLabel : periodLabel.toLowerCase();
   const [groupRev, setGroupRev] = useState(0);
+  // Per column: how many EXTRA cards were revealed beyond the initial cap (see KANBAN_SHOW_MORE_STEP).
   const [expandedColumns, setExpandedColumns] = useState({});
+
+  // Summary tiles come from the SAME backend lead universe as the Dashboard tiles (leads CREATED in the period and
+  // assigned to this employee), so Total Leads / Hot / Pipeline Value always match the Dashboard. The board below
+  // shows leads WORKED in the period (calls, meetings, assignments), so its card count is a different number by design.
+  const [leadSummary, setLeadSummary] = useState(null);
+  const [leadSummaryStatus, setLeadSummaryStatus] = useState("loading"); // loading | ready | error
+  useEffect(() => {
+    if (!employee?.id) return undefined;
+    let cancelled = false;
+    setLeadSummaryStatus("loading");
+    const qs = new URLSearchParams(boardPeriodQuery(deferredPeriod));
+    if (selectedService && selectedService !== "All Services") qs.set("service", selectedService);
+    apiGet(`/api/v1/employee/${employee.id}/lead-summary?${qs.toString()}`, { headers: getCrmHeaders(), cacheTtl: 30_000 })
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.success === false) throw new Error(res.message || "lead summary failed");
+        setLeadSummary(res);
+        setLeadSummaryStatus("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLeadSummary(null);
+        setLeadSummaryStatus("error");
+      });
+    return () => { cancelled = true; };
+  }, [employee?.id, deferredPeriod, selectedService]);
+  const tileValue = (value, format = String) => {
+    if (leadSummaryStatus === "loading") return <StatValueSkeleton />;
+    if (leadSummaryStatus === "error" || !leadSummary) return "—";
+    return format(value ?? 0);
+  };
+  const createdLabel = `created ${periodLabelLower}`;
 
   // Pipeline drag/drop → Meeting Booked interception: dropping a lead onto the
   // Meeting Booked column opens this Book Meeting modal instead of moving the stage
@@ -595,6 +657,7 @@ export default function EmployeeLeads() {
     syncedConversationCalls,
     syncedShortCalls,
     syncedNotPickupCalls,
+    callMetrics,
     periodMeetings,
     moveLeadLocally,
   } = usePipelineBoard({
@@ -617,13 +680,13 @@ export default function EmployeeLeads() {
     [grouped, periodCalls],
   );
 
-  const summaryLeads = useMemo(() => {
-    if (deferredPeriod === "all") return filtered;
-    const kanbanList = Object.values(grouped).flat();
-    return kanbanList.length > 0 ? kanbanList : filterLeadsByActivityPeriod(filtered, deferredPeriod);
-  }, [deferredPeriod, filtered, grouped]);
+  const cardsOnBoard = useMemo(
+    () => Object.values(grouped).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0),
+    [grouped],
+  );
 
-  const summary = useMemo(() => getEmpPipelineSummary(summaryLeads), [summaryLeads]);
+  // Meeting Booked cards whose meeting time has passed (and never got completed/cancelled): flagged Overdue.
+  const overdueMeetingByLead = useMemo(() => buildOverdueMeetingByLead(allMeetings), [allMeetings]);
 
   const scrollToStage = (stageId) => {
     setActiveStage(stageId);
@@ -785,6 +848,50 @@ export default function EmployeeLeads() {
     closeModal();
   };
 
+  // ── Overdue meeting quick actions (Meeting Booked cards) — never automatic, always the employee's call ──
+  const [meetingReschedule, setMeetingReschedule] = useState({ open: false, meeting: null, lead: null, date: "", time: "14:00", saving: false });
+
+  const handleMarkMeetingHeld = async (meeting, lead) => {
+    if (!meeting?.id || !completeMeeting) return;
+    const done = await completeMeeting(meeting.id);
+    if (!done) return;
+    await refreshLeads?.();
+    refreshBoardFromDb?.();
+    toast.success(`Meeting with ${lead?.name || "lead"} marked as held`, { id: `meeting-held-${meeting.id}` });
+  };
+
+  const openMeetingReschedule = (meeting, lead) => {
+    setMeetingReschedule({ open: true, meeting, lead, date: getEmpAppToday(), time: "14:00", saving: false });
+  };
+
+  const closeMeetingReschedule = () => {
+    setMeetingReschedule({ open: false, meeting: null, lead: null, date: "", time: "14:00", saving: false });
+  };
+
+  const submitMeetingReschedule = async () => {
+    const { meeting, date, time } = meetingReschedule;
+    if (!meeting?.id) return;
+    if (!date || !time) {
+      toast.error("Pick a date and time");
+      return;
+    }
+    if (new Date(`${date}T${time}:00`).getTime() < Date.now()) {
+      toast.error("Pick a date and time in the future");
+      return;
+    }
+    setMeetingReschedule((m) => ({ ...m, saving: true }));
+    try {
+      const updated = await rescheduleMeeting?.(meeting.id, { scheduledAt: `${date}T${time}:00` });
+      if (!updated) return;
+      await refreshLeads?.();
+      refreshBoardFromDb?.();
+      closeMeetingReschedule();
+      toast.success("Meeting rescheduled");
+    } finally {
+      setMeetingReschedule((m) => ({ ...m, saving: false }));
+    }
+  };
+
   const showToast = (message, type = "success") => {
     if (type === "error") toast.error(message);
     else toast.success(message);
@@ -815,27 +922,27 @@ export default function EmployeeLeads() {
             <div className="min-w-0 col-span-1">
             <StatCard
               label="Pipeline Value"
-              value={formatEmpPipelineValue(summary.value)}
+              value={tileValue(leadSummary?.pipelineValue, formatEmpPipelineValue)}
               icon={TrendingUp}
               iconBg="bg-emerald-50"
               iconColor="text-emerald-600"
-              change={periodLabel}
-              sub=""
+              change="Open leads"
+              sub={createdLabel}
             />
             </div>
             <div className="min-w-0 col-span-1">
             <StatCard
               label="Total Leads"
-              value={String(summary.total)}
+              value={tileValue(leadSummary?.total)}
               icon={Kanban}
               iconBg="bg-rose-50"
               iconColor="text-rose-600"
-              change={`${summary.active} active`}
-              sub=""
+              change={leadSummaryStatus === "loading" ? "Loading" : leadSummaryStatus === "error" ? "Unavailable" : `${leadSummary?.openLeads ?? 0} open`}
+              sub={createdLabel}
               corner={
-                summary.hot > 0 ? (
+                leadSummary?.hot > 0 ? (
                   <span className="sm:hidden inline-flex items-center gap-0.5 text-[9px] font-black text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full shadow-sm">
-                    🔥 {summary.hot}
+                    🔥 {leadSummary.hot}
                   </span>
                 ) : null
               }
@@ -844,23 +951,23 @@ export default function EmployeeLeads() {
             <div className="min-w-0 hidden sm:block col-span-1">
             <StatCard
               label="Hot Leads"
-              value={String(summary.hot)}
+              value={tileValue(leadSummary?.hot)}
               icon={Flame}
               iconBg="bg-red-50"
               iconColor="text-red-600"
-              change={summary.hot ? "High intent" : "None"}
-              sub=""
+              change={leadSummary?.hot ? "High intent" : "None"}
+              sub={createdLabel}
             />
             </div>
             <div className="min-w-0 col-span-1">
             <StatCard
               label="Not Interested"
-              value={String(summary.notInterested)}
+              value={tileValue(leadSummary?.notInterested)}
               icon={ThumbsDown}
               iconBg="bg-slate-50"
               iconColor="text-slate-500"
               change="Closed lost"
-              sub=""
+              sub={createdLabel}
             />
             </div>
             <div className="min-w-0 col-span-1">
@@ -870,7 +977,7 @@ export default function EmployeeLeads() {
               icon={Wallet}
               iconBg="bg-green-50"
               iconColor="text-green-600"
-              change={period === "today" ? "Today" : period === "week" ? "This week" : rawPeriod === "yesterday" ? "Yesterday" : customRange ? "Custom range" : "This month"}
+              change={period === "today" ? "Today" : period === "week" ? "This week" : rawPeriod === "yesterday" ? "Yesterday" : customRange ? periodLabel : "This month"}
               sub=""
             />
             </div>
@@ -898,7 +1005,8 @@ export default function EmployeeLeads() {
           </button>
         </div>
 
-        <div className={`${SEGMENT_WRAP} w-full -mx-0.5`}>
+        {/* Wraps onto extra rows instead of running off the right edge (the old row scrolled with the scrollbar hidden). */}
+        <div className="flex flex-wrap items-center gap-1.5 w-full">
           {EMP_KANBAN_STAGES.map((stage) => {
             const columnLeads = grouped[stage.id] || [];
             const count = getStagePillCount(stage.id, columnLeads);
@@ -907,13 +1015,13 @@ export default function EmployeeLeads() {
             if (stage.id === "conversation_2min") {
               callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads with 2 min+`;
             } else if (stage.id === "short_call") {
-              callHint = `${syncedShortCalls} connected calls ${CALL_SHORT_LABEL} · ${columnLeads.length} leads in Short Call`;
+              callHint = `${syncedShortCalls} short calls (answered outgoing ${CALL_SHORT_LABEL}) · ${columnLeads.length} leads in Short Call`;
             } else if (stage.id === "not_pick") {
-              callHint = `${syncedNotPickupCalls} client no pickup · ${columnLeads.length} leads in Not Pick`;
+              callHint = `${syncedNotPickupCalls} not pick (outgoing, not answered; rejected excluded) · ${columnLeads.length} leads in Not Pick`;
             } else if (stage.id === "meeting_booked") {
-              callHint = `${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} scheduled`;
+              callHint = `Booked: ${columnLeads.length} leads in this stage (cards). ${MEETING_METRIC_INFO.bookedCards} Separate number: ${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} meetings still scheduled in this period.`;
             } else if (stage.id === "meeting_done") {
-              callHint = `${periodMeetings.filter((m) => m.status === "completed").length} completed`;
+              callHint = `Held: ${periodMeetings.filter((m) => m.status === "completed").length} meetings marked completed in this period. Separate number: ${columnLeads.length} leads in the Meeting Done stage (cards).`;
             }
             return (
               <button
@@ -932,8 +1040,11 @@ export default function EmployeeLeads() {
             );
           })}
         </div>
-        <p className="text-[10px] text-slate-400 px-0.5">
-          {periodLabel} · Callyzer synced · {syncedShortCalls} short calls {CALL_SHORT_LABEL} ({grouped.short_call?.length || 0} leads) · {syncedConversationCalls} calls {CALL_CONVERSATION_LABEL} ({grouped.conversation_2min?.length || 0} leads) · {syncedNotPickupCalls} client no pickup ({grouped.not_pick?.length || 0} leads) · {periodMeetings.length} meetings
+        <p
+          className="text-[10px] text-slate-400 px-0.5"
+          title={`Calls and distinct leads are counted from this period's calls (one lead can have several calls). Total = Conversation (${CALL_CONVERSATION_LABEL}, answered, any direction) + Short call (answered outgoing ${CALL_SHORT_LABEL}) + Incoming short (answered incoming ${CALL_SHORT_LABEL}) + Not pick (outgoing, not answered) + Rejected (never inside Not pick) + Missed incoming (incoming, not answered). Connected = Conversation + Short + Incoming short. Column card counts are stage-based, so they can be higher: a lead keeps its stage after an earlier call.`}
+        >
+          {periodLabel} · Callyzer synced · {callMetrics.totalCalls} calls = {syncedConversationCalls} conversations {CALL_CONVERSATION_LABEL} ({formatCallsAndLeads(syncedConversationCalls, callMetrics.conversationLeads)}) + {syncedShortCalls} short {CALL_SHORT_LABEL} ({formatCallsAndLeads(syncedShortCalls, callMetrics.shortCallLeads)}) + {callMetrics.incomingShort} incoming short {CALL_SHORT_LABEL} ({formatCallsAndLeads(callMetrics.incomingShort, callMetrics.incomingShortLeads)}) + {syncedNotPickupCalls} not pick ({formatCallsAndLeads(syncedNotPickupCalls, callMetrics.notPickupLeads)}) + {callMetrics.rejected} rejected ({formatCallsAndLeads(callMetrics.rejected, callMetrics.rejectedLeads)}) + {callMetrics.missed} missed incoming ({formatCallsAndLeads(callMetrics.missed, callMetrics.missedLeads)}) · <span title={MEETING_METRIC_INFO.scheduledInPeriod}>{periodMeetings.length} meetings scheduled in period</span>
           {(boardSyncing) ? " · syncing in background…" : ""}
         </p>
       </GlassCard>
@@ -952,7 +1063,7 @@ export default function EmployeeLeads() {
         <div className="sm:hidden space-y-4">
           {EMP_KANBAN_STAGES.map((stage) => {
             const columnLeads = grouped[stage.id] || [];
-            const columnExpanded = Boolean(expandedColumns[stage.id]);
+            const columnExpanded = expandedColumns[stage.id] || 0;
             const visibleLeads = visibleKanbanColumnLeads(columnLeads, columnExpanded);
             const hiddenCount = hiddenKanbanColumnCount(columnLeads, columnExpanded);
             const isDropTarget = dropStageId === stage.id;
@@ -1027,15 +1138,18 @@ export default function EmployeeLeads() {
                         onMoveStage={moveLeadToStage}
                         dialCount={dialCounts[String(lead.id)] || 0}
                         onSetTemperature={handleCardTemperature}
+                        overdueMeeting={stage.id === "meeting_booked" ? (overdueMeetingByLead.get(String(lead.id)) || null) : null}
+                        onMarkHeld={handleMarkMeetingHeld}
+                        onReschedule={openMeetingReschedule}
                       />
                     ))}
                     {hiddenCount > 0 && (
                       <button
                         type="button"
-                        onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: true }))}
+                        onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: (prev[stage.id] || 0) + KANBAN_SHOW_MORE_STEP }))}
                         className="shrink-0 w-[min(72vw,200px)] rounded-xl border border-dashed border-rose-200 bg-white/80 px-3 py-2 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 transition"
                       >
-                        Show {hiddenCount} more
+                        Show {Math.min(hiddenCount, KANBAN_SHOW_MORE_STEP)} more{hiddenCount > KANBAN_SHOW_MORE_STEP ? ` (${hiddenCount} hidden)` : ""}
                       </button>
                     )}
                     </>
@@ -1051,7 +1165,7 @@ export default function EmployeeLeads() {
           <div className="flex items-start gap-3 min-w-max">
             {EMP_KANBAN_STAGES.map((stage) => {
               const columnLeads = grouped[stage.id] || [];
-              const columnExpanded = Boolean(expandedColumns[stage.id]);
+              const columnExpanded = expandedColumns[stage.id] || 0;
               const visibleLeads = visibleKanbanColumnLeads(columnLeads, columnExpanded);
               const hiddenCount = hiddenKanbanColumnCount(columnLeads, columnExpanded);
               const isDropTarget = dropStageId === stage.id;
@@ -1125,15 +1239,18 @@ export default function EmployeeLeads() {
                           currentStage={stage.id}
                           dialCount={dialCounts[String(lead.id)] || 0}
                           onSetTemperature={handleCardTemperature}
+                          overdueMeeting={stage.id === "meeting_booked" ? (overdueMeetingByLead.get(String(lead.id)) || null) : null}
+                          onMarkHeld={handleMarkMeetingHeld}
+                          onReschedule={openMeetingReschedule}
                         />
                       ))}
                       {hiddenCount > 0 && (
                         <button
                           type="button"
-                          onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: true }))}
+                          onClick={() => setExpandedColumns((prev) => ({ ...prev, [stage.id]: (prev[stage.id] || 0) + KANBAN_SHOW_MORE_STEP }))}
                           className="w-full rounded-xl border border-dashed border-rose-200 bg-white/80 px-3 py-2 text-[11px] font-semibold text-rose-700 hover:bg-rose-50 transition"
                         >
-                          Show {hiddenCount} more
+                          Show {Math.min(hiddenCount, KANBAN_SHOW_MORE_STEP)} more{hiddenCount > KANBAN_SHOW_MORE_STEP ? ` (${hiddenCount} hidden)` : ""}
                         </button>
                       )}
                       </>
@@ -1144,6 +1261,9 @@ export default function EmployeeLeads() {
             })}
           </div>
         </div>
+        <p className="text-[10px] text-slate-400 mt-2.5 px-0.5">
+          {cardsOnBoard} card{cardsOnBoard === 1 ? "" : "s"} on board · the board shows leads worked in {periodLabelLower} (calls, meetings, assignments, stage changes), so it can differ from the summary tiles, which count leads {createdLabel}.
+        </p>
         </>
         )}
       </GlassCard>
@@ -1171,6 +1291,36 @@ export default function EmployeeLeads() {
         onSubmit={handleBookingSubmit}
         onClose={closeBookingModal}
       />
+
+      <EmpModal
+        open={meetingReschedule.open}
+        onClose={() => { if (!meetingReschedule.saving) closeMeetingReschedule(); }}
+        title="Reschedule Meeting"
+        subtitle={meetingReschedule.lead?.name || meetingReschedule.meeting?.title || ""}
+        footer={(
+          <>
+            <BtnSecondary onClick={closeMeetingReschedule} disabled={meetingReschedule.saving}>Cancel</BtnSecondary>
+            <BtnPrimary onClick={submitMeetingReschedule} disabled={meetingReschedule.saving}>
+              {meetingReschedule.saving ? "Saving…" : "Save changes"}
+            </BtnPrimary>
+          </>
+        )}
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <FormGroup>
+            <FormLabel>Date</FormLabel>
+            <FormInput
+              type="date"
+              value={meetingReschedule.date}
+              onChange={(e) => setMeetingReschedule((m) => ({ ...m, date: e.target.value }))}
+            />
+          </FormGroup>
+          <FormGroup>
+            <FormLabel>Time</FormLabel>
+            <TimeOfDaySelects value={meetingReschedule.time} onChange={(time) => setMeetingReschedule((m) => ({ ...m, time }))} />
+          </FormGroup>
+        </div>
+      </EmpModal>
 
       <MeetingBookedWhatsAppModal
         open={Boolean(bookedPrompt.meeting)}

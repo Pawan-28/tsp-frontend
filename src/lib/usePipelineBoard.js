@@ -204,6 +204,7 @@ export function usePipelineBoard({
     ? (callMetrics.notPickupByClient || 0)
     : ((Number.isFinite(statsNotPick) && statsNotPick > 0) ? statsNotPick : (callMetrics.notPickupByClient || 0));
   const syncedShortCalls = hasCalls ? (callMetrics.shortCalls || 0) : 0;
+  const syncedIncomingShortCalls = hasCalls ? (callMetrics.incomingShort || 0) : 0;
   const syncedConversationLeads = grouped.conversation_2min?.length ?? callMetrics.conversationLeads ?? 0;
   const syncedShortCallLeads = grouped.short_call?.length ?? callMetrics.shortCallLeads ?? 0;
   const syncedNotPickupLeads = grouped.not_pick?.length ?? callMetrics.notPickupLeads ?? 0;
@@ -223,6 +224,7 @@ export function usePipelineBoard({
     syncedConversationCalls,
     syncedConversationLeads,
     syncedShortCalls,
+    syncedIncomingShortCalls,
     syncedShortCallLeads,
     syncedNotPickupCalls,
     syncedNotPickupLeads,

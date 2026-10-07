@@ -1,5 +1,5 @@
 /** LRMS v7 employee panel mock data — mirrors lrms-v7.html */
-import { CALL_CONVERSATION_MIN_SEC, isConversationCall, isMissedCall as isMissedCallMetric, phonesMatchLoose as phonesMatchLooseMetric, parseCallDurationSeconds } from "../lib/callMetrics.js";
+import { CALL_CONVERSATION_MIN_SEC, callTypeCode, inferApiCallDirection, isConversationCall, isMissedCall as isMissedCallMetric, phonesMatchLoose as phonesMatchLooseMetric, parseCallDurationSeconds, summarizeCalls, isConnectedCall } from "../lib/callMetrics.js";
 import { mapStageToId, normalizeStageLabel, isPaymentCompleteStageId, PIPELINE_STAGE_DEFINITIONS } from "../lib/pipelineStages.js";
 import {
   resolveLeadKanbanColumn,
@@ -232,38 +232,54 @@ export function filterCallsForPeriod(calls, period) {
   return list.filter((c) => isCallInPeriod(c, period));
 }
 
+/**
+ * Call Reporting stats for a period. Counts come from summarizeCalls (lib/callMetrics.js) - ONE definition:
+ *   dials (= total calls) = connected + notConnected;  connected = conversations + short + incomingShort;
+ *   notConnected = noPickup (Not pick) + missedIncoming + rejected.
+ * pickupRate = answered outbound / outbound dials. avgDuration / totalTalk use CONNECTED calls only.
+ * `missed` is kept as an alias of `notConnected` for older callers; `missRate` is the share of NOT CONNECTED
+ * calls (Not pick + Rejected + Missed incoming) in all calls.
+ */
 export function computeCallStatsFromCalls(calls, period = "today") {
   const list = filterCallsForPeriod(calls, period);
-  const dials = list.length;
-  const connected = list.filter((c) => {
-    const sec = Number.isFinite(c.durationSec) ? c.durationSec : parseCallDurationSeconds(c.duration);
-    return sec > 0 && !isMissedCallMetric(c);
-  }).length;
-  const missed = list.filter((c) => isMissedCallMetric(c)).length;
-  const pickupRate = dials ? Math.min(100, Math.round((connected / dials) * 100)) : 0;
-  const missRate = dials ? Math.min(100, Math.round((missed / dials) * 100)) : 0;
-  const durations = list
-    .map((c) => (Number.isFinite(c.durationSec) ? c.durationSec : parseCallDurationSeconds(c.duration)))
-    .filter((s) => s > 0);
-  const avgSecs = durations.length
-    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-    : 0;
-  const avgDuration = avgSecs ? formatDurationFromSeconds(avgSecs) : "—";
-  const totalSecs = durations.reduce((a, b) => a + b, 0);
+  const s = summarizeCalls(list);
+  const dials = s.total;
+  const pickupRate = s.pickupRate;
+  const missRate = dials ? Math.min(100, Math.round((s.notConnected / dials) * 100)) : 0;
+  const avgDuration = s.avgTalkSec ? formatDurationFromSeconds(s.avgTalkSec) : "—";
+  const totalSecs = s.talkSec;
   const totalTalk = totalSecs
     ? `${Math.floor(totalSecs / 3600)}h ${Math.floor((totalSecs % 3600) / 60)}m`.replace(/^0h /, "")
     : "—";
   const hotLeads = list.filter((c) => /hot|qualified|interested|demo|proposal/i.test(String(c.outcome || ""))).length;
   const callbacks = list.filter((c) => /callback|follow/i.test(String(c.outcome || ""))).length;
-  const conversations = list.filter((c) => {
-    const sec = Number.isFinite(c.durationSec) ? c.durationSec : parseCallDurationSeconds(c.duration);
-    return isConversationCall(sec);
-  }).length;
+  const conversations = s.conversation;
   const ratings = list.map((c) => c.rating).filter((r) => r > 0);
   const quality = ratings.length
     ? Math.min(100, Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 20))
     : (dials ? Math.min(100, Math.round((conversations / dials) * 100)) : 0);
-  return { dials, connected, missed, callbacks, pickupRate, quality, missRate, avgDuration, hotLeads, totalTalk, conversations };
+  return {
+    dials,
+    connected: s.connected,
+    notConnected: s.notConnected,
+    missed: s.notConnected,
+    short: s.short,
+    incomingShort: s.incomingShort,
+    noPickup: s.noPickup,
+    missedIncoming: s.missedIncoming,
+    rejected: s.rejected,
+    outboundDials: s.outbound,
+    connectedOutbound: s.connectedOutbound,
+    leads: s.leads,
+    callbacks,
+    pickupRate,
+    quality,
+    missRate,
+    avgDuration,
+    hotLeads,
+    totalTalk,
+    conversations,
+  };
 }
 
 const DASHBOARD_ACTIVITY_EMOJI = {
@@ -1080,9 +1096,7 @@ export function phonesMatchLoose(a, b) {
 }
 
 export function resolveEmployeeCallType(call = {}) {
-  if (isMissedCall(call)) return "miss";
-  if (call.type === "in" || call.direction === "inbound") return "in";
-  return "out";
+  return callTypeCode(call);
 }
 
 export function formatDurationFromSeconds(totalSecs) {
@@ -1184,35 +1198,21 @@ export function callFromApi(apiCall, leads = []) {
   const durationSec = Number.isFinite(durationRaw)
     ? durationRaw
     : parseCallDurationSeconds(durationRaw ?? apiCall.duration);
-  const directionRaw = String(apiCall.direction || "").toLowerCase();
-  const outcomeLower = String(apiCall.outcome || "").toLowerCase();
-  // Client no-pick is always an outbound dial (fix legacy inbound mis-tags).
-  const direction = (
-    durationSec < CALL_CONVERSATION_MIN_SEC
-    && /not connected|not pick|rejected|no answer|busy|unanswered|not answered/.test(outcomeLower)
-  )
-    ? "outbound"
-    : (directionRaw === "inbound" || directionRaw === "in" || directionRaw === "incoming"
-      ? "inbound"
-      : "outbound");
-  const dir = direction === "inbound" ? "in" : "out";
-  const type = isMissedCall({
-    type: dir,
-    direction,
-    outcome: apiCall.outcome,
-    durationSec,
-  })
-    ? "miss"
-    : dir;
+  // Shared rule (lib/callMetrics.js): an unanswered "Not Connected" dial is always outbound (legacy inbound mis-tags).
+  const direction = inferApiCallDirection(apiCall, durationSec);
+  // type: "miss" = missed INCOMING call, "in" = other incoming, "out" = outbound dial.
+  const type = callTypeCode({ direction, outcome: apiCall.outcome, durationSec });
 
   return {
     id: apiCall.id,
     leadId: apiCall.leadId ?? apiCall.lead_id ?? lead?.id ?? null,
     name: lead?.name || lead?.leadName || apiCall.clientName || apiCall.client_name || "Unknown Lead",
     company: lead?.company || lead?.companyName || apiCall.clientCompany || apiCall.client_company || "—",
-    duration: formatDurationFromSeconds(durationSec),
+    // Talk time is shown for CONNECTED calls only (ring seconds on unanswered dials are not talk time).
+    duration: isConnectedCall({ outcome: apiCall.outcome, durationSec }) ? formatDurationFromSeconds(durationSec) : "—",
     durationSec,
     direction,
+    type,
     date: dateLabel,
     callAt: created || (createdDate ? createdDate.toISOString() : null),
     callDay,
@@ -1948,10 +1948,10 @@ function sopFromApiRow(api) {
   });
 }
 
-/** Employees see all admin SOPs except archived (read-only). */
+/** Employees only see published (Active/Published) admin SOPs (read-only) — Draft, Review and Archived stay admin-only. */
 function isEmployeeVisibleSop(api) {
-  const status = String(api?.status || "Active").toLowerCase();
-  return status !== "archived";
+  const status = String(api?.status || "Active").trim().toLowerCase();
+  return status === "active" || status === "published";
 }
 
 export const EMP_SOP_CACHE_KEY = "crm_employee_sops_v1";

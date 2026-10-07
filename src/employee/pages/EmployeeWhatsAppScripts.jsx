@@ -86,6 +86,9 @@ export default function EmployeeWhatsAppScripts() {
     return ["all", ...Array.from(set)];
   }, [scripts]);
 
+  const activeCount = useMemo(() => scripts.filter((s) => s.isActive !== false).length, [scripts]);
+  const categoryCount = Math.max(categories.length - 1, 0);
+
   const filtered = useMemo(() => {
     let list = scripts;
     if (category !== "all") list = list.filter((s) => s.category === category);
@@ -173,9 +176,39 @@ export default function EmployeeWhatsAppScripts() {
   return (
     <div className="space-y-3 sm:space-y-5 page-shell min-w-0 animate-fade-in">
       <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
-        <StatCard compact label="Total Scripts" value={String(scripts.length)} icon={MessageCircle} tone="success" change="your templates" sub="" />
-        <StatCard compact label="Categories" value={String(Math.max(categories.length - 1, 0))} icon={MessageCircle} tone="info" change="organized" sub="" />
-        <StatCard compact label="Use in Follow-ups" value="WhatsApp" icon={MessageCircle} tone="primary" change="pick & send" sub="" />
+        <StatCard
+          compact
+          label="Total Scripts"
+          value={String(scripts.length)}
+          icon={MessageCircle}
+          tone="success"
+          change={scripts.length > 0 ? "your templates" : "none created yet"}
+          changeTone="muted"
+          sub=""
+          title="WhatsApp message templates you have created (active and inactive)."
+        />
+        <StatCard
+          compact
+          label="Categories"
+          value={String(categoryCount)}
+          icon={MessageCircle}
+          tone="info"
+          change={categoryCount > 0 ? "in use" : "none yet"}
+          changeTone="muted"
+          sub=""
+          title="Distinct categories across your templates."
+        />
+        <StatCard
+          compact
+          label="Active Templates"
+          value={String(activeCount)}
+          icon={MessageCircle}
+          tone="primary"
+          change={activeCount > 0 ? "ready for Follow-ups" : "none ready"}
+          changeTone={activeCount > 0 ? "success" : "muted"}
+          sub=""
+          title="Templates you can pick from the WhatsApp button on a Follow-up card."
+        />
       </div>
 
       <GlassCard className="p-3 sm:p-4 space-y-3">
@@ -216,13 +249,24 @@ export default function EmployeeWhatsAppScripts() {
         ) : filtered.length === 0 ? (
           <div className="text-center py-8 space-y-3">
             <EmpEmptyState
-              title="No WhatsApp scripts yet"
-              subtitle="Create message templates to quickly share on WhatsApp from Follow-ups."
+              title={scripts.length === 0 ? "No WhatsApp scripts yet" : "No scripts match your filter"}
+              subtitle={
+                scripts.length === 0
+                  ? "Create message templates to quickly share on WhatsApp from Follow-ups. The WhatsApp button on a Follow-up card lets you pick one of your templates."
+                  : "Try a different search or category."
+              }
             />
-            <BtnPrimary type="button" onClick={openCreate} className="mx-auto bg-emerald-600 hover:bg-emerald-700">
-              <Plus className="w-4 h-4" />
-              Create first script
-            </BtnPrimary>
+            {scripts.length === 0 && (
+              <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                Tip: write one message and use placeholders — {"{name}"} becomes the lead&apos;s name, {"{company}"} their company and {"{repName}"} your name when you send.
+              </p>
+            )}
+            {scripts.length === 0 && (
+              <BtnPrimary type="button" onClick={openCreate} className="mx-auto bg-emerald-600 hover:bg-emerald-700">
+                <Plus className="w-4 h-4" />
+                Create first script
+              </BtnPrimary>
+            )}
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">

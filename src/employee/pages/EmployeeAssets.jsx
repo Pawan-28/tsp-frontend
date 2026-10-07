@@ -96,7 +96,7 @@ function AddAssetDrawer({ open, form, setForm, onClose, onSubmit, saving = false
   return (
     <Drawer open={open} onClose={onClose} title="Add Asset" width="drawer-panel">
       <p className="text-xs text-slate-500 mb-4 pb-3 border-b border-slate-100">
-        Upload a file or text note — visible to all employees
+        Upload a file or text note — it will be visible to all employees
       </p>
 
       <div className={`${SEGMENT_WRAP} mb-5 w-full`}>
@@ -412,10 +412,10 @@ export default function EmployeeAssets() {
   return (
     <div className="space-y-3 sm:space-y-5 page-shell min-w-0 animate-fade-in">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
-        <StatCard compact label="Total Assets" value={String(stats.total)} icon={FolderOpen} tone="primary" change="available" sub="" />
-        <StatCard compact label="PDF Files" value={String(stats.pdfs)} icon={FileText} tone="success" change="documents" sub="" />
-        <StatCard compact label="Templates" value={String(stats.templates)} icon={Layers} tone="info" change="proposals & more" sub="" />
-        <StatCard compact label="Recently Added" value={String(stats.recent)} icon={Presentation} tone="success" change="this week" sub="" />
+        <StatCard compact label="Total Assets" value={String(stats.total)} icon={FolderOpen} tone="primary" change={stats.total > 0 ? "shared with the team" : "none uploaded yet"} changeTone="muted" sub="" />
+        <StatCard compact label="PDF Files" value={String(stats.pdfs)} icon={FileText} tone="success" change={stats.pdfs > 0 ? "documents" : "no PDFs yet"} changeTone="muted" sub="" />
+        <StatCard compact label="Templates" value={String(stats.templates)} icon={Layers} tone="info" change={stats.templates > 0 ? "templates & proposals" : "none yet"} changeTone="muted" sub="" />
+        <StatCard compact label="Recently Added" value={String(stats.recent)} icon={Presentation} tone="success" change={stats.recent > 0 ? "today or yesterday" : "nothing new"} changeTone={stats.recent > 0 ? "success" : "muted"} sub="" title="Assets added today or yesterday." />
       </div>
 
       <GlassCard className="p-3 sm:p-4">
@@ -459,12 +459,23 @@ export default function EmployeeAssets() {
           <p className="text-sm text-slate-400">Loading team assets…</p>
         </GlassCard>
       ) : items.length === 0 ? (
-        <GlassCard>
+        <GlassCard className="pb-5">
           <EmpEmptyState
             icon=""
-            title="No assets found"
-            subtitle={search ? "Try a different search or category" : "Upload an asset to share with everyone"}
+            title={assets.length === 0 ? "No team assets yet" : "No assets found"}
+            subtitle={
+              assets.length === 0
+                ? "Any team member, including you, can add brochures, price lists or notes with Add Asset. Everything added is visible to all employees."
+                : "Try a different search or category"
+            }
           />
+          {assets.length === 0 && (
+            <div className="flex justify-center">
+              <BtnPrimary onClick={() => setDrawerOpen(true)}>
+                <Plus className="w-4 h-4" /> Add the first asset
+              </BtnPrimary>
+            </div>
+          )}
         </GlassCard>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">

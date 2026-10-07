@@ -9,6 +9,7 @@ import { GlassCard, StatCard, Badge, Drawer } from "../../components/Primitives.
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import { EMP_SOP_CHECKLIST, getEmpAppToday, isTaskAssignedToEmployee, formatTaskDeadlineTime, findEmpTeamMember } from "../../data/employeeMock.js";
 import { shouldPersistToApi } from "../../lib/api.js";
+import { computeTaskCounts } from "../../lib/followUpCounts.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import {
   EmpEmptyState, BtnPrimary, BtnSecondary, AvatarCircle,
@@ -316,21 +317,11 @@ export default function EmployeeTasks() {
     deadline: "17:00",
   }), [employee?.name]);
 
-  const allTasks = useMemo(() =>
-    Object.entries(tasks || {}).flatMap(([date, items]) =>
-      (Array.isArray(items) ? items : [])
-        .filter((t) => isTaskAssignedToEmployee(t, employee?.name))
-        .map((t) => ({ ...t, date }))
-    ),
-  [tasks, employee?.name]);
-
-  const stats = useMemo(() => {
-    const pending = allTasks.filter((t) => !t.done).length;
-    const doneToday = allTasks.filter((t) => t.done && t.date === getEmpAppToday()).length;
-    const highPriority = allTasks.filter((t) => !t.done && t.priority === "high").length;
-    const upcomingDays = new Set(allTasks.filter((t) => !t.done && new Date(`${t.date}T00:00:00`) >= today).map((t) => t.date)).size;
-    return { pending, doneToday, highPriority, upcomingDays };
-  }, [allTasks, today]);
+  // Same task counts the Dashboard reads (lib/followUpCounts.js).
+  const stats = useMemo(
+    () => computeTaskCounts({ tasks, employeeName: employee?.name }),
+    [tasks, employee?.name],
+  );
 
   const grouped = useMemo(() => {
     let entries = Object.entries(tasks || {})
@@ -430,10 +421,50 @@ export default function EmployeeTasks() {
   return (
     <div className="space-y-3 sm:space-y-5 page-shell min-w-0 animate-fade-in">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
-        <StatCard compact label="Pending" value={String(stats.pending)} icon={ListTodo} tone="primary" change={`${stats.highPriority} high priority`} sub="" />
-        <StatCard compact label="Done Today" value={String(stats.doneToday)} icon={CheckCircle2} tone="success" change="on track" sub="" />
-        <StatCard compact label="High Priority" value={String(stats.highPriority)} icon={AlertCircle} tone="warning" change="needs attention" sub="" />
-        <StatCard compact label="Active Days" value={String(stats.upcomingDays)} icon={CalendarDays} tone="info" change="upcoming" sub="" />
+        <StatCard
+          compact
+          label="Pending"
+          value={String(stats.pending)}
+          icon={ListTodo}
+          tone="primary"
+          change={stats.overdue > 0 ? `${stats.overdue} overdue` : stats.dueToday > 0 ? `${stats.dueToday} due today` : "No tasks due"}
+          changeTone={stats.overdue > 0 ? "danger" : stats.dueToday > 0 ? "warning" : "muted"}
+          sub=""
+          title="All open tasks assigned to you, on any date. Overdue = open tasks dated before today."
+        />
+        <StatCard
+          compact
+          label="Done Today"
+          value={String(stats.doneToday)}
+          icon={CheckCircle2}
+          tone="success"
+          change={stats.doneToday > 0 ? "completed today" : "none completed yet"}
+          changeTone={stats.doneToday > 0 ? "success" : "muted"}
+          sub=""
+          title="Tasks you marked complete that are dated today."
+        />
+        <StatCard
+          compact
+          label="High Priority"
+          value={String(stats.highPriority)}
+          icon={AlertCircle}
+          tone="warning"
+          change={stats.highPriority > 0 ? "needs attention" : "none high priority"}
+          changeTone={stats.highPriority > 0 ? "warning" : "muted"}
+          sub=""
+          title="Open tasks marked High priority."
+        />
+        <StatCard
+          compact
+          label="Days with Tasks"
+          value={String(stats.daysWithTasks)}
+          icon={CalendarDays}
+          tone="info"
+          change={stats.daysWithTasks > 0 ? "today onward" : "nothing scheduled"}
+          changeTone="muted"
+          sub=""
+          title="Number of days from today onward that still have at least one open task."
+        />
       </div>
 
       <GlassCard className="p-2.5 sm:p-4">
@@ -609,12 +640,18 @@ export default function EmployeeTasks() {
         <GlassCard className="py-4">
           <EmpEmptyState
             icon=""
-            title={search ? "No tasks match your search" : `No ${tab} tasks`}
-            subtitle={search ? "Try a different keyword" : "Create your first task to stay on track"}
+            title={search ? "No tasks match your search" : tab === "upcoming" ? "No upcoming tasks" : "No past tasks"}
+            subtitle={
+              search
+                ? "Try a different keyword"
+                : tab === "upcoming"
+                  ? "Add a task for yourself — scheduled follow-ups also appear here on their date"
+                  : "Tasks dated before today show up here"
+            }
           />
           {!search && (
             <div className="flex justify-center pb-6">
-              <BtnPrimary onClick={() => setDrawerOpen(true)}><Plus className="w-4 h-4" /> Add Task</BtnPrimary>
+              <BtnPrimary onClick={() => setDrawerOpen(true)}><Plus className="w-4 h-4" /> {tab === "upcoming" ? "Create your first task" : "Add Task"}</BtnPrimary>
             </div>
           )}
         </GlassCard>

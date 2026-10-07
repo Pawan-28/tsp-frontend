@@ -1608,6 +1608,23 @@ export function EmployeeProvider({ children }) {
     }
   }, [leads, usingApi]);
 
+  // "Mark held" — PATCH the meeting to completed (never automatic), then re-read meetings so Upcoming/History/Pipeline agree.
+  const completeMeeting = useCallback(async (meetingId) => {
+    if (!meetingId || !shouldPersistToApi(usingApi)) return null;
+    try {
+      const res = await apiPatch(`/api/v1/employee/meetings/${meetingId}`, { status: "completed" }, {
+        headers: getCrmHeaders(),
+      });
+      const saved = unwrapApiData(res) || res?.data || res;
+      invalidateCache("/api/v1");
+      await refreshMeetings();
+      return saved || true;
+    } catch (err) {
+      toast.error(err.message || "Could not mark meeting as held");
+      return null;
+    }
+  }, [usingApi, refreshMeetings]);
+
   const reloadWorkspace = useCallback(async () => {
     const authId = getAuthenticatedEmployeeId();
     const profile = authId
@@ -1759,6 +1776,7 @@ export function EmployeeProvider({ children }) {
     createMeeting,
     cancelMeeting,
     rescheduleMeeting,
+    completeMeeting,
     refreshMeetings,
     loading,
     linkError,
@@ -1773,7 +1791,7 @@ export function EmployeeProvider({ children }) {
     syncTaskWithFollowUp, leads, addLead, updateLeadStage, updateLeadTemperature, editLeadDetails, updateEmployeeAvatar, refreshLeads, refreshCalls, syncCallyzerData,
     reassignLead, teamEmployees, refreshTeamEmployees,
     usingApi, calls, setCalls, addCallRecord, startCallyzerCall, activities, addActivityRecord, sops, refreshSops,
-    meetingsUpcoming, meetingsHistory, createMeeting, cancelMeeting, rescheduleMeeting, refreshMeetings, loading, linkError,
+    meetingsUpcoming, meetingsHistory, createMeeting, cancelMeeting, rescheduleMeeting, completeMeeting, refreshMeetings, loading, linkError,
     workspaceError, reloadWorkspace, selectedService,
   ]);
 

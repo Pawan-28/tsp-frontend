@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus, Users, Flame, CheckCircle2, ClipboardList, TrendingUp,
@@ -10,16 +10,20 @@ import { Badge, StatCard, GlassCard } from "../../components/Primitives.jsx";
 import PrivateContactsModal from "../components/PrivateContactsModal.jsx";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import {
-  buildPipelineChartFromLeads,
-  pipelineStageCountsKey,
-  buildSourceChartFromLeads,
   buildDashboardAgenda,
-  buildRecentActivityFeed,
-  getEmpPipelineSummary,
   getEmpAppToday,
   filterCallsForPeriod,
   LEAD_STATUS_LABELS,
+  EMP_KANBAN_STAGES,
 } from "../../data/employeeMock.js";
+import { isHotLead } from "../../data/pipelineMock.js";
+import {
+  groupEmpLeadsKanban,
+  countPipelineCallMetrics,
+  filterMeetingsForPeriod,
+  getPipelineStageDisplayCounts,
+  resolveLeadForCall,
+} from "../../lib/leadKanban.js";
 import { AvatarCircle } from "../components/EmpUI.jsx";
 import { EMP_PAGE } from "../../lib/employeeLayout.js";
 import useIsMobile from "../../lib/useIsMobile.js";
@@ -28,14 +32,84 @@ import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } f
 import CallyzerStatsPanel from "../../components/CallyzerStatsPanel.jsx";
 import { useCallyzerStats } from "../../lib/useCallyzerStats.js";
 import { useEmployeeSyncedPeriodCalls } from "../../lib/useEmployeeSyncedPeriodCalls.js";
-import { periodLabel } from "../../lib/periodQuery.js";
+import { periodWords, periodQueryString, resolvePeriodSelection, workingDaysForSelection } from "../../lib/periodSelection.js";
 import { CALL_CONVERSATION_LABEL, countConversationCalls } from "../../lib/callMetrics.js";
+import { apiGet } from "../../lib/api.js";
+import { getCrmHeaders } from "../../lib/crmContext.js";
+import { mapStageToId } from "../../lib/pipelineStages.js";
+import { formatActivityDate } from "../../lib/formatActivityDate.js";
+import { formatDialerPhone } from "../../lib/phoneUtils.js";
+import { sourceLabel } from "../../lib/sourceLabels.js";
+import { MEETING_METRIC_INFO } from "../../lib/metricInfo.js";
+import { computeFollowUpCounts, computeTaskCounts } from "../../lib/followUpCounts.js";
+import { StatValueSkeleton } from "../../components/Skeleton.jsx";
+import { isDateKeyInPeriod, localDateKey } from "../../lib/periodFilter.js";
+import { parseAppDateTime } from "../../lib/timezone.js";
 
-const PERIOD_TO_CALLYZER = {
-  today: "Today",
-  week: "This Week",
-  month: "This Month",
+// Period wording (today / yesterday / this week / this month / "1 Oct – 6 Oct") and the Mon–Fri working-day count
+// the daily call target is scaled by come from lib/periodSelection.js, shared with Call Reporting and the Pipeline.
+
+const ACTIVITY_EMOJI = {
+  call: "📞", email: "✉️", whatsapp: "💬", meeting: "📅", note: "📝", proposal: "📄",
 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isUnknownName = (name) => !name || /^unknown/i.test(String(name).trim());
+
+/** Lead tiles for the selected period (leads created in it) — same endpoint the Employee Pipeline summary uses. */
+function useEmployeeLeadSummary(employeeId, periodKey, service, leadCount) {
+  const key = employeeId ? `${employeeId}|${periodKey}|${service || ""}` : null;
+  const [state, setState] = useState({ key: null, data: null, error: false });
+
+  useEffect(() => {
+    if (!key) return undefined;
+    let cancelled = false;
+    // periodKey is "today" | "week" | "month" | "custom:FROM:TO" (Yesterday is a one-day custom range).
+    const qs = new URLSearchParams(periodQueryString(periodKey));
+    if (service) qs.set("service", service);
+    apiGet(`/api/v1/employee/${employeeId}/lead-summary?${qs.toString()}`, {
+      headers: getCrmHeaders("employee"),
+      cacheTtl: 15_000,
+    })
+      .then((res) => {
+        if (!cancelled) setState({ key, data: res?.data ?? res, error: false });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ key, data: null, error: true });
+      });
+    return () => { cancelled = true; };
+    // leadCount: refetch when the employee adds/receives a lead so the tiles don't lag the list.
+  }, [key, employeeId, periodKey, service, leadCount]);
+
+  // Never show another period's numbers while this one loads.
+  const ready = state.key === key;
+  return {
+    summary: ready ? state.data : null,
+    loading: Boolean(key) && (!ready || (!state.data && !state.error)),
+    error: ready && state.error,
+  };
+}
+
+const SOURCE_COLORS = ["#3b82f6", "#7c3aed", "#0ea5e9", "#10b981", "#f59e0b", "#f97316"];
+
+/** Lead-source split of the given leads: top 5 channels + "Other", labelled via sourceLabel. */
+function buildSourceChart(leads) {
+  if (!leads.length) return [];
+  const counts = new Map();
+  for (const lead of leads) {
+    const label = sourceLabel(lead.source) || "Other";
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted.slice(0, 5);
+  const rest = sorted.slice(5).reduce((s, [, n]) => s + n, 0);
+  if (rest) top.push(["Other", rest]);
+  return top.map(([label, count], i) => ({
+    label,
+    count,
+    pct: Math.round((count / leads.length) * 100),
+    color: SOURCE_COLORS[i % SOURCE_COLORS.length],
+  }));
+}
 
 const PIPE_FILTERS = [
   { id: "all", label: "All" },
@@ -86,18 +160,22 @@ export default function EmployeeDashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useIsMobile(640);
-  const periodKey = String(searchParams.get("period") || "today").toLowerCase();
-  const period = PERIOD_TO_CALLYZER[periodKey] || "Today";
+  // Today | Yesterday | Week | Month | Custom — same URL contract as the Pipeline (?period=&from=&to=).
+  // `periodKey` is the encoded period every helper understands: today | week | month | custom:FROM:TO.
+  const selection = useMemo(() => resolvePeriodSelection(searchParams, { defaultPeriod: "today" }), [searchParams]);
+  const periodKey = selection.period;
   const [pipeFilter, setPipeFilter] = useState("all");
   const [agendaDone, setAgendaDone] = useState({});
   const [privateModalOpen, setPrivateModalOpen] = useState(false);
 
   const { stats: callyzerStats, loading: callyzerLoading, syncing: callyzerSyncing, configured: callyzerConfigured, message: callyzerMessage, lastUpdated: callyzerLastUpdated, refresh: refreshCallyzerStats } =
-    useCallyzerStats(employee?.id, period, Boolean(employee?.id));
+    useCallyzerStats(employee?.id, periodKey, Boolean(employee?.id));
 
+  // Today / Week / Month are sliced from the month window; Yesterday / Custom can fall outside it, so they are
+  // fetched as the exact range (and sliced again below, which is a no-op for an exact fetch).
   const { calls: monthCallsFromApi } = useEmployeeSyncedPeriodCalls(
     employee?.id,
-    "month",
+    selection.needsExactFetch ? periodKey : "month",
     rawLeads,
     Boolean(employee?.id),
   );
@@ -109,34 +187,119 @@ export default function EmployeeDashboard() {
     () => [...(meetingsUpcoming || []), ...(meetingsHistory || [])],
     [meetingsUpcoming, meetingsHistory],
   );
-  const pipelineCountsKey = useMemo(
-    () => pipelineStageCountsKey(leads, periodCalls, { period: periodKey, meetings: allMeetings }, { callyzerStats }),
-    [leads, periodCalls, periodKey, allMeetings, callyzerStats],
+  const words = useMemo(() => periodWords(selection), [selection]);
+  const serviceFilter = selectedService && selectedService !== "All Services" ? selectedService : "";
+  const { summary: leadSummary, loading: leadSummaryLoading, error: leadSummaryError } = useEmployeeLeadSummary(
+    employee?.id,
+    periodKey,
+    serviceFilter,
+    rawLeads?.length || 0,
   );
-  const pipeline = useMemo(
-    () => buildPipelineChartFromLeads(
-      leads,
-      periodCalls,
-      { period: periodKey, meetings: allMeetings },
-      { callyzerStats },
-    ),
-    [pipelineCountsKey, leads, periodCalls, periodKey, allMeetings, callyzerStats],
+
+  // Pipeline bars: the same board grouping the Employee Pipeline uses, but ONLY cards active in the selected
+  // period. Manually staged leads stay on the board for every period (tagged `_outsidePeriod`); counting them
+  // made "Today" show last month's Meeting Booked / Not Interested totals while every call tile read 0.
+  const { pipeline, olderStagedCount } = useMemo(() => {
+    const grouped = groupEmpLeadsKanban(leads, periodCalls, {
+      period: periodKey,
+      meetings: allMeetings,
+      visibleLeads: leads,
+    });
+    let older = 0;
+    const inPeriod = {};
+    for (const [stageId, list] of Object.entries(grouped)) {
+      const arr = Array.isArray(list) ? list : [];
+      const kept = arr.filter((l) => !l?._outsidePeriod);
+      older += arr.length - kept.length;
+      inPeriod[stageId] = kept;
+    }
+    const counts = getPipelineStageDisplayCounts(inPeriod, {
+      callyzerStats,
+      callMetrics: countPipelineCallMetrics(periodCalls),
+      periodMeetings: filterMeetingsForPeriod(allMeetings, periodKey),
+    });
+    const max = Math.max(1, ...Object.values(counts));
+    return {
+      olderStagedCount: older,
+      pipeline: EMP_KANBAN_STAGES.map((s) => ({
+        id: s.id,
+        label: s.shortLabel || s.label,
+        fullLabel: s.label,
+        count: counts[s.id] || 0,
+        pct: Math.round(((counts[s.id] || 0) / max) * 100),
+        color: s.color,
+      })),
+    };
+  }, [leads, periodCalls, periodKey, allMeetings, callyzerStats]);
+
+  // Lead sources follow the period too: leads created in it (same basis as the Total Leads tile).
+  const periodLeads = useMemo(
+    () => leads.filter((l) => {
+      const raw = l.createdAt || l.created_at;
+      if (!raw) return false;
+      const at = parseAppDateTime(raw) || new Date(raw);
+      return !Number.isNaN(at.getTime()) && isDateKeyInPeriod(localDateKey(at), periodKey);
+    }),
+    [leads, periodKey],
   );
-  const sourceChart = useMemo(() => buildSourceChartFromLeads(leads), [leads]);
-  const summary = useMemo(() => getEmpPipelineSummary(leads), [leads]);
+  const sourceChart = useMemo(() => buildSourceChart(periodLeads), [periodLeads]);
   const agenda = useMemo(
     () => buildDashboardAgenda({ meetingsUpcoming, tasks, followUps }),
     [meetingsUpcoming, tasks, followUps],
   );
-  const activityFeed = useMemo(
-    () => buildRecentActivityFeed(activities, calls, 5),
-    [activities, calls],
-  );
 
-  const todayTasks = (tasks && tasks[getEmpAppToday()]) || [];
-  const tasksDue = todayTasks.filter((t) => t.status !== "done" && t.status !== "completed").length;
-  const tasksDone = todayTasks.filter((t) => t.status === "done" || t.status === "completed").length;
-  const hotFollowUps = (followUps || []).filter((f) => f && !f.done && (f.urgency === "overdue" || f.urgency === "today")).length;
+  // Recent Activity is a fixed "last 24 hours" window — it deliberately ignores the period filter.
+  const activityFeed = useMemo(() => {
+    const items = [];
+    const activityMap = activities && typeof activities === "object" && !Array.isArray(activities) ? activities : {};
+    for (const events of Object.values(activityMap)) {
+      if (!Array.isArray(events)) continue;
+      for (const e of events) items.push({ emoji: ACTIVITY_EMOJI[e.type] || "•", text: e.text, time: e.time, ms: Date.now() });
+    }
+    const nowMs = Date.now();
+    const recentCalls = [];
+    for (const c of Array.isArray(calls) ? calls : []) {
+      const at = parseAppDateTime(c.callAt || c.startedAt || c.createdAt);
+      const ms = at ? at.getTime() : NaN;
+      if (Number.isNaN(ms) || nowMs - ms > DAY_MS || ms > nowMs + 5 * 60 * 1000) continue;
+      recentCalls.push({ call: c, ms });
+    }
+    recentCalls.sort((a, b) => b.ms - a.ms);
+    for (const { call: c, ms } of recentCalls) {
+      const kind = c.type === "miss" ? "Missed call" : c.type === "in" ? "Inbound call" : "Outbound call";
+      // Calls to saved numbers can arrive without a name: join the lead, else show the formatted number.
+      let name = isUnknownName(c.name) ? "" : c.name;
+      if (!name) {
+        const lead = resolveLeadForCall(c, rawLeads || []);
+        const leadName = lead?.name || lead?.leadName;
+        name = isUnknownName(leadName) ? "" : leadName;
+      }
+      if (!name) name = formatDialerPhone(c.phone || c.clientPhone) || "Unknown number";
+      const dur = c.duration && c.duration !== "—" ? ` (${c.duration})` : "";
+      items.push({ emoji: "📞", text: `${kind}: ${name}${dur}`, time: formatActivityDate(new Date(ms)), ms });
+    }
+    return items.sort((a, b) => b.ms - a.ms).slice(0, 5);
+  }, [activities, calls, rawLeads]);
+
+  // Task + follow-up workload come from ONE shared helper (lib/followUpCounts.js), the same one the Follow-Up
+  // and My Tasks pages use, so the three pages can never describe different workloads.
+  const taskCounts = useMemo(
+    () => computeTaskCounts({ tasks, employeeName: employee?.name }),
+    [tasks, employee?.name],
+  );
+  const followUpCounts = useMemo(
+    () => computeFollowUpCounts({ followUps, leads: rawLeads, calls, employeeId: employee?.id }),
+    [followUps, rawLeads, calls, employee?.id],
+  );
+  const tasksDue = taskCounts.dueToday;
+  const tasksDone = taskCounts.doneToday;
+  // Follow-ups due (overdue + today) are real scheduled follow-ups; they are NOT the same set as the "Hot Leads"
+  // tile (hot leads created in the period), so the greeting shows them as two separate, honestly named chips.
+  const dueFollowUps = followUpCounts.actionable;
+  const periodMeetingCount = useMemo(
+    () => filterMeetingsForPeriod(allMeetings, periodKey).length,
+    [allMeetings, periodKey],
+  );
   const [customCallsTarget, setCustomCallsTarget] = useState(() => {
     try {
       const saved = window.localStorage.getItem("emp_calls_target");
@@ -145,14 +308,24 @@ export default function EmployeeDashboard() {
     return employee?.callsTarget || 60;
   });
 
-  const callsToday = callyzerStats?.totalCalls ?? filterCallsForPeriod(calls || [], "today").length;
-  const callsTarget = customCallsTarget || employee?.callsTarget || 60;
-  const callPct = callsTarget ? Math.min(100, Math.round((callsToday / callsTarget) * 100)) : 0;
-  const callRingDash = (callPct / 100) * (2 * Math.PI * 15.5);
+  // The call figure follows the selected period, so the target scales with it: daily target x Mon–Fri days.
+  const callsDone = callyzerStats?.totalCalls ?? filterCallsForPeriod(calls || [], periodKey).length;
+  const dailyCallsTarget = customCallsTarget || employee?.callsTarget || 60;
+  const workingDays = workingDaysForSelection(selection);
+  // A range with no Mon–Fri day in it (yesterday = Sunday, a Saturday/Sunday-only custom range) has no target:
+  // show "—" instead of dividing by zero.
+  const callsTarget = workingDays > 0 ? dailyCallsTarget * workingDays : null;
+  const callPct = callsTarget ? Math.round((callsDone / callsTarget) * 100) : null; // not capped: 470% is real
+  const callsTargetTip = callsTarget == null
+    ? `No working days (Mon–Fri) ${words.when}, so there is no call target for this range`
+    : selection.key === "today"
+      ? `Daily call target: ${dailyCallsTarget}`
+      : `${dailyCallsTarget} calls/day x ${workingDays} working ${workingDays === 1 ? "day" : "days"} (Mon–Fri) ${words.when} = ${callsTarget}`;
   const callRingCirc = 2 * Math.PI * 15.5;
+  const callRingDash = (Math.min(100, callPct ?? 0) / 100) * callRingCirc; // the ring itself stops at full
 
   const handleEditCallsTarget = () => {
-    const entered = window.prompt("Set your daily call target:", String(callsTarget));
+    const entered = window.prompt("Set your daily call target:", String(dailyCallsTarget));
     if (entered && !isNaN(Number(entered)) && Number(entered) > 0) {
       const newTarget = Math.round(Number(entered));
       setCustomCallsTarget(newTarget);
@@ -172,57 +345,87 @@ export default function EmployeeDashboard() {
     });
   }, [callyzerStats, calls, periodKey]);
 
-  const statCards = useMemo(() => [
-    {
-      label: "Total Leads",
-      value: String(summary.total),
-      change: summary.total ? `${summary.active} active` : "No leads yet",
-      icon: Users,
-      tone: "info",
-      link: "/employee/leads",
-    },
-    {
-      label: "Hot Leads",
-      value: String(summary.hot),
-      change: summary.hot ? "Needs attention" : "None right now",
-      icon: Flame,
-      tone: "warning",
-      filter: "hot",
-    },
-    {
-      label: "Converted",
-      value: String(summary.converted ?? leads.filter((l) => l.status === "converted").length),
-      change: summary.total ? `${summary.winRate}% rate` : "—",
-      icon: CheckCircle2,
-      tone: "success",
-      filter: "converted",
-    },
-    {
-      label: "Tasks Due",
-      value: String(tasksDue),
-      change: tasksDone ? `${tasksDone} done today` : "None completed",
-      icon: ClipboardList,
-      tone: "primary",
-      link: "/employee/tasks",
-    },
-    {
-      label: `Conversations (${CALL_CONVERSATION_LABEL})`,
-      value: String(conversations5MinPlus),
-      change: callyzerStats?.conversations5MinDuration
-        ? `${callyzerStats.conversations5MinDuration} talk time`
-        : `Connected calls ${CALL_CONVERSATION_LABEL}`,
-      icon: MessageCircle,
-      tone: "success",
-      link: "/employee/calls",
-    },
-  ], [summary, leads, tasksDue, tasksDone, conversations5MinPlus, callyzerStats]);
+  // Lead tiles: leads CREATED in the selected period (backend lead-summary). Footnote colours are semantic:
+  // green = good, amber = needs attention, slate = neutral / empty.
+  const statCards = useMemo(() => {
+    const s = leadSummary;
+    const basis = `leads ${words.created}`;
+    const pending = leadSummaryLoading;
+    const failed = leadSummaryError;
+    const num = (n) => (pending ? <StatValueSkeleton className="h-6 w-12" /> : failed || n == null ? "—" : String(n));
+    const unavailable = failed ? { change: "Couldn't load", changeTone: "muted" } : null;
+    const closedRate = s?.total ? Math.round((s.closed / s.total) * 100) : 0;
+    return [
+      {
+        label: "Total Leads",
+        value: num(s?.total),
+        change: unavailable?.change ?? (pending ? "Loading…" : s?.total ? `${s.openLeads} open` : "No leads in period"),
+        changeTone: unavailable?.changeTone ?? "muted",
+        sub: words.created,
+        icon: Users,
+        tone: "info",
+        link: "/employee/leads",
+        tip: `Total Leads: ${s?.definitions?.totalLeads || `all ${basis} to you`}. "Open" = not closed and not Not Interested.`,
+      },
+      {
+        label: "Hot Leads",
+        value: num(s?.hot),
+        change: unavailable?.change ?? (pending ? "Loading…" : s?.hot ? "Needs attention" : "None right now"),
+        changeTone: unavailable?.changeTone ?? (s?.hot ? "warning" : "muted"),
+        sub: words.created,
+        icon: Flame,
+        tone: "warning",
+        filter: "hot",
+        tip: `Hot Leads: ${basis} with temperature Hot. Click to list them.`,
+      },
+      {
+        label: "Converted",
+        value: num(s?.closed),
+        change: unavailable?.change ?? (pending ? "Loading…" : s?.total ? `${closedRate}% rate` : "—"),
+        changeTone: unavailable?.changeTone ?? (s?.closed ? "success" : "muted"),
+        sub: words.created,
+        icon: CheckCircle2,
+        tone: "success",
+        filter: "converted",
+        tip: `Converted: ${basis} that reached Payment Complete. Rate = converted / total leads ${words.created}.`,
+      },
+      {
+        label: "Tasks Due",
+        value: String(tasksDue),
+        change: tasksDone ? `${tasksDone} done today` : tasksDue ? "None done yet" : "No tasks due",
+        changeTone: tasksDone ? "success" : tasksDue ? "warning" : "muted",
+        sub: "today",
+        icon: ClipboardList,
+        tone: "primary",
+        link: "/employee/tasks",
+        tip: "Tasks Due: your tasks scheduled for today that are not done yet. Not affected by the period filter.",
+      },
+      {
+        label: `Conversations (${CALL_CONVERSATION_LABEL})`,
+        value: String(conversations5MinPlus),
+        change: callyzerStats?.conversations5MinDuration
+          ? `${callyzerStats.conversations5MinDuration} talk time`
+          : `Connected calls ${CALL_CONVERSATION_LABEL}`,
+        changeTone: "muted",
+        icon: MessageCircle,
+        tone: "success",
+        link: "/employee/calls",
+        tip: `Conversations: connected calls of ${CALL_CONVERSATION_LABEL} made ${words.when}.`,
+      },
+    ];
+  }, [leadSummary, leadSummaryLoading, leadSummaryError, words, tasksDue, tasksDone, conversations5MinPlus, callyzerStats]);
 
   const oddStatCount = statCards.length % 2 === 1;
 
+  // Tile click-through list: same basis as the tiles (leads created in the selected period).
   const filteredPipeLeads = useMemo(() => {
     if (pipeFilter === "all") return null;
-    return leads.filter((l) => l.status === pipeFilter);
-  }, [pipeFilter, leads]);
+    if (pipeFilter === "hot") return periodLeads.filter(isHotLead);
+    if (pipeFilter === "converted") {
+      return periodLeads.filter((l) => mapStageToId(l.pipelineStage || l.stage, l.status) === "payment_complete" || l.status === "converted");
+    }
+    return periodLeads.filter((l) => l.status === pipeFilter);
+  }, [pipeFilter, periodLeads]);
 
   const pendingAgenda = agenda.filter((a) => !agendaDone[a.id]).length;
   const pipelineTotal = pipeline.reduce((s, p) => s + p.count, 0);
@@ -240,6 +443,12 @@ export default function EmployeeDashboard() {
     day: "numeric",
     month: "short",
   });
+  // Header chip: "Today · Tuesday, 7 Oct" | "Yesterday · Monday, 6 Oct" | "1 Oct – 6 Oct 2026" (the range is the date).
+  const headerDate = selection.key === "yesterday" && selection.range
+    ? new Date(`${selection.range.startDate}T12:00:00Z`).toLocaleDateString("en-IN", {
+      weekday: isMobile ? "short" : "long", day: "numeric", month: "short", timeZone: "UTC",
+    })
+    : selection.key === "custom" ? "" : dateLabel;
 
 
   const pipeFilters = (
@@ -266,28 +475,33 @@ export default function EmployeeDashboard() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-              {periodLabel(periodKey)} · {dateLabel}
+              {selection.label}{headerDate ? ` · ${headerDate}` : ""}
             </p>
             <h1 className="font-display text-base sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">
               {formatGreeting(employee?.name || "Employee")}
             </h1>
             <div className="flex gap-1.5 mt-2 overflow-x-auto scrollbar-none">
               {[
-                { label: `${hotFollowUps} hot follow-ups`, to: "/employee/follow-ups" },
-                { label: `${meetingsUpcoming?.length || 0} meetings`, to: "/employee/meetings" },
-                { label: `${pendingAgenda} agenda`, to: null },
+                // Hot-lead chip uses the same summary as the Hot Leads tile, so the two can never disagree.
+                ...(leadSummary && !leadSummaryError
+                  ? [{ label: `${leadSummary.hot} hot leads`, to: "/employee/leads?filter=hot", tip: `Hot leads ${words.created} (same as the Hot Leads tile)` }]
+                  : []),
+                { label: `${dueFollowUps} follow-ups due`, to: "/employee/follow-ups", tip: "Open follow-ups that are overdue or due today" },
+                { label: `${periodMeetingCount} ${periodMeetingCount === 1 ? "meeting" : "meetings"} scheduled ${words.when}`, to: "/employee/meetings", tip: `Scheduled in period: ${MEETING_METRIC_INFO.scheduledInPeriod}` },
+                { label: `${pendingAgenda} on today's agenda`, to: null, tip: "Meetings, tasks and follow-ups on today's agenda that are not marked done" },
               ].map((chip) => (
                 chip.to ? (
                   <Link
                     key={chip.label}
                     to={chip.to}
+                    title={chip.tip}
                     className="inline-flex items-center gap-0.5 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-rose-50/70 border border-rose-100 text-[10px] sm:text-[11px] font-semibold text-[#be123c] hover:bg-rose-50 transition shrink-0"
                   >
                     {chip.label}
                     <ChevronRight className="w-2.5 h-2.5 sm:w-3 sm:h-3 opacity-50" />
                   </Link>
                 ) : (
-                  <span key={chip.label} className="inline-flex px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-50 border border-slate-200 text-[10px] sm:text-[11px] font-semibold text-slate-600 shrink-0">
+                  <span key={chip.label} title={chip.tip} className="inline-flex px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-50 border border-slate-200 text-[10px] sm:text-[11px] font-semibold text-slate-600 shrink-0">
                     {chip.label}
                   </span>
                 )
@@ -321,6 +535,7 @@ export default function EmployeeDashboard() {
           <button
             key={s.label}
             type="button"
+            title={s.tip}
             onClick={() => {
               if (s.link) navigate(s.link);
               else if (s.filter) setPipeFilter(s.filter);
@@ -331,7 +546,8 @@ export default function EmployeeDashboard() {
               label={s.label}
               value={s.value}
               change={s.change}
-              sub=""
+              changeTone={s.changeTone}
+              sub={s.sub ? `· ${s.sub}` : ""}
               icon={s.icon}
               tone={s.tone}
               compact
@@ -350,7 +566,8 @@ export default function EmployeeDashboard() {
           onRefresh={refreshCallyzerStats}
           configured={callyzerConfigured}
           message={callyzerMessage}
-          subtitle={`${periodLabel(periodKey)} · auto-syncs every 15s from Callyzer`}
+          period={periodKey}
+          subtitle={`${selection.label} · auto-syncs every 15s from Callyzer`}
         />
       )}
 
@@ -362,7 +579,7 @@ export default function EmployeeDashboard() {
             <SectionHead
               icon={Target}
               title="Lead Pipeline"
-              sub={isMobile ? "Stage breakdown" : "Stage-wise breakdown"}
+              sub={`${isMobile ? "Stage breakdown" : "Stage-wise breakdown"} · activity ${words.when}`}
               stackAction
               action={pipeFilters}
             />
@@ -382,13 +599,17 @@ export default function EmployeeDashboard() {
 
             <div className="w-full min-w-0 flex flex-col gap-0.5 sm:gap-1">
               {pipelineTotal === 0 && !loading ? (
-                <p className="text-center text-sm text-slate-400 py-8">No leads in pipeline yet</p>
+                <p className="text-center text-sm text-slate-400 py-8">No pipeline activity {words.when}</p>
               ) : (
                 pipeline.map((s) => (
                   <div
                     key={s.fullLabel || s.label}
                     className="flex items-center gap-1.5 sm:gap-2 min-h-[14px] sm:min-h-[16px]"
-                    title={s.fullLabel || s.label}
+                    title={
+                      s.id === "meeting_booked" ? `${s.fullLabel} (booked cards): ${MEETING_METRIC_INFO.bookedCards}`
+                        : s.id === "meeting_done" ? `${s.fullLabel} (cards): ${MEETING_METRIC_INFO.doneCards}`
+                          : (s.fullLabel || s.label)
+                    }
                   >
                     <span className="text-[8px] sm:text-[9px] font-semibold text-slate-500 w-[54px] sm:w-[64px] shrink-0 truncate leading-tight">
                       {s.label}
@@ -409,6 +630,11 @@ export default function EmployeeDashboard() {
                 ))
               )}
             </div>
+            {olderStagedCount > 0 && (
+              <p className="mt-2 text-[9px] sm:text-[10px] text-slate-400">
+                {olderStagedCount} older manually-staged {olderStagedCount === 1 ? "lead is" : "leads are"} not counted {words.when}. See the Pipeline page for the full board.
+              </p>
+            )}
 
             {pipeFilter !== "all" && filteredPipeLeads && (
               <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-slate-100">
@@ -440,17 +666,17 @@ export default function EmployeeDashboard() {
           <GlassCard className="overflow-hidden min-w-0 !bg-white !border-slate-200/80 !from-white !via-white !to-white">
             <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x divide-slate-100">
               <div className="p-3 sm:p-4 md:p-5">
-                <SectionHead icon={TrendingUp} title="Lead Sources" sub={isMobile ? "Top channels" : "Top channels this month"} />
+                <SectionHead icon={TrendingUp} title="Lead Sources" sub={`Top channels · leads ${words.created}`} />
                 <div className="flex flex-col items-center py-1 sm:py-2">
                   {sourceChart.length === 0 ? (
-                    <p className="text-sm text-slate-400 py-8">No lead sources yet</p>
+                    <p className="text-sm text-slate-400 py-8">No leads {words.created}</p>
                   ) : (
                   <>
                   <div className={`relative ${isMobile ? "w-[112px] h-[112px]" : "w-[148px] h-[148px]"}`}>
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={sourceChart.map((s) => ({ name: s.label, value: s.pct, color: s.color }))}
+                          data={sourceChart.map((s) => ({ name: s.label, value: s.count, pct: s.pct, color: s.color }))}
                           dataKey="value"
                           cx="50%"
                           cy="50%"
@@ -465,21 +691,21 @@ export default function EmployeeDashboard() {
                           ))}
                         </Pie>
                         <Tooltip
-                          formatter={(val, _n, props) => [`${val}%`, props.payload.name]}
+                          formatter={(val, _n, props) => [`${val} ${val === 1 ? "lead" : "leads"} (${props.payload.pct}%)`, props.payload.name]}
                           contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 11 }}
                         />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className={`${isMobile ? "text-base" : "text-xl"} font-black text-slate-900`}>100%</span>
-                      <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">Total</span>
+                      <span className={`${isMobile ? "text-base" : "text-xl"} font-black text-slate-900 tabular-nums`}>{periodLeads.length}</span>
+                      <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">{periodLeads.length === 1 ? "lead" : "leads"}</span>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-x-3 sm:gap-x-4 gap-y-1 mt-3 sm:mt-4 w-full max-w-[240px]">
                     {sourceChart.map((s) => (
                       <div key={s.label} className="flex items-center gap-1 sm:gap-1.5 text-[9px] sm:text-[10px] text-slate-600 min-w-0">
                         <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0" style={{ background: s.color }} />
-                        <span className="truncate flex-1">{s.label}</span>
+                        <span className="truncate flex-1" title={`${s.label}: ${s.count} ${s.count === 1 ? "lead" : "leads"}`}>{s.label}</span>
                         <span className="font-bold text-slate-800 shrink-0">{s.pct}%</span>
                       </div>
                     ))}
@@ -493,7 +719,7 @@ export default function EmployeeDashboard() {
                 <SectionHead
                   icon={Zap}
                   title="Recent Activity"
-                  sub="Last 24 hours"
+                  sub="Last 24 hours · not affected by the period filter"
                   action={<Badge tone="muted">Live</Badge>}
                 />
                 <ul className="space-y-1 sm:space-y-1.5">
@@ -549,19 +775,19 @@ export default function EmployeeDashboard() {
               </div>
               <div className="min-w-0">
                 <p className="text-base sm:text-lg font-black text-slate-900 tabular-nums leading-none flex items-center gap-1">
-                  <span>{callsToday}</span>
-                  <span className="text-xs sm:text-sm text-slate-400 font-semibold">/{callsTarget}</span>
+                  <span title={callsTargetTip}>{callsDone}</span>
+                  <span className="text-xs sm:text-sm text-slate-400 font-semibold" title={callsTargetTip}>/{callsTarget ?? "—"}</span>
                   <button
                     type="button"
                     onClick={handleEditCallsTarget}
-                    title="Edit daily call target"
+                    title={`Edit daily call target (now ${dailyCallsTarget}/day)`}
                     className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition"
                   >
                     <Pencil className="w-3 h-3" />
                   </button>
                 </p>
-                <p className="text-[10px] sm:text-[11px] font-medium text-slate-500 mt-0.5 leading-tight">
-                  Calls today · {callPct}% of target
+                <p className="text-[10px] sm:text-[11px] font-medium text-slate-500 mt-0.5 leading-tight" title={callsTargetTip}>
+                  {words.calls} · {callPct == null ? "no target" : `${callPct}% of target`}
                 </p>
               </div>
             </div>
@@ -622,7 +848,7 @@ export default function EmployeeDashboard() {
 
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             {[
-              { label: "Follow-ups", to: "/employee/follow-ups", icon: Zap, count: followUps.filter((f) => !f.done).length },
+              { label: "Follow-ups", to: "/employee/follow-ups", icon: Zap, count: followUpCounts.totalOpen },
               { label: "All Leads", to: "/employee/leads", icon: Target, count: leads.length },
             ].map((q) => (
               <Link key={q.to} to={q.to} className="min-w-0">
