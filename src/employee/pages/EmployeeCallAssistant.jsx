@@ -257,7 +257,7 @@ export default function EmployeeCallAssistant() {
         } else if (matchedLead?.id) {
           await completeFollowUpWithMom({
             ...followUpArgs,
-            mom: generalNotes?.trim() || "Call completed via Callyzer",
+            mom: [generalNotes?.trim(), buildCallQaText()].filter(Boolean).join("\n\n") || "Call completed via Callyzer",
           });
         }
         toast.success("Call marked completed");
@@ -343,7 +343,8 @@ export default function EmployeeCallAssistant() {
   // Overall checklist progress of active SOP
   const completionPercentage = useMemo(() => {
     if (!activeSop?.steps?.length) return 0;
-    const allQs = activeSop.steps.flatMap((step) => step.questions || []);
+    const seen = new Set();
+    const allQs = activeSop.steps.flatMap((step) => step.questions || []).filter((q) => (seen.has(q.id) ? false : seen.add(q.id)));
     if (allQs.length === 0) return 0;
     const checkedCount = allQs.filter((q) => !!checkedQuestions[`${selectedSopId}-${q.id}`]).length;
     return Math.round((checkedCount / allQs.length) * 100);
@@ -426,6 +427,29 @@ export default function EmployeeCallAssistant() {
 
   const handleSaveNotes = () => {
     toast.success("Notes & Discovery saved to CRM local memory");
+  };
+
+  // Question + answer lines for the call notes: every discovery question the rep answered, and the qualification questions asked.
+  const buildCallQaText = () => {
+    if (!activeSop?.steps?.length) return "";
+    const seenKeys = new Set();
+    const answered = [];
+    const asked = [];
+    for (const step of activeSop.steps) {
+      for (const f of step.discovery || []) {
+        if (seenKeys.has(f.key)) continue;
+        seenKeys.add(f.key);
+        const a = String(discoveryAnswers[`${selectedSopId}-${f.key}`] || "").trim();
+        if (a) answered.push(`Q: ${f.label}\nA: ${a}`);
+      }
+      for (const q of step.questions || []) {
+        if (checkedQuestions[`${selectedSopId}-${q.id}`] && !asked.includes(q.text)) asked.push(q.text);
+      }
+    }
+    const parts = [];
+    if (answered.length) parts.push(`Discovery Q&A\n${answered.join("\n\n")}`);
+    if (asked.length) parts.push(`Questions asked\n${asked.map((t) => `- ${t}`).join("\n")}`);
+    return parts.join("\n\n");
   };
 
 
@@ -839,22 +863,32 @@ export default function EmployeeCallAssistant() {
                   <MessageSquare className="w-4 h-4 text-rose-600" /> Discovery Information
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {(activeStep.discovery || []).map((f) => (
-                    <div key={f.key} className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                        {f.label}
-                      </label>
-                      <input
-                        type="text"
-                        placeholder={f.placeholder}
-                        value={discoveryAnswers[`${selectedSopId}-${f.key}`] || ""}
-                        onChange={(e) => handleDiscoveryChange(f.key, e.target.value)}
-                        className="w-full h-9 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-350 transition text-slate-800 font-semibold"
-                      />
-                    </div>
-                  ))}
-                </div>
+                {(activeStep.discovery || []).length === 0 ? (
+                  <p className="text-[11px] text-slate-400">No discovery questions for this step.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {(activeStep.discovery || []).map((f, i) => (
+                      <div key={f.key} className="space-y-1.5 min-w-0">
+                        <label htmlFor={`discovery-${selectedSopId}-${f.key}`} className="block text-[11px] font-bold text-slate-700 leading-snug break-words">
+                          <span className="text-rose-600 mr-1">Q{i + 1}.</span>{f.label}
+                        </label>
+                        {f.guide && (
+                          <p className="text-[10px] leading-snug text-sky-800 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1.5 break-words">
+                            <span className="font-bold">Guideline:</span> {f.guide}
+                          </p>
+                        )}
+                        <textarea
+                          id={`discovery-${selectedSopId}-${f.key}`}
+                          rows={2}
+                          placeholder={f.placeholder}
+                          value={discoveryAnswers[`${selectedSopId}-${f.key}`] || ""}
+                          onChange={(e) => handleDiscoveryChange(f.key, e.target.value)}
+                          className="w-full min-h-[2.5rem] px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-350 transition text-slate-800 font-semibold resize-y"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </GlassCard>
 
               {/* Dynamic Content: Budget Section (Only on Budget step, otherwise hidden/generic) */}

@@ -527,7 +527,7 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
   return (
     <GlassCard className={`p-0 overflow-hidden flex flex-col ${PANEL_HEIGHT}`}>
       <div className="px-4 py-3 border-b border-rose-50 bg-rose-50/40 shrink-0">
-        <p className="text-sm font-black text-slate-900">Today&apos;s Schedule</p>
+        <p className="text-sm font-black text-slate-900">Meeting&apos;s Schedule</p>
         <p className="text-[10px] text-slate-500">
           {upcoming.length - overdueCount} upcoming{overdueCount > 0 ? ` · ${overdueCount} overdue` : ""} · quick join
         </p>
@@ -537,7 +537,7 @@ function TodaySchedulePanel({ upcoming, history, onJoin, onCopyLink, onShare, on
         {upcoming.length === 0 ? (
           <div className="p-6 text-center">
             <Calendar className="w-8 h-8 text-rose-200 mx-auto mb-2" />
-            <p className="text-xs font-semibold text-slate-500">No meetings today</p>
+            <p className="text-xs font-semibold text-slate-500">No meetings scheduled</p>
             <p className="text-[10px] text-slate-400 mt-1">Book one to get started</p>
           </div>
         ) : (

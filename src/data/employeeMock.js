@@ -1854,6 +1854,44 @@ function normalizeSopScripts(scripts, fallbackOpening = "") {
   };
 }
 
+const DEFAULT_ANSWER_PLACEHOLDER = "Type the customer's answer...";
+
+/** Qualification questions of a step -> [{ id, text, ... }]. Accepts strings or objects (text / question / q / title). */
+export function normalizeStepQuestions(items, idPrefix = "q") {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, i) => {
+      const text = normalizeQuestionText(item);
+      if (!text) return null;
+      const base = item && typeof item === "object" ? item : {};
+      return { ...base, id: base.id != null && String(base.id) !== "" ? base.id : `${idPrefix}${i}`, text };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Discovery items of a step -> [{ key, label, placeholder }] = ONE labelled answer field per question.
+ * Accepts the app's own shape ({ key, label, placeholder }), an API shape ({ id, q, hint }) or plain strings. Every item gets its
+ * OWN key (a missing key used to make all inputs share one answer) and a visible label (the question).
+ */
+export function normalizeDiscoveryFields(items, keyPrefix = "d") {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, i) => {
+      const base = item && typeof item === "object" ? item : {};
+      const label = typeof item === "string"
+        ? item.trim()
+        : String(base.label || base.q || base.question || base.text || base.title || "").trim();
+      if (!label) return null;
+      const key = String(base.key ?? base.id ?? "").trim() || `${keyPrefix}${i}`;
+      const placeholder = String(base.placeholder || base.hint || "").trim() || DEFAULT_ANSWER_PLACEHOLDER;
+      // `guide` = the admin's written answer / guideline for this question (SOP "Question & Answer Guidelines"), shown under it.
+      const guide = String(base.guide || base.answer || "").trim();
+      return guide ? { key, label, placeholder, guide } : { key, label, placeholder };
+    })
+    .filter(Boolean);
+}
+
 function normalizeSopSteps(steps) {
   if (!Array.isArray(steps) || steps.length === 0) {
     return [{
@@ -1879,8 +1917,8 @@ function normalizeSopSteps(steps) {
     return {
       id: step?.id || `step-${idx + 1}`,
       label: step?.label || step?.title || step?.name || `Step ${idx + 1}`,
-      questions: Array.isArray(step?.questions) ? step.questions : [],
-      discovery: Array.isArray(step?.discovery) ? step.discovery : [],
+      questions: normalizeStepQuestions(step?.questions),
+      discovery: normalizeDiscoveryFields(step?.discovery),
       checklist: Array.isArray(step?.checklist) ? step.checklist : [],
       scripts: normalizeSopScripts(step?.scripts, step?.script || ""),
     };
@@ -1931,7 +1969,15 @@ function normalizeQuestionText(q) {
 function sopFromApiRow(api) {
   const stepsRaw = api.instruction_steps || api.instructionSteps || api.steps || [];
   const script = api.script || "";
-  const questions = (api.questions || []).map(normalizeQuestionText).filter(Boolean);
+  // Admin SOPs can carry question + answer pairs ("Question & Answer Guidelines"); otherwise a plain list of questions.
+  const qaPairs = (Array.isArray(api.questions_answers) ? api.questions_answers : Array.isArray(api.questionsAnswers) ? api.questionsAnswers : [])
+    .filter((qa) => qa && typeof qa === "object" && String(qa.question || "").trim());
+  const questions = qaPairs.length
+    ? qaPairs.map((qa) => String(qa.question).trim())
+    : (api.questions || []).map(normalizeQuestionText).filter(Boolean);
+  const discoverySource = qaPairs.length
+    ? qaPairs.map((qa, i) => ({ key: `d${i}`, label: String(qa.question).trim(), guide: String(qa.answer || "").trim() }))
+    : questions;
   const frameworks = (api.frameworks || []).filter(Boolean);
 
   let steps = normalizeSopSteps(stepsRaw);
@@ -1944,11 +1990,22 @@ function sopFromApiRow(api) {
         opening: first.scripts.opening || script,
         tips: first.scripts.tips || frameworks.join("\n"),
       },
-      discovery: questions.length
-        ? questions.map((q, i) => ({ id: `d${i}`, q, hint: "" }))
-        : first.discovery,
+      questions: questions.length ? normalizeStepQuestions(questions) : first.questions,
+      discovery: questions.length ? normalizeDiscoveryFields(discoverySource) : first.discovery,
       checklist: questions.length && !first.checklist?.length ? questions : first.checklist,
     }, ...steps.slice(1)];
+    // The same questions are also offered on the discovery-style step ("Perform initial discovery...", "Qualify..."), so they are
+    // there when the rep reaches it. Answers are keyed by question (not by step), so an answer typed once shows in both places.
+    if (questions.length) {
+      const di = steps.findIndex((st, i) => i > 0 && /discover|qualif|question/i.test(String(st.label || "")));
+      if (di > 0) {
+        steps[di] = {
+          ...steps[di],
+          questions: steps[di].questions.length ? steps[di].questions : normalizeStepQuestions(questions),
+          discovery: steps[di].discovery.length ? steps[di].discovery : normalizeDiscoveryFields(discoverySource),
+        };
+      }
+    }
   }
 
   return normalizeCallSop({

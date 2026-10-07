@@ -326,6 +326,20 @@ export function isInactiveScheduledMeeting(m) {
   return Boolean(m) && m.isActive === false && m.status !== "completed" && m.status !== "cancelled";
 }
 
+/**
+ * An OPEN meeting = still scheduled and the lead's current meeting (the backend's active definition; an API without the flag counts
+ * as active). "Meeting Booked" is a CURRENT STATE, not activity in a period: a booked meeting from last month that is still
+ * unresolved must stay on the board (so it can be held or rescheduled), and a meeting booked for next month must show too.
+ */
+export function isOpenMeeting(m) {
+  return Boolean(m) && m.status !== "completed" && m.status !== "cancelled" && m.isActive !== false;
+}
+
+/** Lead whose stored stage / status means Meeting Booked (same mapping as the rest of the app). */
+export function isMeetingBookedLead(lead) {
+  return mapStageToId(lead?.pipelineStage || lead?.stage || "", lead?.status || "") === "meeting_booked";
+}
+
 export function filterMeetingsForPeriod(meetings = [], period = "month", now = new Date()) {
   const list = Array.isArray(meetings) ? meetings : [];
   return list.filter((m) => {
@@ -368,7 +382,8 @@ export function filterPipelineLeadsForPeriod(leads = [], periodCalls = [], perio
 
   const periodMeetings = filterMeetingsForPeriod(meetings, period);
   const meetingLeadIds = new Set(
-    periodMeetings.map((m) => String(m.leadId)).filter(Boolean),
+    [...periodMeetings, ...(Array.isArray(meetings) ? meetings.filter(isOpenMeeting) : [])]
+      .map((m) => String(m.leadId)).filter(Boolean),
   );
 
   const index = kanbanIndex || buildPipelineKanbanIndex(list, periodCalls);
@@ -381,6 +396,8 @@ export function filterPipelineLeadsForPeriod(leads = [], periodCalls = [], perio
     // Callyzer card takes its place, which reads as the manual move reverting.
     if (lead.stageOverride) return true;
     if (meetingLeadIds.has(id)) return true;
+    // Meeting Booked is a current state: a lead sitting in it stays on the board in every period (see isOpenMeeting).
+    if (isMeetingBookedLead(lead)) return true;
     if (callActiveIds.has(id)) return true;
     if (includeUncontactedAssignments) {
       const periodKey = String(period).toLowerCase();
@@ -524,7 +541,9 @@ function buildPhoneCanonicalMap(leads = []) {
 }
 
 function placeMeetingsOnKanban(map, pushLead, allLeads, meetings, period, showLead, canonicalize = (l) => l) {
-  const periodMeetings = filterMeetingsForPeriod(meetings, period);
+  const inPeriod = filterMeetingsForPeriod(meetings, period);
+  const seen = new Set(inPeriod);
+  const periodMeetings = [...inPeriod, ...(Array.isArray(meetings) ? meetings.filter((m) => isOpenMeeting(m) && !seen.has(m)) : [])];
   for (const meeting of periodMeetings) {
     const lead = canonicalize(resolveMeetingLead(meeting, allLeads));
     const col = resolveMeetingKanbanColumn(meeting);
@@ -921,7 +940,7 @@ export function groupKanbanSyncedWithCallyzer(
   // or last activity (meeting time / update) dated inside it.
   if (periodKey !== "all") {
     const periodMeetingLeadIds = new Set(
-      filterMeetingsForPeriod(meetings, periodKey).map((m) => String(m.leadId)).filter(Boolean),
+      [...filterMeetingsForPeriod(meetings, periodKey), ...meetings.filter(isOpenMeeting)].map((m) => String(m.leadId)).filter(Boolean),
     );
     const { callActiveIds } = kanbanIndex;
     for (const colKey of Object.keys(map)) {
@@ -929,7 +948,7 @@ export function groupKanbanSyncedWithCallyzer(
       map[colKey] = map[colKey].map((lead) => {
         if (!lead || lead._fromCall || lead._fromMeeting) return lead;
         const id = String(lead.id);
-        if (callActiveIds.has(id) || periodMeetingLeadIds.has(id)) return lead;
+        if (callActiveIds.has(id) || periodMeetingLeadIds.has(id) || colKey === "meeting_booked") return lead;
         const rawAt = lead._meetingAt || lead.updatedAt || lead.createdAt;
         if (!rawAt) return lead;
         const at = parseAppDateTime(rawAt) || new Date(rawAt);
