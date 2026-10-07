@@ -1,6 +1,7 @@
 import { apiGet, apiPost, apiPatch, apiDelete, invalidateCache } from "./api.js";
 import { getCrmHeaders } from "./crmContext.js";
 import { formatWhatsAppPhone as formatWhatsAppPhoneCentral } from "./phoneUtils.js";
+import { appDateKey } from "./timezone.js";
 
 export const WA_SCRIPT_PLACEHOLDERS = [
   { key: "{name}", label: "Lead name" },
@@ -45,32 +46,73 @@ export function openWhatsAppChat(phone, message = "") {
   return true;
 }
 
-/** Booked meeting → "Wed, 7 Oct 2026" / "2:00 PM" (scheduledAt is the IST wall-clock "YYYY-MM-DDTHH:mm:ss"). */
-function formatMeetingWhen(scheduledAt) {
-  const d = scheduledAt ? new Date(scheduledAt) : null;
-  if (!d || Number.isNaN(d.getTime())) return { date: "", time: "" };
-  return {
-    date: d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
-    time: d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true }).toUpperCase(),
-  };
+const WEEKDAY_FMT = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/** Date key (YYYY-MM-DD) one day after `key`. */
+function nextDateKey(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + 1));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
 }
 
-/** Default confirmation text sent to the customer right after a meeting is booked (editable before sending). */
-export function buildMeetingConfirmationMessage({ leadName, meeting, employeeName } = {}) {
-  const { date, time } = formatMeetingWhen(meeting?.scheduledAt);
-  const lines = [
-    leadName ? `Hi ${leadName},` : "Hi,",
+/**
+ * Booked meeting -> { date, time } for the customer message, in the app timezone (IST):
+ *   date: "Today" / "Tomorrow" / "Wed, 7 Oct 2026"      time: "5:30 PM"
+ * `scheduledAt` is the IST wall clock "YYYY-MM-DDTHH:mm:ss" (an ISO string with a zone is converted to IST first).
+ */
+export function formatMeetingWhen(scheduledAt, now = new Date()) {
+  let key = "";
+  let hh = NaN;
+  let mm = NaN;
+  const m = String(scheduledAt || "").match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?!.*(?:Z|[+-]\d{2}:?\d{2})$)/);
+  if (m) {
+    key = m[1];
+    hh = Number(m[2]);
+    mm = Number(m[3]);
+  } else if (scheduledAt) {
+    const d = new Date(scheduledAt);
+    if (!Number.isNaN(d.getTime())) {
+      key = appDateKey(d);
+      const parts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }).formatToParts(d);
+      hh = Number(parts.find((p) => p.type === "hour").value) % 24;
+      mm = Number(parts.find((p) => p.type === "minute").value);
+    }
+  }
+  if (!key || Number.isNaN(hh) || Number.isNaN(mm)) return { date: "", time: "" };
+  const today = appDateKey(now);
+  const [y, mo, d] = key.split("-").map(Number);
+  const date = key === today ? "Today" : key === nextDateKey(today) ? "Tomorrow" : WEEKDAY_FMT.format(new Date(Date.UTC(y, mo - 1, d)));
+  const time = `${hh % 12 === 0 ? 12 : hh % 12}:${String(mm).padStart(2, "0")} ${hh >= 12 ? "PM" : "AM"}`;
+  return { date, time };
+}
+
+/**
+ * Confirmation text sent to the customer right after a meeting is booked (editable before sending).
+ *
+ *   Hello <customer name>
+ *
+ *   This is to confirm our Discovery Call scheduled for
+ *
+ *   Date : Today
+ *   Time : 5:30 PM
+ *   Meeting Link : <link>
+ *
+ *   Kindly acknowledge by replying \u201cConfirmed\u201d
+ */
+export function buildMeetingConfirmationMessage({ leadName, meeting, now } = {}) {
+  const { date, time } = formatMeetingWhen(meeting?.scheduledAt, now);
+  const link = String(meeting?.meetLink || meeting?.meet_link || "").trim();
+  return [
+    leadName ? `Hello ${String(leadName).trim()}` : "Hello",
     "",
-    "Your meeting is confirmed ✅",
-    meeting?.title ? `📌 *${meeting.title}*` : null,
-    date ? `📅 *Date:* ${date}` : null,
-    time ? `⏰ *Time:* ${time}` : (meeting?.time ? `⏰ *Time:* ${meeting.time}` : null),
-    meeting?.meetLink ? `\n🔗 *Join Google Meet:* ${meeting.meetLink}` : null,
+    "This is to confirm our Discovery Call scheduled for",
     "",
-    "Looking forward to speaking with you!",
-    employeeName ? `— ${employeeName}` : null,
-  ];
-  return lines.filter((l) => l !== null).join("\n");
+    `Date : ${date}`,
+    `Time : ${time || meeting?.time || ""}`,
+    `Meeting Link : ${link}`,
+    "",
+    "Kindly acknowledge by replying \u201cConfirmed\u201d",
+  ].join("\n");
 }
 
 function mapScript(row) {
