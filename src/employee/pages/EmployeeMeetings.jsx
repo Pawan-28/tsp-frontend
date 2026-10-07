@@ -17,6 +17,7 @@ import { apiGet, apiPost } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
 import { localDateKey } from "../../lib/periodFilter.js";
 import { isMeetingOverdue, countMeetingTiles } from "../../lib/meetingStatus.js";
+import { MEETING_DATE_FILTERS, filterMeetingsByDate, countByDateBucket } from "../../lib/meetingDateFilter.js";
 import {
   MEETING_PLATFORMS,
   getEmpAppToday,
@@ -689,6 +690,7 @@ export default function EmployeeMeetings() {
     leads,
     meetingsUpcoming,
     meetingsHistory,
+    meetingLeadOnly,
     createMeeting,
     cancelMeeting,
     rescheduleMeeting,
@@ -701,6 +703,7 @@ export default function EmployeeMeetings() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState("upcoming");
+  const [dateFilter, setDateFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   const [drawerOpen, setDrawerOpen] = useState(searchParams.get("action") === "add");
@@ -856,7 +859,7 @@ export default function EmployeeMeetings() {
     };
   }, [upcomingOnly, historyOnly]);
 
-  const filteredUpcoming = useMemo(() => {
+  const searchedUpcoming = useMemo(() => {
     const q = search.trim().toLowerCase();
     const all = [...overdueMeetings, ...upcomingOnly];
     if (!q) return all;
@@ -868,7 +871,7 @@ export default function EmployeeMeetings() {
     );
   }, [overdueMeetings, upcomingOnly, search]);
 
-  const filteredHistory = useMemo(() => {
+  const searchedHistory = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return historyOnly;
     return historyOnly.filter(
@@ -877,6 +880,38 @@ export default function EmployeeMeetings() {
         (m.outcome || "").toLowerCase().includes(q),
     );
   }, [historyOnly, search]);
+
+  // Today / Upcoming / Previous filters (by the meeting's date, app timezone).
+  const todayKey = getEmpAppToday();
+  const filteredUpcoming = useMemo(() => filterMeetingsByDate(searchedUpcoming, dateFilter, todayKey), [searchedUpcoming, dateFilter, todayKey]);
+  const filteredHistory = useMemo(() => filterMeetingsByDate(searchedHistory, dateFilter, todayKey), [searchedHistory, dateFilter, todayKey]);
+  const dateCounts = useMemo(
+    () => countByDateBucket(tab === "upcoming" ? searchedUpcoming : searchedHistory, todayKey),
+    [tab, searchedUpcoming, searchedHistory, todayKey],
+  );
+
+  // Pipeline cards with NO meeting record (Meeting Booked without a date / Meeting Done without a held meeting). They have no date,
+  // so they are listed under "All" - that is what makes this page match the Pipeline card for card.
+  const matchesSearch = (l) => {
+    const q = search.trim().toLowerCase();
+    return !q || `${l.name || ""} ${l.phone || ""} ${l.company || ""} ${l.service || ""}`.toLowerCase().includes(q);
+  };
+  const bookedNoDate = useMemo(() => (meetingLeadOnly?.booked || []).filter(matchesSearch), [meetingLeadOnly, search]); // eslint-disable-line react-hooks/exhaustive-deps
+  const doneNoRecord = useMemo(() => (meetingLeadOnly?.done || []).filter(matchesSearch), [meetingLeadOnly, search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Open the Book Meeting drawer for a Pipeline card that has no meeting yet.
+  const openBookForLead = (item) => {
+    const lead = leads.find((l) => String(l.id) === String(item.leadId));
+    setForm((f) => ({
+      ...f,
+      leadId: String(item.leadId),
+      service: (lead && resolveLeadServiceName(lead)) || item.service || f.service,
+    }));
+    setDrawerOpen(true);
+  };
+
+  // The lead-only cards come from the Meetings API meta - load it when the page opens.
+  useEffect(() => { refreshMeetings?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const closeDrawer = () => {
     setDrawerOpen(false);
@@ -1150,6 +1185,32 @@ export default function EmployeeMeetings() {
             <Plus className="w-4 h-4" /> Book Meeting
           </BtnPrimary>
         </div>
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className={`${SEGMENT_WRAP} w-full sm:w-auto`} role="group" aria-label="Filter meetings by date">
+            {MEETING_DATE_FILTERS.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setDateFilter(id)}
+                className={`flex items-center gap-1 ${SEGMENT_BTN} ${dateFilter === id ? SEGMENT_BTN_ACTIVE : SEGMENT_BTN_INACTIVE}`}
+                title={{
+                  all: "All meetings",
+                  today: "Meetings dated today",
+                  upcoming: "Meetings dated after today",
+                  previous: "Meetings dated before today",
+                }[id]}
+              >
+                {label}
+                <span className="tabular-nums opacity-70">{dateCounts[id] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-500 min-w-0">
+            {tab === "upcoming"
+              ? `Pipeline "Meeting Booked": ${searchedUpcoming.length + (meetingLeadOnly?.booked?.length || 0)} leads = ${searchedUpcoming.length} with a meeting + ${meetingLeadOnly?.booked?.length || 0} still need a date`
+              : `Pipeline "Meeting Done": ${searchedHistory.length} held / closed meetings here + ${meetingLeadOnly?.done?.length || 0} Meeting Done leads with no meeting record`}
+          </p>
+        </div>
       </GlassCard>
 
       {overdueMeetings.length > 0 && (
@@ -1165,7 +1226,7 @@ export default function EmployeeMeetings() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-3 sm:gap-4 items-stretch">
         <div className="min-w-0 flex flex-col">
           {tab === "upcoming" ? (
-            filteredUpcoming.length === 0 ? (
+            filteredUpcoming.length === 0 && !(dateFilter === "all" && bookedNoDate.length > 0) ? (
               <GlassCard className={`py-10 flex items-center justify-center ${PANEL_HEIGHT}`}>
                 <EmpEmptyState icon="" title="No upcoming meetings" subtitle="Book a meeting or clear your search" />
               </GlassCard>
@@ -1173,6 +1234,21 @@ export default function EmployeeMeetings() {
               <GlassCard className={`p-0 overflow-hidden flex flex-col ${PANEL_HEIGHT}`}>
                 <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin p-3 sm:p-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {dateFilter === "all" && bookedNoDate.map((item) => (
+                      <div key={`booked-${item.leadId}`} className="rounded-2xl border border-sky-200 bg-sky-50/50 p-3.5 flex flex-col gap-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-slate-900 break-words">{item.name || "Lead"}</p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">{[item.company, item.service].filter(Boolean).join(" · ")}</p>
+                          </div>
+                          <Badge tone="primary">No meeting date</Badge>
+                        </div>
+                        <p className="text-[11px] text-slate-600">In Pipeline &quot;Meeting Booked&quot;{item.phone ? ` · ${item.phone}` : ""} - no meeting is scheduled yet.</p>
+                        <button type="button" onClick={() => openBookForLead(item)} className="self-start inline-flex items-center gap-1.5 rounded-full bg-rose-700 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-rose-800 transition">
+                          <Plus className="w-3.5 h-3.5" /> Book meeting
+                        </button>
+                      </div>
+                    ))}
                     {filteredUpcoming.map((m) => (
                       <UpcomingCard
                         key={m.id}
@@ -1195,12 +1271,22 @@ export default function EmployeeMeetings() {
                 <p className="text-sm font-black text-slate-900">Meeting History</p>
                 <p className="text-[11px] text-slate-500">Past sessions & outcomes</p>
               </div>
-              {filteredHistory.length === 0 ? (
+              {filteredHistory.length === 0 && !(dateFilter === "all" && doneNoRecord.length > 0) ? (
                 <div className="flex-1 flex items-center justify-center">
                   <EmpEmptyState icon="" title="No history found" subtitle="Try a different search" />
                 </div>
               ) : (
                 <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin divide-y divide-rose-50">
+                  {dateFilter === "all" && doneNoRecord.map((item) => (
+                    <div key={`done-${item.leadId}`} className="flex items-start justify-between gap-3 px-4 py-3.5 bg-violet-50/40">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-900 break-words">{item.name || "Lead"}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{[item.company, item.service].filter(Boolean).join(" · ") || "Pipeline lead"}{item.phone ? ` · ${item.phone}` : ""}</p>
+                        <p className="text-[11px] text-slate-500">Marked Meeting Done in the Pipeline - no meeting record was saved.</p>
+                      </div>
+                      <Badge tone="primary">Meeting done</Badge>
+                    </div>
+                  ))}
                   {filteredHistory.map((m) => (
                     <div key={m.id} className="flex items-start justify-between gap-3 px-4 py-3.5 hover:bg-rose-50/30 transition">
                       <div className="min-w-0">
@@ -1223,8 +1309,8 @@ export default function EmployeeMeetings() {
 
         <div className="hidden xl:flex min-w-0 flex-col">
           <TodaySchedulePanel
-            upcoming={filteredUpcoming}
-            history={filteredHistory}
+            upcoming={searchedUpcoming}
+            history={searchedHistory}
             onJoin={handleJoin}
             onCopyLink={handleCopyLink}
             onShare={handleOpenShareModal}

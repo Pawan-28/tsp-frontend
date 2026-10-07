@@ -224,6 +224,8 @@ export function EmployeeProvider({ children }) {
   const [meetingsUpcoming, setMeetingsUpcoming] = useState([]);
   const [meetingsHistory, setMeetingsHistory] = useState([]);
   const refreshMeetingsRef = useRef(null);
+  // Pipeline Meeting Booked / Meeting Done cards that have NO meeting record (from the Meetings API meta) - listed on the Meetings page too.
+  const [meetingLeadOnly, setMeetingLeadOnly] = useState({ booked: [], done: [] });
   const [activities, setActivities] = useState({});
   const [sops, setSopsState] = useState([]);
   const [selectedService, setSelectedService] = useState("All Services");
@@ -1341,6 +1343,12 @@ export function EmployeeProvider({ children }) {
       const split = partitionMeetings(items, leadList);
       setMeetingsUpcoming((prev) => listUpdaterForSession()(prev, split.upcoming));
       setMeetingsHistory((prev) => listUpdaterForSession()(prev, split.history));
+      if (res?.meta) {
+        setMeetingLeadOnly({
+          booked: Array.isArray(res.meta.bookedWithoutMeeting) ? res.meta.bookedWithoutMeeting : [],
+          done: Array.isArray(res.meta.doneWithoutMeeting) ? res.meta.doneWithoutMeeting : [],
+        });
+      }
       setUsingApi(true);
       return true;
     } catch {
@@ -1795,6 +1803,7 @@ export function EmployeeProvider({ children }) {
     refreshSops,
     meetingsUpcoming,
     meetingsHistory,
+    meetingLeadOnly,
     createMeeting,
     cancelMeeting,
     rescheduleMeeting,
@@ -1813,7 +1822,7 @@ export function EmployeeProvider({ children }) {
     syncTaskWithFollowUp, leads, addLead, updateLeadStage, updateLeadTemperature, editLeadDetails, updateEmployeeAvatar, refreshLeads, refreshCalls, syncCallyzerData,
     reassignLead, teamEmployees, refreshTeamEmployees,
     usingApi, calls, setCalls, addCallRecord, startCallyzerCall, activities, addActivityRecord, sops, refreshSops,
-    meetingsUpcoming, meetingsHistory, createMeeting, cancelMeeting, rescheduleMeeting, completeMeeting, refreshMeetings, loading, linkError,
+    meetingsUpcoming, meetingsHistory, meetingLeadOnly, createMeeting, cancelMeeting, rescheduleMeeting, completeMeeting, refreshMeetings, loading, linkError,
     workspaceError, reloadWorkspace, selectedService,
   ]);
 
