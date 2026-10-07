@@ -45,7 +45,7 @@ const ITEMS_PER_PAGE = 50;
 /**
  * Call status colours (semantic, not brand): connected = green, Not pick / Missed = amber, Rejected = red.
  * The status itself comes from callStatusMeta() (lib/callMetrics.js, the one shared call definition):
- *   connected     = answered (Conversation 2 min+, Short call, Incoming short)
+ *   connected     = answered (Conversation > 2 min, Short call, Incoming short)
  *   Not pick      = outgoing call the client did not answer
  *   Rejected      = rejected call (never counted inside Not pick)
  *   Missed        = incoming call that was not answered

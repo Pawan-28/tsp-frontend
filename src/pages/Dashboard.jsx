@@ -1717,7 +1717,7 @@ function ImpMetrics({ metrics = {}, filterKey, definitions = null }) {
       value: safe.qualification,
       color: "#6366f1",
       glow: "#6366f1",
-      info: metricInfo(definitions, "qualification", "Formula: leads with a 2 min+ conversation or meeting booked (or later) / total leads. Basis: leads created in the selected period."),
+      info: metricInfo(definitions, "qualification", "Formula: leads with a conversation above 2 min or meeting booked (or later) / total leads. Basis: leads created in the selected period."),
     },
     {
       label: "Conversion Rate",

@@ -2,11 +2,12 @@
 // Pipeline early-funnel classification (Lead / Not Pick / Short Call / Conversation) must come from the person's
 // FULL call history (any employee, any date), not from a stale stored "Lead" stage nor from only the selected
 // period's calls of the current owner. Works for OLD (legacy stored stage) and NEW leads.
-//   priority: Conversation > Short Call (answered outbound < 2 min) > Not Pick (outbound, unanswered) > Lead
-//   Rejected / Missed (incoming) / Incoming short never move a lead out of Lead on their own.
+//   priority: Conversation > Short Call (answered outbound 1-120 s) > Not Pick (outbound unanswered / rejected by customer) > Lead
+//   A dial the CUSTOMER REJECTED (outbound, Rejected) counts as Not Pick for the column; a rejected INCOMING call,
+//   Missed (incoming) and Incoming short never move a lead out of Lead on their own.
 import assert from "node:assert/strict";
 import { groupKanbanSyncedWithCallyzer, resolveLeadKanbanColumn, columnFromCallHistory, historyAwareColumn } from "./leadKanban.js";
-import { callBucket } from "./callMetrics.js";
+import { callBucket, isOutboundCall } from "./callMetrics.js";
 
 const EMP = 15;
 const NOW = new Date().toISOString();
@@ -19,14 +20,14 @@ const call = (leadId, phone, { dir = "outbound", outcome = "Connected", sec = 0,
 });
 const NO_ANSWER = { outcome: "Not Connected", sec: 0 };
 const historyOf = (calls) => {
-  const h = { conversation: 0, short: 0, noPickup: 0, rejected: 0, missedIncoming: 0, incomingShort: 0, outbound: 0, total: 0 };
+  const h = { conversation: 0, short: 0, noPickup: 0, rejected: 0, rejectedOutbound: 0, missedIncoming: 0, incomingShort: 0, outbound: 0, total: 0 };
   for (const c of calls) {
     const b = callBucket(c);
     h.total += 1;
     if (b === "conversation") h.conversation += 1;
     else if (b === "short") h.short += 1;
     else if (b === "no_pickup") h.noPickup += 1;
-    else if (b === "rejected") h.rejected += 1;
+    else if (b === "rejected") { h.rejected += 1; if (isOutboundCall(c)) h.rejectedOutbound += 1; }
     else if (b === "missed_incoming") h.missedIncoming += 1;
     else if (b === "incoming_short") h.incomingShort += 1;
   }
@@ -65,7 +66,8 @@ expectCol(add(lead(P(3)), [1, 2, 3, 4, 5].map(() => call(0, P(3), NO_ANSWER))), 
 expectCol(add(lead(P(4)), [call(0, P(4), { sec: 45 })]), "short_call", "legacy Lead + answered 45 s outbound");
 expectCol(add(lead(P(5)), [call(0, P(5), { sec: 240 })]), "conversation_2min", "legacy Lead + answered 4 min outbound");
 expectCol(add(lead(P(6)), [call(0, P(6), { dir: "inbound", sec: 180 })]), "conversation_2min", "legacy Lead + answered 3 min INCOMING (conversation, any direction)");
-expectCol(add(lead(P(7)), [call(0, P(7), { outcome: "Rejected", sec: 0 })]), "lead", "legacy Lead + only a REJECTED dial (never Not Pick)");
+expectCol(add(lead(P(7)), [call(0, P(7), { outcome: "Rejected", sec: 0 })]), "not_pick", "legacy Lead + a dial the CUSTOMER REJECTED -> Not Pick");
+expectCol(add(lead(P(23)), [call(0, P(23), { dir: "inbound", outcome: "Rejected", sec: 0 })]), "lead", "legacy Lead + only an INCOMING call the rep rejected -> stays Lead");
 expectCol(add(lead(P(8)), [call(0, P(8), { dir: "inbound", outcome: "Missed", sec: 0 })]), "lead", "legacy Lead + only a MISSED incoming call");
 expectCol(add(lead(P(9)), [call(0, P(9), { dir: "inbound", sec: 30 })]), "lead", "legacy Lead + only an answered INCOMING 30 s call (Incoming short, not Short Call)");
 expectCol(add(lead(P(10)), [call(0, P(10), { ...NO_ANSWER, emp: 99, daysAgo: 70 })]), "not_pick", "legacy Lead + 1 dial by ANOTHER employee long ago (the 'Dialed 1x still in Lead' case)");
@@ -73,7 +75,14 @@ expectCol(add(lead(P(10)), [call(0, P(10), { ...NO_ANSWER, emp: 99, daysAgo: 70 
 // priority when several outcomes exist on the same person
 expectCol(add(lead(P(11)), [call(0, P(11), NO_ANSWER), call(0, P(11), NO_ANSWER), call(0, P(11), { sec: 20 }), call(0, P(11), { sec: 400 })]), "conversation_2min", "priority: conversation beats short and not pick");
 expectCol(add(lead(P(12)), [call(0, P(12), NO_ANSWER), call(0, P(12), NO_ANSWER), call(0, P(12), { sec: 20 })]), "short_call", "priority: short beats not pick");
-expectCol(add(lead(P(13)), [call(0, P(13), { outcome: "Rejected" }), call(0, P(13), NO_ANSWER)]), "not_pick", "rejected + a real unanswered dial -> Not Pick (from the unanswered one)");
+expectCol(add(lead(P(13)), [call(0, P(13), { outcome: "Rejected" }), call(0, P(13), NO_ANSWER)]), "not_pick", "rejected + an unanswered dial -> Not Pick");
+expectCol(add(lead(P(24)), [call(0, P(24), { outcome: "Rejected" }), call(0, P(24), { sec: 30 })]), "short_call", "rejected dial then an answered 30 s call -> Short Call (priority)");
+// ----- answered outbound call duration boundaries (talk seconds)
+expectCol(add(lead(P(25)), [call(0, P(25), { sec: 1 })]), "short_call", "answered outbound 1 s -> Short Call");
+expectCol(add(lead(P(26)), [call(0, P(26), { sec: 119 })]), "short_call", "answered outbound 119 s -> Short Call");
+expectCol(add(lead(P(27)), [call(0, P(27), { sec: 120 })]), "short_call", "answered outbound exactly 120 s -> Short Call (boundary)");
+expectCol(add(lead(P(30)), [call(0, P(30), { sec: 121 })]), "conversation_2min", "answered outbound 121 s -> Conversation (above 120 s)");
+expectCol(add(lead(P(28)), [call(0, P(28), { outcome: "Not Connected", sec: 5 })]), "not_pick", "'Not Connected' with 5 s of ring time is NOT a Short Call -> Not Pick");
 
 // ===== stored stages that are stale / further along =====
 expectCol(add(lead(P(14), { stage: "Not Pick", pipelineStage: "Not Pick", status: "Not Pick" }), [call(0, P(14), { sec: 300 })], { period: true }), "conversation_2min", "stored Not Pick but the person was later answered 5 min -> Conversation");
@@ -85,6 +94,7 @@ expectCol(add(lead(P(17), { stage: "Lead", pipelineStage: "Lead", stageOverride:
 expectCol(add(lead(P(18)), [call(0, P(18), { sec: 20, daysAgo: 0 })], { period: true }), "short_call", "new lead, one 20 s answered call today");
 expectCol(add(lead(P(19)), [call(0, P(19), { ...NO_ANSWER, daysAgo: 0 })], { period: true }), "not_pick", "new lead, one unanswered dial today");
 expectCol(add(lead(P(20)), [call(0, P(20), { sec: 200, daysAgo: 0 })], { period: true }), "conversation_2min", "new lead, one 3 min conversation today");
+expectCol(add(lead(P(29)), [call(0, P(29), { outcome: "Rejected", daysAgo: 0 })], { period: true }), "not_pick", "new lead, customer rejected our dial today -> Not Pick");
 
 // ===== duplicate phones: ONE visible card, classified from the whole phone's calls =====
 const dupA = add(lead(P(21), { updatedAt: iso(5) }));
@@ -140,7 +150,8 @@ assert.equal(inLeadNoHist, true, "without history the other-employee dial stays 
 
 // pure helpers
 assert.equal(columnFromCallHistory(null), "lead");
-assert.equal(columnFromCallHistory({ conversation: 0, short: 0, noPickup: 0, rejected: 5, missedIncoming: 3, incomingShort: 2 }), "lead");
+assert.equal(columnFromCallHistory({ conversation: 0, short: 0, noPickup: 0, rejected: 5, rejectedOutbound: 0, missedIncoming: 3, incomingShort: 2 }), "lead", "rejected INCOMING / missed / incoming short alone stay Lead");
+assert.equal(columnFromCallHistory({ conversation: 0, short: 0, noPickup: 0, rejected: 2, rejectedOutbound: 2 }), "not_pick", "customer-rejected dials -> Not Pick");
 assert.equal(columnFromCallHistory({ conversation: 1, short: 3, noPickup: 9 }), "conversation_2min");
 assert.equal(historyAwareColumn({ id: 1, phone: P(1) }, "short_call", { [P(1)]: { noPickup: 4 } }), "short_call", "a stored stage further along is kept");
 assert.equal(historyAwareColumn({ id: 1, phone: P(1) }, "not_pick", { [P(1)]: { short: 1 } }), "short_call", "history can move a stored stage further");

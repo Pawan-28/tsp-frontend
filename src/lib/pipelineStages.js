@@ -2,7 +2,7 @@
 export const PIPELINE_STAGE_DEFINITIONS = [
   { id: "lead", label: "Lead", shortLabel: "Lead", color: "#64748b", badgeTone: "muted" },
   { id: "not_pick", label: "Not Pick", shortLabel: "Not Pick", color: "#94a3b8", badgeTone: "danger" },
-  { id: "short_call", label: "Short Call", shortLabel: "< 2 min", color: "#6366f1", badgeTone: "primary" },
+  { id: "short_call", label: "Short Call", shortLabel: "≤ 2 min", color: "#6366f1", badgeTone: "primary" },
   { id: "conversation_2min", label: "Conversation", shortLabel: "Conversation", color: "#3b82f6", badgeTone: "info" },
   { id: "meeting_booked", label: "Meeting Booked", shortLabel: "M. Booked", color: "#0ea5e9", badgeTone: "primary" },
   { id: "meeting_done", label: "Meeting Done", shortLabel: "M. Done", color: "#7c3aed", badgeTone: "primary" },

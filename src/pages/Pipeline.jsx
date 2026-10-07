@@ -714,11 +714,11 @@ export default function Pipeline() {
             const active = activeStage === stage.id;
             let callHint = null;
             if (stage.id === "conversation_2min") {
-              callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads with 2 min+`;
+              callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads above 2 min`;
             } else if (stage.id === "short_call") {
               callHint = `${syncedShortCalls} short calls (answered outgoing ${CALL_SHORT_LABEL}) · ${columnLeads.length} leads in Short Call`;
             } else if (stage.id === "not_pick") {
-              callHint = `${syncedNotPickupCalls} not pick (outgoing, not answered; rejected excluded) · ${columnLeads.length} leads in Not Pick`;
+              callHint = `${syncedNotPickupCalls} not pick calls (outgoing, not answered). The Not Pick column also holds leads whose dial the customer rejected (counted separately as Rejected in call counts) · ${columnLeads.length} leads in Not Pick`;
             } else if (stage.id === "meeting_booked") {
               callHint = `${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} scheduled`;
             } else if (stage.id === "meeting_done") {

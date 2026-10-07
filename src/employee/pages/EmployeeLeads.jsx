@@ -1024,11 +1024,11 @@ export default function EmployeeLeads() {
             const active = activeStage === stage.id;
             let callHint = null;
             if (stage.id === "conversation_2min") {
-              callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads with 2 min+`;
+              callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads above 2 min`;
             } else if (stage.id === "short_call") {
               callHint = `${syncedShortCalls} short calls (answered outgoing ${CALL_SHORT_LABEL}) · ${columnLeads.length} leads in Short Call`;
             } else if (stage.id === "not_pick") {
-              callHint = `${syncedNotPickupCalls} not pick (outgoing, not answered; rejected excluded) · ${columnLeads.length} leads in Not Pick`;
+              callHint = `${syncedNotPickupCalls} not pick calls (outgoing, not answered). The Not Pick column also holds leads whose dial the customer rejected (${callMetrics.rejected} rejected, counted separately) · ${columnLeads.length} leads in Not Pick`;
             } else if (stage.id === "meeting_booked") {
               callHint = `Booked: ${columnLeads.length} leads in this stage (cards). ${MEETING_METRIC_INFO.bookedCards} Separate number: ${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} meetings still scheduled in this period.`;
             } else if (stage.id === "meeting_done") {
@@ -1053,7 +1053,7 @@ export default function EmployeeLeads() {
         </div>
         <p
           className="text-[10px] text-slate-400 px-0.5"
-          title={`Calls and distinct leads are counted from this period's calls (one lead can have several calls). Total = Conversation (${CALL_CONVERSATION_LABEL}, answered, any direction) + Short call (answered outgoing ${CALL_SHORT_LABEL}) + Incoming short (answered incoming ${CALL_SHORT_LABEL}) + Not pick (outgoing, not answered) + Rejected (never inside Not pick) + Missed incoming (incoming, not answered). Connected = Conversation + Short + Incoming short. Column card counts are stage-based, so they can be higher: a lead keeps its stage after an earlier call.`}
+          title={`Calls and distinct leads are counted from this period's calls (one lead can have several calls). Total = Conversation (${CALL_CONVERSATION_LABEL}, answered, any direction) + Short call (answered outgoing ${CALL_SHORT_LABEL}) + Incoming short (answered incoming ${CALL_SHORT_LABEL}) + Not pick (outgoing, not answered) + Rejected (counted separately here; a lead whose outgoing call the customer rejected is still placed in the Not Pick COLUMN) + Missed incoming (incoming, not answered). Connected = Conversation + Short + Incoming short. Column card counts are stage-based, so they can be higher: a lead keeps its stage after an earlier call.`}
         >
           {periodLabel} · Callyzer synced · {callMetrics.totalCalls} calls = {syncedConversationCalls} conversations {CALL_CONVERSATION_LABEL} ({formatCallsAndLeads(syncedConversationCalls, callMetrics.conversationLeads)}) + {syncedShortCalls} short {CALL_SHORT_LABEL} ({formatCallsAndLeads(syncedShortCalls, callMetrics.shortCallLeads)}) + {callMetrics.incomingShort} incoming short {CALL_SHORT_LABEL} ({formatCallsAndLeads(callMetrics.incomingShort, callMetrics.incomingShortLeads)}) + {syncedNotPickupCalls} not pick ({formatCallsAndLeads(syncedNotPickupCalls, callMetrics.notPickupLeads)}) + {callMetrics.rejected} rejected ({formatCallsAndLeads(callMetrics.rejected, callMetrics.rejectedLeads)}) + {callMetrics.missed} missed incoming ({formatCallsAndLeads(callMetrics.missed, callMetrics.missedLeads)}) · <span title={MEETING_METRIC_INFO.scheduledInPeriod}>{periodMeetings.length} meetings scheduled in period</span>
           {(boardSyncing) ? " · syncing in background…" : ""}
@@ -1123,9 +1123,9 @@ export default function EmployeeLeads() {
                           : stage.id === "not_pick"
                             ? "Leads with not-picked calls"
                             : stage.id === "short_call"
-                              ? "Leads with connected calls under 2 min"
+                              ? "Leads with answered outbound calls up to 2 min"
                               : stage.id === "conversation_2min"
-                                ? "Leads with 2 min+ connected calls"
+                                ? "Leads with answered calls above 2 min"
                               : stage.id === "meeting_booked"
                                 ? "Meetings scheduled this period"
                                 : stage.id === "meeting_done"
@@ -1225,9 +1225,9 @@ export default function EmployeeLeads() {
                             : stage.id === "not_pick"
                               ? "Leads with not-picked calls"
                               : stage.id === "short_call"
-                                ? "Leads with connected calls under 2 min"
+                                ? "Leads with answered outbound calls up to 2 min"
                                 : stage.id === "conversation_2min"
-                                  ? "Leads with 2 min+ connected calls"
+                                  ? "Leads with answered calls above 2 min"
                                 : stage.id === "meeting_booked"
                                   ? "Meetings scheduled this period"
                                   : stage.id === "meeting_done"

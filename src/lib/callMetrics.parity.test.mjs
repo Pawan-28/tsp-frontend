@@ -12,6 +12,8 @@ import { callKanbanColumn, countPipelineCallMetrics } from "./leadKanban.js";
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BE = require(path.resolve(here, "../../../backend/src/utils/callMetrics.js"));
+// the backend column rule also decides the STORED stage when a new call arrives (autoPipelineStageService)
+const BE_KANBAN = require(path.resolve(here, "../../../backend/src/utils/leadKanban.js"));
 
 const OUTCOMES = [
   "Connected", "Not Connected", "Missed", "Rejected", "Discovery complete", "Foo", "", null,
@@ -91,8 +93,18 @@ assert.equal(b("outbound", "Foo", 0), "no_pickup");
 assert.equal(b("outbound", "not connected - callback requested", 30), "short");
 assert.equal(b("outbound", "Rejected by IVR note", 0), "no_pickup");
 
-// 5. pipeline columns: Not Pick = no_pickup only, Short = answered outbound short
-assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Rejected", durationSec: 0 }), null);
+// 5. pipeline columns: Not Pick = unanswered outbound OR an outbound dial the customer rejected; Short = answered outbound 1-120 s INCLUSIVE; Conversation = answered > 120 s
+//    (in the call COUNTS Rejected stays its own bucket - asserted in section 4 above)
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Rejected", durationSec: 0 }), "not_pick");
+assert.equal(callKanbanColumn({ direction: "inbound", outcome: "Rejected", durationSec: 0 }), null, "a rejected INCOMING call moves nothing");
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Connected", durationSec: 1 }), "short_call");
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Connected", durationSec: 119 }), "short_call");
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Connected", durationSec: 120 }), "short_call", "exactly 120 s is a Short Call");
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Connected", durationSec: 121 }), "conversation_2min");
+assert.equal(callKanbanColumn({ direction: "inbound", outcome: "Connected", durationSec: 120 }), null, "incoming 120 s is Incoming short - moves nothing");
+assert.equal(callKanbanColumn({ direction: "inbound", outcome: "Connected", durationSec: 121 }), "conversation_2min");
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Not Connected", durationSec: 120 }), "not_pick", "an unanswered outcome never becomes Short just because it has seconds");
+assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Not Connected", durationSec: 5 }), "not_pick", "ring-only 5 s is not a Short Call");
 assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Not Connected", durationSec: 0 }), "not_pick");
 assert.equal(callKanbanColumn({ direction: "inbound", outcome: "Not Connected", durationSec: 0 }), "not_pick");
 assert.equal(callKanbanColumn({ direction: "inbound", outcome: "Connected", durationSec: 45 }), null);
@@ -100,8 +112,12 @@ assert.equal(callKanbanColumn({ direction: "outbound", outcome: "Connected", dur
 for (const c of cases) {
   const col = callKanbanColumn(c);
   const bucket = FE.callBucket(c);
-  const expected = { conversation: "conversation_2min", short: "short_call", no_pickup: "not_pick" }[bucket] ?? null;
-  assert.equal(col, expected);
+  let expected = { conversation: "conversation_2min", short: "short_call", no_pickup: "not_pick" }[bucket] ?? null;
+  // a dial the customer rejected (outbound Rejected) is Not Pick for the column; a rejected INCOMING call moves nothing
+  if (bucket === "rejected" && FE.isOutboundCall(c)) expected = "not_pick";
+  assert.equal(col, expected, `frontend column for ${JSON.stringify(c)}`);
+  // ...and the backend twin must give the SAME column (otherwise a new call would store a different stage than the page shows)
+  assert.equal(BE_KANBAN.callKanbanColumn(c), expected, `backend column for ${JSON.stringify(c)}`);
 }
 
 // 6. pickup rate: one formula

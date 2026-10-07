@@ -262,7 +262,7 @@ export function resolveCallDurationSec(call = {}) {
 }
 
 /**
- * Connected = answered call: Conversation (2 min+), Short call or Incoming short (shared definition in
+ * Connected = answered call: Conversation (> 2 min), Short call or Incoming short (shared definition in
  * callMetrics.js - exact outcome sets + direction + duration). Ring seconds logged on an unanswered dial are NOT
  * talk time, so no duration is shown for them.
  */
