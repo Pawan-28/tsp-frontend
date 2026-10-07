@@ -9,12 +9,11 @@ import { formatTelUrl } from "../lib/phoneUtils.js";
 import {
   PIPELINE_STAGES,
   formatPipelineValue,
-  getPipelineSummary,
   getStageMeta,
   leadFromForm,
   patchLead,
 } from "../data/pipelineMock.js";
-import { apiPatch, invalidateCache } from "../lib/api.js";
+import { apiGet, apiPatch, invalidateCache } from "../lib/api.js";
 import { getAdminCrmHeaders } from "../lib/crmContext.js";
 import { useAdmin } from "../context/AdminContext.jsx";
 import { adminPipelineIdToDbStage } from "../lib/leadSync.js";
@@ -22,9 +21,9 @@ import useIsMobile from "../lib/useIsMobile.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../lib/segmentPills.js";
 import { CALL_CONVERSATION_LABEL, CALL_SHORT_LABEL } from "../lib/callMetrics.js";
 import { usePipelineBoard, visibleKanbanColumnLeads, hiddenKanbanColumnCount, KANBAN_SHOW_MORE_STEP } from "../lib/usePipelineBoard.js";
-import { usePipelineSync, invalidatePipelineBoardCache } from "../lib/usePipelineSync.js";
+import { usePipelineSync, invalidatePipelineBoardCache, boardPeriodQuery } from "../lib/usePipelineSync.js";
 import { resolveLeadKanbanColumn, getPipelineStagePillCount } from "../lib/leadKanban.js";
-import { filterLeadsByActivityPeriod, encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../lib/periodFilter.js";
+import { encodeCustomPeriod, parseCustomPeriod, localDateKey } from "../lib/periodFilter.js";
 import { buildLeadActivityLabelMap } from "../lib/callDisplay.js";
 import { onLeadChanged, onDashboardRefresh, markLocalLeadChange } from "../lib/realtime.js";
 import { CANONICAL_SERVICES } from "../lib/servicesRegistry.js";
@@ -333,6 +332,38 @@ export default function Pipeline() {
 
   const { selectedService, setSelectedService, servicesList, selectedEmployee, setSelectedEmployee, employeesList } = useAdmin();
 
+  // Summary tiles come from the SAME backend lead universe as the Dashboard tiles (leads created in the
+  // period, honouring the employee / service filters), so Total Leads and Pipeline Value always match.
+  // The board below shows leads worked in the period, so its card count is a different number by design.
+  const [leadSummary, setLeadSummary] = useState(null);
+  const [leadSummaryStatus, setLeadSummaryStatus] = useState("loading"); // loading | ready | error
+  useEffect(() => {
+    let cancelled = false;
+    setLeadSummaryStatus("loading");
+    const qs = new URLSearchParams(boardPeriodQuery(deferredPeriod));
+    if (selectedEmployee && selectedEmployee !== "All Employees") qs.set("employee", selectedEmployee);
+    if (selectedService && selectedService !== "All Services") qs.set("service", selectedService);
+    apiGet(`/api/dashboard/lead-summary?${qs.toString()}`, { headers: getAdminCrmHeaders(), cacheTtl: 30_000 })
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.success === false) throw new Error(res.message || "lead summary failed");
+        setLeadSummary(res);
+        setLeadSummaryStatus("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLeadSummary(null);
+        setLeadSummaryStatus("error");
+      });
+    return () => { cancelled = true; };
+  }, [deferredPeriod, selectedEmployee, selectedService]);
+  const tileValue = (value, format = String) => {
+    if (leadSummaryStatus === "loading") return <StatValueSkeleton />;
+    if (leadSummaryStatus === "error" || !leadSummary) return "—";
+    return format(value);
+  };
+  const createdLabel = `created ${periodLabel.toLowerCase()}`;
+
   const filtered = useMemo(() => {
     let list = leads || [];
     const q = search.trim().toLowerCase();
@@ -438,16 +469,6 @@ export default function Pipeline() {
     return out;
   }, [grouped]);
 
-  const summaryLeads = useMemo(
-    () => (period === "all" ? filtered : (kanbanLeads.length > 0 ? kanbanLeads : filterLeadsByActivityPeriod(filtered, period))),
-    [period, filtered, kanbanLeads],
-  );
-
-  const summary = useMemo(
-    () => getPipelineSummary(summaryLeads),
-    [summaryLeads],
-  );
-
   // Cards shown only because a human staged them (kept on every period) — labelled "Older" on the card.
   const olderCount = useMemo(() => kanbanLeads.filter((l) => l._outsidePeriod).length, [kanbanLeads]);
 
@@ -552,25 +573,25 @@ export default function Pipeline() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           <StatCard
             label="Pipeline Value"
-            value={boardInitialLoading ? <StatValueSkeleton className="h-6 w-20" /> : formatPipelineValue(summary.value)}
+            value={tileValue(leadSummary?.pipelineValue, formatPipelineValue)}
             icon={TrendingUp}
             iconBg="bg-emerald-50"
             iconColor="text-emerald-600"
-            change=""
-            sub=""
+            change="Open leads"
+            sub={createdLabel}
           />
           <StatCard
             label="Total Leads"
-            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.total)}
+            value={tileValue(leadSummary?.total)}
             icon={Kanban}
             iconBg="bg-rose-50"
             iconColor="text-rose-600"
-            change={boardInitialLoading ? "Loading" : ""}
-            sub={boardInitialLoading ? "fetching leads" : ""}
+            change={leadSummaryStatus === "loading" ? "Loading" : leadSummaryStatus === "error" ? "Unavailable" : ""}
+            sub={createdLabel}
             corner={
-              summary.hot > 0 ? (
+              leadSummary?.hot > 0 ? (
                 <span className="sm:hidden inline-flex items-center gap-0.5 text-[9px] font-black text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full shadow-sm">
-                  🔥 {summary.hot}
+                  🔥 {leadSummary.hot}
                 </span>
               ) : null
             }
@@ -578,17 +599,17 @@ export default function Pipeline() {
           <div className="hidden sm:block">
             <StatCard
               label="Hot Leads"
-              value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.hot)}
+              value={tileValue(leadSummary?.hot)}
               icon={Flame}
               iconBg="bg-red-50"
               iconColor="text-red-600"
               change="High intent"
-              sub={`on ${periodLabel.toLowerCase()} board`}
+              sub={createdLabel}
             />
           </div>
           <StatCard
             label="Warm Leads"
-            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.warm)}
+            value={tileValue(leadSummary?.warm)}
             icon={Thermometer}
             iconBg="bg-amber-50"
             iconColor="text-amber-500"
@@ -597,7 +618,7 @@ export default function Pipeline() {
           />
           <StatCard
             label="Cold Leads"
-            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.cold)}
+            value={tileValue(leadSummary?.cold)}
             icon={Snowflake}
             iconBg="bg-sky-50"
             iconColor="text-sky-500"
@@ -606,7 +627,7 @@ export default function Pipeline() {
           />
           <StatCard
             label="Not Interested"
-            value={boardInitialLoading ? <StatValueSkeleton /> : String(summary.notInterested)}
+            value={tileValue(leadSummary?.notInterested)}
             icon={ThumbsDown}
             iconBg="bg-slate-50"
             iconColor="text-slate-500"
