@@ -2485,12 +2485,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      <p className="text-[11px] text-slate-500 -mb-2">
-        Showing <span className="font-bold text-slate-700">{periodLabel}</span>
-        {filterRange?.period?.fellBack ? " (custom range incomplete — showing this month)" : ""}
-        {" · "}Lead metrics (Total Leads, Qualified, Pipeline Value, Revenue, Closed Deals, funnel) count leads created in this period; calls and cash use their own dates inside it.
-      </p>
-
       <KPICardsRow kpiData={finalKpis} filterKey={filterKey} loading={rangeLoading || !filterRange} />
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_minmax(0,_36%)] gap-3 sm:gap-4 items-stretch min-w-0">
