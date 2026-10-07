@@ -559,7 +559,15 @@ export default function Pipeline() {
       invalidateCache("/api/v1");
       invalidatePipelineBoardCache("admin");
       toast.success(`Moved to ${target.label}`);
-    } catch {
+    } catch (primaryErr) {
+      // 409 = a business rule (e.g. Meeting Booked needs a scheduled meeting). Retrying through the legacy endpoint would
+      // not change that answer - revert the card and show the message.
+      if (primaryErr?.status === 409) {
+        applyLeadUpdate(prevSnapshot);
+        if (moveLeadLocally) moveLeadLocally(leadId, currentStageId);
+        toast.error(primaryErr.message || "Book a meeting first, then move the lead to Meeting Booked.");
+        return;
+      }
       try {
         await apiPatch(`/api/dashboard/pipeline/leads/${dbId}`, { stage: stageId });
         invalidateCache("/api/dashboard");

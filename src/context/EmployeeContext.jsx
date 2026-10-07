@@ -223,6 +223,7 @@ export function EmployeeProvider({ children }) {
   const [calls, setCalls] = useState(() => initialSnapshot?.calls ?? []);
   const [meetingsUpcoming, setMeetingsUpcoming] = useState([]);
   const [meetingsHistory, setMeetingsHistory] = useState([]);
+  const refreshMeetingsRef = useRef(null);
   const [activities, setActivities] = useState({});
   const [sops, setSopsState] = useState([]);
   const [selectedService, setSelectedService] = useState("All Services");
@@ -1047,6 +1048,8 @@ export function EmployeeProvider({ children }) {
         // usePipelineSync keeps its own module-level board cache that invalidateCache
         // does not touch — without this the board keeps serving the pre-move payload.
         invalidatePipelineBoardCache();
+        // A lead that left Meeting Booked had its meeting settled server-side - re-read so the Meetings page matches at once.
+        refreshMeetingsRef.current?.();
       } catch (err) {
         if (prevSnapshot) {
           setLeads((prev) => prev.map((l) => (String(l.id) === String(leadId) ? prevSnapshot : l)));
@@ -1518,6 +1521,8 @@ export function EmployeeProvider({ children }) {
     };
   }, [employee?.id, linkError, refreshLeads, refreshTasks, refreshMeetings, refreshFollowUps]);
 
+  useEffect(() => { refreshMeetingsRef.current = refreshMeetings; }, [refreshMeetings]);
+
   const createMeeting = useCallback(async (form) => {
     const lead = leads.find((l) => String(l.id) === String(form.leadId));
     const platformLabel = { google_meet: "Google Meet", zoom: "Zoom", teams: "Teams" }[form.platform]
@@ -1559,7 +1564,11 @@ export function EmployeeProvider({ children }) {
       if (!savedId) throw new Error("Meeting was not saved — server returned no id");
 
       const mapped = meetingFromApi(saved, leads);
-      setMeetingsUpcoming((prev) => [mapped, ...prev.filter((m) => m.id !== tempId)]);
+      // One customer = one active meeting: when the customer already had one the server RESCHEDULED it (same id), so replace
+      // that row instead of adding a second card.
+      setMeetingsUpcoming((prev) => [mapped, ...prev.filter((m) => m.id !== tempId && String(m.id) !== String(mapped.id))]);
+      setMeetingsHistory((prev) => prev.filter((m) => String(m.id) !== String(mapped.id)));
+      if (saved.rescheduled) toast.success("This customer already had a meeting - it was rescheduled to the new time.");
       invalidateCache("/api/v1");
       return mapped;
     } catch (err) {

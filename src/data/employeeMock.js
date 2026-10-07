@@ -644,6 +644,11 @@ export function partitionMeetings(apiMeetings, leads = []) {
 
   for (const meeting of mapped) {
     if (meeting.status === "cancelled") continue;
+    // Still "scheduled" in the database but NOT the lead's current Meeting Booked meeting -> history, never Upcoming / Overdue.
+    if (meeting.status !== "completed" && meeting.isActive === false) {
+      history.push({ ...meeting, outcome: meeting.outcome || INACTIVE_MEETING_LABEL[meeting.lifecycle] || "Closed" });
+      continue;
+    }
     const at = new Date(meeting.scheduledAt).getTime();
     if (meeting.status === "completed" || at < now) {
       history.push({
@@ -707,10 +712,21 @@ export function meetingFromApi(apiMeeting, leads = []) {
     color: lead?.color || "#e11d48",
     meetLink: apiMeeting.meetLink || apiMeeting.meet_link || apiMeeting.meetingLink || apiMeeting.meeting_link || apiMeeting.meeting_url || (typeof apiMeeting.location === "string" && apiMeeting.location.startsWith("http") ? apiMeeting.location : ""),
     status: apiMeeting.status || "scheduled",
+    // The BACKEND decides which meetings are the current Meeting Booked ones (utils/activeMeetings): isActive + lifecycle.
+    isActive: apiMeeting.isActive,
+    lifecycle: apiMeeting.lifecycle,
+    supersededBy: apiMeeting.supersededBy,
     outcome: mom.outcome || undefined,
     agenda: mom.agenda || "",
   };
 }
+
+const INACTIVE_MEETING_LABEL = {
+  stage_moved: "Lead moved out of Meeting Booked",
+  superseded: "Replaced by the current meeting",
+  other_owner: "Belongs to another rep's lead",
+  lead_deleted: "Lead deleted",
+};
 
 export const EMP_TEAM_CALL = [
   { name: "Priya Singh", av: "PS", color: "#dc2626", calls: 142, score: 94 },

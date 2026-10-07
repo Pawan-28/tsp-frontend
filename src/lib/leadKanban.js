@@ -321,10 +321,15 @@ export function leadHasShortCall(calls = [], { outboundOnly = false } = {}) {
   });
 }
 
+/** Backend flag: still "scheduled" but not the lead's current Meeting Booked meeting (lead moved on / replaced / other owner). */
+export function isInactiveScheduledMeeting(m) {
+  return Boolean(m) && m.isActive === false && m.status !== "completed" && m.status !== "cancelled";
+}
+
 export function filterMeetingsForPeriod(meetings = [], period = "month", now = new Date()) {
   const list = Array.isArray(meetings) ? meetings : [];
   return list.filter((m) => {
-    if (m.status === "cancelled") return false;
+    if (m.status === "cancelled" || isInactiveScheduledMeeting(m)) return false;
     const raw = m.scheduledAt || m.date;
     if (!raw) return period === "month";
     const key = localDateKey(new Date(raw));
@@ -432,7 +437,7 @@ export function resolveMeetingLead(meeting, allLeads = []) {
 }
 
 export function resolveMeetingKanbanColumn(meeting, now = new Date()) {
-  if (!meeting || meeting.status === "cancelled") return null;
+  if (!meeting || meeting.status === "cancelled" || isInactiveScheduledMeeting(meeting)) return null;
   if (meeting.status === "completed") return "meeting_done";
   const outcome = String(meeting.outcome || "").toLowerCase();
   if (outcome.includes("completed") || outcome.includes("showed") || outcome.includes("done")) {

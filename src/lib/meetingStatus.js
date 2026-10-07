@@ -15,6 +15,7 @@ export function isMeetingOverdue(meeting, now = Date.now()) {
   if (!meeting) return false;
   const status = String(meeting.status || "scheduled").toLowerCase();
   if (status === "completed" || status === "cancelled") return false;
+  if (meeting.isActive === false) return false; // history (replaced / lead moved on) is never "overdue"
   const ms = meetingTimeMs(meeting);
   return Number.isFinite(ms) && ms < now;
 }
@@ -30,6 +31,7 @@ export function buildOverdueMeetingByLead(meetings = [], now = Date.now()) {
     if (!m || m.leadId == null) continue;
     const status = String(m.status || "scheduled").toLowerCase();
     if (status === "completed" || status === "cancelled") continue;
+    if (m.isActive === false) continue;
     const id = String(m.leadId);
     const ms = meetingTimeMs(m);
     if (!Number.isFinite(ms)) continue;
