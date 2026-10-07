@@ -440,6 +440,7 @@ export default function Pipeline() {
     stageDisplayCounts,
     syncedConversationCalls,
     syncedShortCalls,
+    syncedIncomingShortCalls,
     syncedNotPickupCalls,
     periodMeetings,
     moveLeadLocally,
@@ -724,9 +725,9 @@ export default function Pipeline() {
             if (stage.id === "conversation_2min") {
               callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads above 2 min`;
             } else if (stage.id === "short_call") {
-              callHint = `${syncedShortCalls} short calls (answered outgoing ${CALL_SHORT_LABEL}) · ${columnLeads.length} leads in Short Call`;
+              callHint = `Short Call column = every answered call of up to 2 min, outgoing or incoming (${syncedShortCalls} outgoing short + ${syncedIncomingShortCalls || 0} incoming short calls) · ${columnLeads.length} leads in Short Call`;
             } else if (stage.id === "not_pick") {
-              callHint = `${syncedNotPickupCalls} not pick calls (outgoing, not answered). The Not Pick column also holds leads whose dial the customer rejected (counted separately as Rejected in call counts) · ${columnLeads.length} leads in Not Pick`;
+              callHint = `Not Pick column = every call that did not connect, incoming or outgoing: ${syncedNotPickupCalls} not answered, plus missed and rejected calls (counted separately in the call numbers) · ${columnLeads.length} leads in Not Pick`;
             } else if (stage.id === "meeting_booked") {
               callHint = `${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} scheduled`;
             } else if (stage.id === "meeting_done") {

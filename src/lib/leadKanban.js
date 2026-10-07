@@ -3,7 +3,7 @@ import {
   isNotPickupByClientCall,
   isNotPickColumnCall,
   isOutboundCall,
-  isShortConnectedCall,
+  isShortColumnCall,
   phonesMatchLoose,
   summarizeCalls,
 } from "./callMetrics.js";
@@ -272,11 +272,10 @@ function resolveEarlyFunnelColumn(lead, periodCalls = [], options = {}) {
   const allCalls = getCallsForLead(lead, periodCalls, {
     scopeByAssignee: contactOpts.scopeByAssignee,
   });
-  const outboundCalls = getLeadOutboundCalls(lead, periodCalls, contactOpts);
 
   if (leadHasConversation2MinPlus(allCalls, { outboundOnly: false })) return "conversation_2min";
-  if (leadHasShortCall(outboundCalls, { outboundOnly: true })) return "short_call";
-  if (leadHasNotPickCall(outboundCalls, { outboundOnly: true })) return "not_pick";
+  if (leadHasShortCall(allCalls, { outboundOnly: false })) return "short_call";
+  if (leadHasNotPickCall(allCalls, { outboundOnly: false })) return "not_pick";
   if (isUncontactedNewLead(lead, periodCalls, {
     ...contactOpts,
     sinceAssignment: options.sinceAssignment ?? false,
@@ -284,18 +283,19 @@ function resolveEarlyFunnelColumn(lead, periodCalls = [], options = {}) {
   return null;
 }
 
-// Pipeline column rules = the shared call definitions (lib/callMetrics.js, mirror of the backend):
-//   Conversation = answered, above 2 min (> 120 s), any direction
-//   Short Call   = answered OUTBOUND, 1-120 s (exactly 120 s is Short)
-//   Not Pick     = OUTBOUND call the client did not answer, OR an outbound call the customer REJECTED
-//                  (in the call COUNTS Rejected is still its own bucket)
-// A rejected INCOMING call, Missed (incoming) and Incoming short calls never create a Not Pick / Short Call card.
+// Pipeline column rules = the shared call definitions (lib/callMetrics.js, mirror of the backend). DIRECTION DOES NOT MATTER:
+//   Conversation = every answered call above 2 min (> 120 s)
+//   Short Call   = every answered call of 1-120 s (exactly 120 s is Short) - outgoing or incoming
+//   Not Pick     = every call that did not connect: not answered / not connected, missed, rejected
+// (the call COUNTS keep their own categories: Short, Incoming short, Not pick, Missed, Rejected)
 export function callKanbanColumn(call) {
   switch (callBucket(call || {})) {
     case "conversation": return "conversation_2min";
-    case "short": return "short_call";
-    case "no_pickup": return "not_pick";
-    case "rejected": return isOutboundCall(call || {}) ? "not_pick" : null; // customer rejected our dial
+    case "short":
+    case "incoming_short": return "short_call";
+    case "no_pickup":
+    case "missed_incoming":
+    case "rejected": return "not_pick";
     default: return null;
   }
 }
@@ -317,7 +317,7 @@ export function leadHasNotPickCall(calls = [], { outboundOnly = false } = {}) {
 export function leadHasShortCall(calls = [], { outboundOnly = false } = {}) {
   return calls.some((c) => {
     if (outboundOnly && !isOutboundCall(c)) return false;
-    return isShortConnectedCall(c);
+    return isShortColumnCall(c);
   });
 }
 
@@ -476,10 +476,10 @@ function personPhoneKey(lead) {
 // ───────────────────────── Full call history -> early-funnel column ─────────────────────────
 // Backend utils/callHistory.js sends, per PERSON (phone), the buckets of ALL their calls (any employee, any date):
 //   { conversation, short, noPickup, rejected, rejectedOutbound, missedIncoming, incomingShort, outbound, total, lastCallAt }
-// Business rule (priority): Conversation (answered > 120 s) > Short Call (answered outbound, 1-120 s)
-//   > Not Pick (outbound not answered, or rejected by the customer) > Lead (no qualifying call).
-// Missed (incoming), a rejected INCOMING call and Incoming short never move a lead out of Lead on their own. This is what stops a lead that was dialed (e.g. "Dialed 1x", or by a
-// previous owner, or last month) from sitting in Lead just because its stored stage still says "Lead".
+// Business rule (priority, direction does not matter): Conversation (answered > 120 s)
+//   > Short Call (answered 1-120 s, outgoing or incoming) > Not Pick (not answered / not connected / missed / rejected) > Lead (no call).
+// This is what stops a lead that was called (e.g. "Dialed 1x", an incoming call, a previous owner, last month) from sitting in Lead
+// just because its stored stage still says "Lead".
 const EARLY_COLUMN_RANK = { lead: 0, not_pick: 1, short_call: 2, conversation_2min: 3 };
 
 /** Key of a lead's person in the call-history map (same as backend personKeySql). */
@@ -493,8 +493,8 @@ export function callHistoryKey(lead) {
 export function columnFromCallHistory(h) {
   if (!h) return "lead";
   if (h.conversation > 0) return "conversation_2min";
-  if (h.short > 0) return "short_call";
-  if (h.noPickup > 0 || h.rejectedOutbound > 0) return "not_pick";
+  if (h.short > 0 || h.incomingShort > 0) return "short_call";
+  if (h.noPickup > 0 || h.rejected > 0 || h.missedIncoming > 0) return "not_pick";
   return "lead";
 }
 
@@ -854,11 +854,10 @@ export function groupKanbanSyncedWithCallyzer(
     const lead = canonicalize(leadIndex.byId.get(leadId));
     if (!lead || !showLead(lead)) continue;
     const leadCalls = getLeadCalls(lead);
-    const outboundCalls = getOutboundCalls(lead);
     let col = null;
     if (leadHasConversation2MinPlus(leadCalls, { outboundOnly: false })) col = "conversation_2min";
-    else if (leadHasShortCall(outboundCalls, { outboundOnly: true })) col = "short_call";
-    else if (leadHasNotPickCall(outboundCalls, { outboundOnly: true })) col = "not_pick";
+    else if (leadHasShortCall(leadCalls, { outboundOnly: false })) col = "short_call";
+    else if (leadHasNotPickCall(leadCalls, { outboundOnly: false })) col = "not_pick";
     // the period's calls are only part of the story: the person's full history may place the card further along
     const fullHistoryCol = historyAwareColumn(lead, col || "lead", callHistory);
     if (fullHistoryCol && fullHistoryCol !== "lead") col = fullHistoryCol;

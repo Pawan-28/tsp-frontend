@@ -1026,9 +1026,9 @@ export default function EmployeeLeads() {
             if (stage.id === "conversation_2min") {
               callHint = `${syncedConversationCalls} calls ${CALL_CONVERSATION_LABEL} · ${columnLeads.length} leads above 2 min`;
             } else if (stage.id === "short_call") {
-              callHint = `${syncedShortCalls} short calls (answered outgoing ${CALL_SHORT_LABEL}) · ${columnLeads.length} leads in Short Call`;
+              callHint = `Short Call column = every answered call of up to 2 min, outgoing or incoming (${syncedShortCalls} outgoing short + ${callMetrics.incomingShort || 0} incoming short calls) · ${columnLeads.length} leads in Short Call`;
             } else if (stage.id === "not_pick") {
-              callHint = `${syncedNotPickupCalls} not pick calls (outgoing, not answered). The Not Pick column also holds leads whose dial the customer rejected (${callMetrics.rejected} rejected, counted separately) · ${columnLeads.length} leads in Not Pick`;
+              callHint = `Not Pick column = every call that did not connect, incoming or outgoing: ${syncedNotPickupCalls} not answered + ${callMetrics.missed || 0} missed + ${callMetrics.rejected || 0} rejected (counted separately in the call numbers) · ${columnLeads.length} leads in Not Pick`;
             } else if (stage.id === "meeting_booked") {
               callHint = `Booked: ${columnLeads.length} leads in this stage (cards). ${MEETING_METRIC_INFO.bookedCards} Separate number: ${periodMeetings.filter((m) => m.status !== "completed" && m.status !== "cancelled").length} meetings still scheduled in this period.`;
             } else if (stage.id === "meeting_done") {
