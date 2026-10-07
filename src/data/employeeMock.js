@@ -1,6 +1,7 @@
 /** LRMS v7 employee panel mock data — mirrors lrms-v7.html */
 import { CALL_CONVERSATION_MIN_SEC, callTypeCode, inferApiCallDirection, isConversationCall, isMissedCall as isMissedCallMetric, phonesMatchLoose as phonesMatchLooseMetric, parseCallDurationSeconds, summarizeCalls, isConnectedCall } from "../lib/callMetrics.js";
 import { mapStageToId, normalizeStageLabel, isPaymentCompleteStageId, PIPELINE_STAGE_DEFINITIONS } from "../lib/pipelineStages.js";
+import { applyActiveFallback } from "../lib/activeMeetings.js";
 import {
   resolveLeadKanbanColumn,
   groupEmpLeadsKanban as groupLeadsKanbanByCalls,
@@ -638,7 +639,9 @@ export function meetingToApiPayload(form, employeeId) {
 
 export function partitionMeetings(apiMeetings, leads = []) {
   const now = Date.now();
-  const mapped = (Array.isArray(apiMeetings) ? apiMeetings : []).map((m) => meetingFromApi(m, leads));
+  // The backend flags each meeting (isActive / lifecycle); only a response WITHOUT the flag is classified here
+  // (lib/activeMeetings.js mirrors the backend rule: one customer = one active meeting).
+  const mapped = applyActiveFallback(apiMeetings, leads).map((m) => meetingFromApi(m, leads));
   const upcoming = [];
   const history = [];
 

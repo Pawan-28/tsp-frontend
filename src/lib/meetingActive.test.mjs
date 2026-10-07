@@ -55,4 +55,48 @@ assert.ok(!filterMeetingsForPeriod([active, stale], "month").some((m) => m.id ==
 assert.equal(buildOverdueMeetingByLead([{ ...stale, scheduledAt: wall(past) }]).size, 0);
 assert.equal(buildOverdueMeetingByLead([{ ...active, scheduledAt: wall(past) }]).size, 1);
 
+
+// 7. ONE CUSTOMER = ONE ACTIVE MEETING on the Meetings page - the visible Deepak case: two overdue meetings, same customer
+{
+  const lead = { id: 9, name: "Deepak Kumar Sharma", phone: "919194724633", pipelineStage: "Meeting Booked", stage: "Meeting Booked", status: "Meeting Booked" };
+  const two = [
+    { id: 301, leadId: 9, title: "Deepak - Clarity Call", status: "scheduled", scheduledAt: "2026-10-06T14:00:00", leadPhone: "919194724633" },
+    { id: 302, leadId: 9, title: "Deepak - Clarity Call", status: "scheduled", scheduledAt: "2026-10-06T20:30:00", leadPhone: "919194724633" },
+  ];
+  const overdueCards = ({ upcoming, history }) => [...upcoming, ...history].filter((m) => isMeetingOverdue(m));
+  const upcomingCards = ({ upcoming, history }) => [...upcoming, ...history].filter((m) => m.isActive !== false && m.status === "scheduled");
+
+  // (a) API from the NEW backend: flags decide
+  const flagged = two.map((m) => ({ ...m, isActive: m.id === 302, lifecycle: m.id === 302 ? "active" : "superseded", supersededBy: m.id === 302 ? undefined : 302 }));
+  const a = partitionMeetings(flagged, [lead]);
+  assert.deepEqual(overdueCards(a).map((m) => m.id), [302], "backend flags: ONE overdue card (8:30 PM)");
+  assert.equal(a.history.find((m) => m.id === 301).outcome, "Replaced by the current meeting", "the 2 PM one is history only");
+  assert.equal(upcomingCards(a).length, 1);
+
+  // (b) API from an OLD backend (no flag): the frontend fallback applies the SAME rule - still one active card
+  const b = partitionMeetings(two, [lead]);
+  assert.deepEqual(overdueCards(b).map((m) => m.id), [302], "no flag: still ONE overdue card");
+  assert.equal(b.history.find((m) => m.id === 301).lifecycle, "superseded");
+
+  // (c) both upcoming, 2 PM -> 8:30 PM: the later booking wins
+  const both = [
+    { id: 11, leadId: 9, status: "scheduled", scheduledAt: wall(new Date(Date.now() + 86400000)), leadPhone: "919194724633" },
+    { id: 12, leadId: 9, status: "scheduled", scheduledAt: wall(new Date(Date.now() + 86400000 + 6.5 * 3600000)), leadPhone: "919194724633" },
+  ];
+  const c = partitionMeetings(both, [lead]);
+  assert.deepEqual(c.upcoming.map((m) => m.id), [12]);
+  assert.deepEqual(c.history.map((m) => m.id), [11]);
+
+  // (d) lead left Meeting Booked: no active card at all, history only
+  const moved = partitionMeetings(two, [{ ...lead, pipelineStage: "Conversation", stage: "Conversation", status: "Conversation" }]);
+  assert.equal(overdueCards(moved).length, 0);
+  assert.equal(moved.upcoming.length, 0);
+  assert.equal(moved.history.length, 2);
+
+  // (e) PIPELINE and MEETINGS PAGE share the definition: the meetings that place a Meeting Booked card are exactly the active ones
+  const board = [...a.upcoming, ...a.history].filter((m) => resolveMeetingKanbanColumn(m) === "meeting_booked").map((m) => m.id);
+  assert.deepEqual(board, [302]);
+  assert.deepEqual(filterMeetingsForPeriod([...a.upcoming, ...a.history], "all").map((m) => m.id), [302]);
+}
+
 console.log("meetingActive: Meetings page + Pipeline follow the backend isActive flag - OK");

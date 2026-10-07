@@ -1570,6 +1570,8 @@ export function EmployeeProvider({ children }) {
       setMeetingsHistory((prev) => prev.filter((m) => String(m.id) !== String(mapped.id)));
       if (saved.rescheduled) toast.success("This customer already had a meeting - it was rescheduled to the new time.");
       invalidateCache("/api/v1");
+      invalidatePipelineBoardCache();
+      refreshMeetingsRef.current?.();
       return mapped;
     } catch (err) {
       setMeetingsUpcoming((prev) => prev.filter((m) => m.id !== tempId));
@@ -1580,7 +1582,9 @@ export function EmployeeProvider({ children }) {
 
   const cancelMeeting = useCallback(async (meetingId) => {
     const previousUpcoming = meetingsUpcoming;
+    const previousHistory = meetingsHistory;
     setMeetingsUpcoming((prev) => prev.filter((m) => m.id !== meetingId));
+    setMeetingsHistory((prev) => prev.filter((m) => m.id !== meetingId)); // an overdue meeting is filed under History
 
     if (!shouldPersistToApi(usingApi) || !meetingId) return;
 
@@ -1589,11 +1593,14 @@ export function EmployeeProvider({ children }) {
         headers: getCrmHeaders(),
       });
       invalidateCache("/api/v1");
+      invalidatePipelineBoardCache();
+      refreshMeetingsRef.current?.();
     } catch (err) {
       setMeetingsUpcoming(previousUpcoming);
+      setMeetingsHistory(previousHistory);
       toast.error(err.message || "Could not delete meeting");
     }
-  }, [meetingsUpcoming, usingApi]);
+  }, [meetingsUpcoming, meetingsHistory, usingApi]);
 
   const rescheduleMeeting = useCallback(async (meetingId, updates) => {
     if (!meetingId || !updates || Object.keys(updates).length === 0) return null;
@@ -1609,7 +1616,12 @@ export function EmployeeProvider({ children }) {
 
       const mapped = meetingFromApi(saved, leads);
       setMeetingsUpcoming((prev) => prev.map((m) => (m.id === meetingId ? mapped : m)));
+      // An overdue meeting lives in the History list - drop that stale copy; the re-read below files it in the right list.
+      setMeetingsHistory((prev) => prev.filter((m) => String(m.id) !== String(meetingId)));
       invalidateCache("/api/v1");
+      // The Pipeline board keeps its own cache: without this it would keep the old date until its next refresh.
+      invalidatePipelineBoardCache();
+      await refreshMeetingsRef.current?.();
       return mapped;
     } catch (err) {
       toast.error(err.message || "Could not reschedule meeting");
@@ -1626,6 +1638,7 @@ export function EmployeeProvider({ children }) {
       });
       const saved = unwrapApiData(res) || res?.data || res;
       invalidateCache("/api/v1");
+      invalidatePipelineBoardCache();
       await refreshMeetings();
       return saved || true;
     } catch (err) {
