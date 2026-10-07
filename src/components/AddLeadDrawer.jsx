@@ -8,7 +8,7 @@ import { Drawer } from "./Primitives.jsx";
 import { apiPost, apiGet, invalidateCache } from "../lib/api.js";
 import { getAdminCrmHeaders } from "../lib/crmContext.js";
 import { apiLeadToAdmin, unwrapApiData } from "../lib/leadSync.js";
-import { SOURCE_CATALOG } from "../lib/leadSource.js";
+import { useLeadSources } from "../lib/useLeadSources.js";
 
 const INDIAN_STATES = [
   "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Delhi", "Goa",
@@ -18,7 +18,6 @@ const INDIAN_STATES = [
   "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
 ].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
 
-const LEAD_SOURCE_OPTIONS = SOURCE_CATALOG.filter((s) => !["n8n", "api", "form", "other"].includes(s.key)).map((s) => s.label);
 
 const DEFAULT_SERVICES = [
   // "AI Automation Suite",
@@ -428,8 +427,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
                   <div style={iconFieldWrap}>
                     <Radio size={14} style={iconStyle} />
                     <div style={{ paddingLeft: 36 }}>
-                      <ALSelect
-                        options={LEAD_SOURCE_OPTIONS}
+                      <SourceSelect
                         value={formData.source}
                         onChange={val => setField("source", val)}
                         error={!!errors.source}
@@ -466,7 +464,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
   
                 <FormField label="Lead Source" fullWidth>
-                  <ALSelect options={LEAD_SOURCE_OPTIONS} value={formData.source} onChange={val => setField("source", val)} error={!!errors.source} placeholder="Set on Basic Info tab" />
+                  <SourceSelect value={formData.source} onChange={val => setField("source", val)} error={!!errors.source} placeholder="Set on Basic Info tab" />
                   <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>Primary source is set under Basic Info → Source &amp; service.</p>
                 </FormField>
   
@@ -729,8 +727,27 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
   
   const CUSTOM_OPTION_VALUE = "__custom__";
 
-  function ALSelect({ options, value = "", onChange, error = false, placeholder = "Select", customPlaceholder = "Type your own…" }) {
+  function ALSelect({ options, value = "", onChange, error = false, placeholder = "Select", customPlaceholder = "Type your own…", onCustomCommit }) {
     const [customMode, setCustomMode] = useState(Boolean(value) && !options.includes(value));
+    const [committing, setCommitting] = useState(false);
+    const [commitError, setCommitError] = useState("");
+
+    // "+ Add new..." with onCustomCommit: the typed name is SAVED (Enter / leaving the box), then selected from the list.
+    const commitCustom = async () => {
+      const text = String(value || "").trim();
+      if (!onCustomCommit || !text || committing) return;
+      setCommitting(true);
+      setCommitError("");
+      try {
+        const finalValue = await onCustomCommit(text);
+        onChange && onChange(finalValue);
+        setCustomMode(false);
+      } catch (err) {
+        setCommitError(err?.message || "Could not save this option");
+      } finally {
+        setCommitting(false);
+      }
+    };
 
     const baseFieldStyle = {
       background: "#fff5f5",
@@ -746,14 +763,23 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
           <input
             type="text"
             value={value}
-            onChange={e => onChange && onChange(e.target.value)}
+            onChange={e => { setCommitError(""); onChange && onChange(e.target.value); }}
+            onBlur={onCustomCommit ? commitCustom : undefined}
+            onKeyDown={onCustomCommit ? (e => { if (e.key === "Enter") { e.preventDefault(); commitCustom(); } }) : undefined}
             placeholder={customPlaceholder}
             autoFocus
+            disabled={committing}
             style={{ ...baseFieldStyle, paddingRight: 32 }}
           />
+          {onCustomCommit && (
+            <p style={{ fontSize: 10, marginTop: 4, color: commitError ? "#e11d48" : "#94a3b8" }}>
+              {commitError || (committing ? "Saving…" : "Press Enter to add it - it also appears on your Sources page.")}
+            </p>
+          )}
           <button
             type="button"
-            onClick={() => { setCustomMode(false); onChange && onChange(""); }}
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => { setCustomMode(false); setCommitError(""); onChange && onChange(""); }}
             title="Choose from list instead"
             style={{
               position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
@@ -793,6 +819,22 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
     );
   }
   
+  /** Source dropdown: ONLY the sources on the admin Sources page; "+ Add new…" creates one (and it shows on that page at once). */
+  function SourceSelect({ value, onChange, error, placeholder }) {
+    const { options, addSource } = useLeadSources(getAdminCrmHeaders);
+    return (
+      <ALSelect
+        options={options}
+        value={value}
+        onChange={onChange}
+        error={error}
+        placeholder={placeholder}
+        customPlaceholder="Type the new source name…"
+        onCustomCommit={async (text) => (await addSource(text)).label}
+      />
+    );
+  }
+
   export default function AddLeadDrawer({
     open,
     onClose,

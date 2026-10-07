@@ -59,7 +59,8 @@ function mapLeadRow(lead) {
 export default function SourceLeads() {
   const { sourceKey } = useParams();
   const decodedKey = decodeURIComponent(sourceKey || "");
-  const sourceLabel = getSourceLabel(decodedKey);
+  const [customSources, setCustomSources] = useState([]);
+  const sourceLabel = getSourceLabel(decodedKey, customSources);
 
   const [allLeads, setAllLeads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,9 +73,14 @@ export default function SourceLeads() {
     (async () => {
       setLoading(true);
       try {
-        const items = await fetchAllLeads(apiGet, { headers: getAdminCrmHeaders(), pageSize: 2500 });
+        const [items, settings] = await Promise.all([
+          fetchAllLeads(apiGet, { headers: getAdminCrmHeaders(), pageSize: 2500 }),
+          apiGet("/api/settings", { headers: getAdminCrmHeaders() }).catch(() => ({})),
+        ]);
+        const custom = Array.isArray(settings?.customSources) ? settings.customSources : [];
         if (!cancelled) {
-          const marketing = filterLeadsForSourceDashboard(items);
+          setCustomSources(custom);
+          const marketing = filterLeadsForSourceDashboard(items, custom);
           const filtered = filterLeadsBySourceKey(marketing, decodedKey);
           setAllLeads(filtered.map(mapLeadRow));
         }

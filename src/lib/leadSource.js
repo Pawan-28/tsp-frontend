@@ -104,8 +104,11 @@ function isSeedOrDemoLead(lead) {
   return false;
 }
 
-/** Keep only real marketing-channel leads on the Source dashboard. */
-export function isSourceDashboardLead(lead) {
+/**
+ * Keep only real marketing-channel leads on the Source dashboard.
+ * `customKeys` = keys of the sources the admin created from a dropdown ("+ Add new...", settings.customSources): they count too.
+ */
+export function isSourceDashboardLead(lead, customKeys = new Set()) {
   if (!lead || isSeedOrDemoLead(lead)) return false;
 
   const rawSource = String(lead.source || lead.sourceMeta?.integration || "").toLowerCase();
@@ -113,7 +116,7 @@ export function isSourceDashboardLead(lead) {
 
   const key = resolveLeadSourceKey(lead);
   if (EXCLUDED_SOURCE_KEYS.has(key)) return false;
-  if (!MARKETING_SOURCE_KEYS.has(key)) return false;
+  if (!MARKETING_SOURCE_KEYS.has(key) && !customKeys.has(key)) return false;
 
   // Legacy manual rows without channel attribution are not marketing sources.
   if (key === "manual") {
@@ -124,8 +127,14 @@ export function isSourceDashboardLead(lead) {
   return true;
 }
 
-export function filterLeadsForSourceDashboard(leads = []) {
-  return (Array.isArray(leads) ? leads : []).filter(isSourceDashboardLead);
+/** Set of keys of the admin-created custom sources ([{ key, label }] from settings.customSources). */
+export function customSourceKeys(customSources = []) {
+  return new Set((Array.isArray(customSources) ? customSources : []).filter((c) => c && c.key).map((c) => c.key));
+}
+
+export function filterLeadsForSourceDashboard(leads = [], customSources = []) {
+  const keys = customSourceKeys(customSources);
+  return (Array.isArray(leads) ? leads : []).filter((l) => isSourceDashboardLead(l, keys));
 }
 
 /**
@@ -161,8 +170,9 @@ export function resolveLeadSourceKey(lead) {
   return "n8n";
 }
 
-export function getSourceLabel(key) {
-  return CATALOG_LABELS[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+export function getSourceLabel(key, customSources = []) {
+  const custom = (Array.isArray(customSources) ? customSources : []).find((c) => c && c.key === key);
+  return (custom && custom.label) || CATALOG_LABELS[key] || key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function leadRevenue(lead) {
@@ -181,21 +191,26 @@ export function isLeadConverted(lead) {
   );
 }
 
-export function aggregateLeadsBySource(leads = []) {
+export function aggregateLeadsBySource(leads = [], customSources = []) {
   const buckets = new Map();
-
-  for (const lead of leads) {
-    const key = resolveLeadSourceKey(lead);
+  const ensureBucket = (key) => {
     if (!buckets.has(key)) {
       buckets.set(key, {
         key,
-        label: getSourceLabel(key),
+        label: getSourceLabel(key, customSources),
         leads: [],
         leadCount: 0,
         totalRevenue: 0,
         convertedCount: 0,
       });
     }
+  };
+  // a source the admin created ("+ Add new...") is on the page even before its first lead
+  for (const c of Array.isArray(customSources) ? customSources : []) if (c && c.key) ensureBucket(c.key);
+
+  for (const lead of leads) {
+    const key = resolveLeadSourceKey(lead);
+    ensureBucket(key);
     const bucket = buckets.get(key);
     const converted = isLeadConverted(lead);
     const revenue = converted ? leadRevenue(lead) : 0;

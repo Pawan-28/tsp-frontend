@@ -15,7 +15,9 @@ import {
 } from "../../data/employeeMock.js";
 import { LeadStatusBadge, AvatarCircle, FormTextarea, BtnPrimary } from "../../employee/components/EmpUI.jsx";
 import CashCollectedPanel, { paymentTypeForStage } from "../CashCollectedPanel.jsx";
-import { CANONICAL_STAGE_LABELS, buildDetailDraft, unwrapApiList, filterAssignableEmployees, isDummyEmployee } from "../../lib/leadSync.js";
+import { CANONICAL_STAGE_LABELS, buildDetailDraft, realLeadName, unwrapApiList, filterAssignableEmployees, isDummyEmployee } from "../../lib/leadSync.js";
+import { useLeadSources } from "../../lib/useLeadSources.js";
+import { normalizeSource } from "../../lib/leadAssignment.js";
 import { callFromApiLite } from "../../lib/callFromApiLite.js";
 import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../../lib/callDisplay.js";
 import { formatTelUrl, formatWhatsAppPhone } from "../../lib/phoneUtils.js";
@@ -83,11 +85,6 @@ function normalizeCallForDisplay(call, liveLead) {
   };
 }
 
-// Source keys an employee can pick; the stored key is the option value, sourceLabel() is what is shown.
-const SELECTABLE_SOURCE_KEYS = [
-  "manual", "meta_ads", "google_ads", "website", "whatsapp", "landing_page", "linkedin", "referral", "form",
-];
-
 /** A call that never connected (Not pick / Rejected / Missed incoming / 0:00): no AI summary exists for it. */
 function isCallNotConnected(call) {
   return !isCallConnected(call) || isMissedCall(call);
@@ -95,10 +92,26 @@ function isCallNotConnected(call) {
 
 const CUSTOM_FIELD_OPTION = "__custom__";
 
-function DetailField({ label, value, onChange, readOnly = false, type = "text", options, allowCustom = false, getOptionLabel, wide = false, footer = null }) {
+function DetailField({ label, value, onChange, readOnly = false, type = "text", options, allowCustom = false, getOptionLabel, wide = false, footer = null, placeholder, highlight = false, onCustomCommit }) {
   // Only the user's "+ Add new…" opens free-text mode. A stored value that isn't in `options`
   // is appended to them so the select shows it instead of silently falling back to "—".
   const [customMode, setCustomMode] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  // onCustomCommit(text) -> final value: used by Source so a typed new source is SAVED (and shows on the admin Sources page).
+  const commitCustom = async () => {
+    const text = String(value || "").trim();
+    if (!onCustomCommit || !text || committing) return;
+    setCommitting(true);
+    try {
+      const finalValue = await onCustomCommit(text);
+      onChange(finalValue);
+      setCustomMode(false);
+    } catch (err) {
+      toast.error(err?.message || "Could not save this option");
+    } finally {
+      setCommitting(false);
+    }
+  };
   const selectOptions = options && value && value !== "—" && !options.includes(value)
     ? [...options, value]
     : options;
@@ -107,7 +120,7 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
   const shownValue = value ? optionText(value) : "";
 
   return (
-    <div className={`${fieldCardClass}${wide ? " col-span-2" : ""}`}>
+    <div className={`${fieldCardClass}${wide ? " col-span-2" : ""}${highlight ? " !border-rose-400 !bg-rose-50/60 ring-1 ring-rose-200" : ""}`}>
       <p className={labelClass}>{label}</p>
       {readOnly ? (
         <p className="text-xs font-black text-slate-800 mt-1.5 truncate" title={shownValue || undefined}>{shownValue || "—"}</p>
@@ -117,12 +130,16 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Type to add new…"
+            onBlur={onCustomCommit ? commitCustom : undefined}
+            onKeyDown={onCustomCommit ? ((e) => { if (e.key === "Enter") { e.preventDefault(); commitCustom(); } }) : undefined}
+            disabled={committing}
+            placeholder={onCustomCommit ? "Type the new source name, press Enter…" : "Type to add new…"}
             className={inputClass}
             style={{ paddingRight: 28 }}
           />
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => { setCustomMode(false); onChange(""); }}
             title="Choose from list instead"
             className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
@@ -154,6 +171,7 @@ function DetailField({ label, value, onChange, readOnly = false, type = "text", 
           type={type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
           className={inputClass}
         />
       )}
@@ -267,6 +285,8 @@ export default function LeadDetailPanel({
   // Extra Info: customer-level profile (leads.source_meta.extraInfo) + the CRM data that owns meeting / follow-up.
   const { meetingsUpcoming, meetingsHistory, followUps } = useEmployee();
   const [fetchedExtraInfo, setFetchedExtraInfo] = useState(null);
+  // Source dropdown = ONLY the sources on the admin Sources page; "+ Add new…" creates one there too.
+  const { sources: leadSources, addSource } = useLeadSources(() => (variant === "admin" ? getAdminCrmHeaders() : getCrmHeaders()));
   // Catalog entries ({ name, serviceId, priceNum }) — used to resolve the lead's stored service.
   const [serviceCatalog, setServiceCatalog] = useState([]);
   // Once the user picks a service themselves, never overwrite it with the lead's stored value.
@@ -500,10 +520,15 @@ export default function LeadDetailPanel({
   // Source: the stored key is the option value; the current stored value is always selectable.
   const sourceOptions = useMemo(() => {
     const current = String(draft.source || "").trim();
-    const currentNorm = current.toLowerCase().replace(/[\s-]+/g, "_");
-    const keys = SELECTABLE_SOURCE_KEYS.filter((k) => k !== currentNorm);
+    const currentKey = current ? normalizeSource(current) : "";
+    const keys = leadSources.map((s) => s.key).filter((k) => k !== currentKey && k !== current);
     return current ? [current, ...keys] : ["", ...keys];
-  }, [draft.source]);
+  }, [draft.source, leadSources]);
+  const sourceOptionLabel = (opt) => {
+    if (!opt) return "\u2014";
+    const hit = leadSources.find((s) => s.key === opt || s.key === normalizeSource(opt));
+    return hit ? hit.label : sourceLabel(opt);
+  };
 
   const allNotesAndSummaries = useMemo(() => {
     const userNotes = notesList.map((n) => ({
@@ -675,7 +700,9 @@ export default function LeadDetailPanel({
     if (!onSave) return;
     try {
       setSaving(true);
+      const baseName = buildDetailDraft(liveLead).name || "";
       await onSave({
+        ...(String(draft.name || "").trim() !== baseName ? { name: String(draft.name || "").trim() } : {}),
         phone: draft.phone,
         email: draft.email,
         pipelineStage: draft.stage,
@@ -1156,8 +1183,20 @@ export default function LeadDetailPanel({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <DetailField label="Phone" value={draft.phone} onChange={patchDraft("phone")} readOnly={readOnly} />
-        <DetailField label="Email" value={draft.email} onChange={patchDraft("email")} readOnly={readOnly} />
+        <DetailField
+          label="Name"
+          value={draft.name || ""}
+          onChange={patchDraft("name")}
+          readOnly={readOnly}
+          placeholder="Add customer name"
+          highlight={!readOnly && !realLeadName({ name: draft.name })}
+          wide
+          footer={!readOnly && !realLeadName({ name: draft.name }) ? (
+            <p className="mt-1 text-[10px] font-semibold text-rose-600">This lead has no name - add the name, then Save.</p>
+          ) : null}
+        />
+        <DetailField label="Phone" value={draft.phone} onChange={patchDraft("phone")} readOnly={readOnly} placeholder="Add phone number" highlight={!readOnly && !String(draft.phone || "").trim()} />
+        <DetailField label="Email" value={draft.email} onChange={patchDraft("email")} readOnly={readOnly} placeholder="Add email" highlight={!readOnly && !String(draft.email || "").trim()} />
         <DetailField
           label="Stage"
           value={draft.stage}
@@ -1195,7 +1234,9 @@ export default function LeadDetailPanel({
           value={draft.source}
           onChange={patchDraft("source")}
           options={sourceOptions}
-          getOptionLabel={(opt) => (opt ? sourceLabel(opt) : "—")}
+          getOptionLabel={sourceOptionLabel}
+          allowCustom
+          onCustomCommit={async (text) => (await addSource(text)).key}
           readOnly={readOnly}
         />
         <DetailField

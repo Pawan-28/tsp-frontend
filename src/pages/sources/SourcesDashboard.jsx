@@ -45,6 +45,8 @@ export default function SourcesDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [dismissedSources, setDismissedSources] = useState({});
+  // Sources created from a dropdown ("+ Add new...") - they appear here automatically, even before their first lead.
+  const [customSources, setCustomSources] = useState([]);
   const [deletingKey, setDeletingKey] = useState(null);
 
   useEffect(() => {
@@ -63,14 +65,17 @@ export default function SourcesDashboard() {
     })();
     apiGet("/api/settings", { headers: getAdminCrmHeaders(), skipCache: true })
       .then((res) => {
-        if (!cancelled) setDismissedSources(res?.dismissedSources || {});
+        if (!cancelled) {
+          setDismissedSources(res?.dismissedSources || {});
+          setCustomSources(Array.isArray(res?.customSources) ? res.customSources : []);
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
-  const marketingLeads = useMemo(() => filterLeadsForSourceDashboard(leads), [leads]);
-  const allSourceGroups = useMemo(() => aggregateLeadsBySource(marketingLeads), [marketingLeads]);
+  const marketingLeads = useMemo(() => filterLeadsForSourceDashboard(leads, customSources), [leads, customSources]);
+  const allSourceGroups = useMemo(() => aggregateLeadsBySource(marketingLeads, customSources), [marketingLeads, customSources]);
   const sourceGroups = useMemo(
     () => allSourceGroups.filter((g) => !isSourceDismissed(g, dismissedSources[g.key])),
     [allSourceGroups, dismissedSources],

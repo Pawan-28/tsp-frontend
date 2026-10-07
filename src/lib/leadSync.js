@@ -599,11 +599,25 @@ export function normalizeLeadForDetailPanel(lead) {
   };
 }
 
+/** The lead's real name, or "" when it has none ("-", "Unknown", or just the phone number shown as a name). */
+export function realLeadName(lead) {
+  if (!lead) return "";
+  const name = String(lead.name || lead.leadName || lead.lead_name || "").trim();
+  if (!name || name === "\u2014" || name === "-" || /^unknown( lead)?$/i.test(name)) return "";
+  const digits = (v) => String(v || "").replace(/\D/g, "");
+  const nameDigits = digits(name);
+  const phoneDigits = digits(lead.phone || lead.clientPhone);
+  // the phone number shown as a name (with or without the country code)
+  if (nameDigits.length >= 7 && phoneDigits.length >= 7 && nameDigits.slice(-10) === phoneDigits.slice(-10)) return "";
+  return name;
+}
+
 export function buildDetailDraft(lead) {
   if (!lead) return {};
   const meta = typeof lead.sourceMeta === "string" ? (() => { try { return JSON.parse(lead.sourceMeta); } catch { return {}; } })() : (lead.sourceMeta || lead.source_meta || {});
   const tracking = withUtmSourceFallback(extractTracking(lead, meta), lead, meta);
   return {
+    name: realLeadName(lead),
     phone: lead.phone || "",
     email: lead.email || "",
     stage: lead.stage || lead.pipelineStage || "Lead",
