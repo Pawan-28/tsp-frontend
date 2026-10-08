@@ -18,6 +18,7 @@ import CashCollectedPanel, { paymentTypeForStage } from "../CashCollectedPanel.j
 import { CANONICAL_STAGE_LABELS, buildDetailDraft, realLeadName, unwrapApiList, filterAssignableEmployees, isDummyEmployee } from "../../lib/leadSync.js";
 import { useLeadSources } from "../../lib/useLeadSources.js";
 import { normalizeSource } from "../../lib/leadAssignment.js";
+import { formatLeadCreated } from "../../lib/leadCreated.js";
 import { callFromApiLite } from "../../lib/callFromApiLite.js";
 import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../../lib/callDisplay.js";
 import { formatTelUrl, formatWhatsAppPhone } from "../../lib/phoneUtils.js";
@@ -1248,6 +1249,7 @@ export default function LeadDetailPanel({
         />
         <DetailField label="Last Contact" value={liveLead.last} readOnly />
         <DetailField label="Owner/Assignee" value={currentAssignee} readOnly />
+        <DetailField label="Lead Created" value={formatLeadCreated(liveLead.createdAt || liveLead.created_at)} readOnly />
         <DetailField
           label="Service"
           value={draft.service || "—"}
