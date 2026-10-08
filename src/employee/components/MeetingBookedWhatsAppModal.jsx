@@ -4,6 +4,7 @@ import { CalendarCheck, MessageCircle } from "lucide-react";
 import { EmpModal, BtnPrimary, BtnSecondary, FormLabel, FormInput } from "./EmpUI.jsx";
 import { buildMeetingConfirmationMessage, openWhatsAppChat } from "../../lib/whatsappScripts.js";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
+import { resolveLeadServiceName } from "../../lib/meetingTitle.js";
 
 /**
  * Shown right after an employee books a meeting: one tap opens WhatsApp to the customer's number with
@@ -20,7 +21,7 @@ export default function MeetingBookedWhatsAppModal({ open, meeting, lead, employ
     setMessage(buildMeetingConfirmationMessage({
       leadName: lead?.name || meeting?.lead,
       meeting,
-      employeeName: employee?.name,
+      serviceName: resolveLeadServiceName(lead) || meeting?.leadService,
     }));
   }, [open, meeting?.id, lead?.id]);
 

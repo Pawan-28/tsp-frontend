@@ -2,6 +2,7 @@ import { apiGet, apiPost, apiPatch, apiDelete, invalidateCache } from "./api.js"
 import { getCrmHeaders } from "./crmContext.js";
 import { formatWhatsAppPhone as formatWhatsAppPhoneCentral } from "./phoneUtils.js";
 import { appDateKey } from "./timezone.js";
+import { cleanServiceName } from "./meetingTitle.js";
 
 export const WA_SCRIPT_PLACEHOLDERS = [
   { key: "{name}", label: "Lead name" },
@@ -46,7 +47,8 @@ export function openWhatsAppChat(phone, message = "") {
   return true;
 }
 
-const WEEKDAY_FMT = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Date key (YYYY-MM-DD) one day after `key`. */
 function nextDateKey(key) {
@@ -56,8 +58,8 @@ function nextDateKey(key) {
 }
 
 /**
- * Booked meeting -> { date, time } for the customer message, in the app timezone (IST):
- *   date: "Today" / "Tomorrow" / "Wed, 7 Oct 2026"      time: "5:30 PM"
+ * Booked meeting -> { date, relative, time } for the customer message, in the app timezone (IST):
+ *   date: "Thu, 8 Oct 2026"    relative: "Today" | "Tomorrow" | ""    time: "5:30 PM"
  * `scheduledAt` is the IST wall clock "YYYY-MM-DDTHH:mm:ss" (an ISO string with a zone is converted to IST first).
  */
 export function formatMeetingWhen(scheduledAt, now = new Date()) {
@@ -78,36 +80,61 @@ export function formatMeetingWhen(scheduledAt, now = new Date()) {
       mm = Number(parts.find((p) => p.type === "minute").value);
     }
   }
-  if (!key || Number.isNaN(hh) || Number.isNaN(mm)) return { date: "", time: "" };
+  if (!key || Number.isNaN(hh) || Number.isNaN(mm)) return { date: "", relative: "", time: "" };
   const today = appDateKey(now);
   const [y, mo, d] = key.split("-").map(Number);
-  const date = key === today ? "Today" : key === nextDateKey(today) ? "Tomorrow" : WEEKDAY_FMT.format(new Date(Date.UTC(y, mo - 1, d)));
+  const weekday = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  const date = `${weekday}, ${d} ${MONTHS[mo - 1]} ${y}`;
+  const relative = key === today ? "Today" : key === nextDateKey(today) ? "Tomorrow" : "";
   const time = `${hh % 12 === 0 ? 12 : hh % 12}:${String(mm).padStart(2, "0")} ${hh >= 12 ? "PM" : "AM"}`;
-  return { date, time };
+  return { date, relative, time };
+}
+
+/**
+ * The service the meeting is about. Order: the service passed in -> the meeting's own service -> read back out of the meeting title
+ * ("<Customer> <Service> - Clarity Call"). "" when none is known.
+ */
+export function serviceForMeetingMessage({ serviceName, meeting, leadName } = {}) {
+  const direct = cleanServiceName(serviceName) || cleanServiceName(meeting?.leadService) || cleanServiceName(meeting?.service);
+  if (direct && !/^SRV-\d+$/i.test(direct)) return direct;
+  let title = String(meeting?.title || "").replace(/\s*[-\u2013\u2014]\s*Clarity Call\s*$/i, "").trim();
+  const name = String(leadName || "").trim();
+  if (name && title.toLowerCase().startsWith(name.toLowerCase())) title = title.slice(name.length).trim();
+  return title && title.toLowerCase() !== name.toLowerCase() ? title : "";
+}
+
+/** "Ravi" -> "Ravi JI"; a name that already ends in "ji" is left as it is. */
+function nameWithJi(name) {
+  const n = String(name || "").trim();
+  if (!n) return "";
+  return /\bji$/i.test(n) ? n : `${n} JI`;
 }
 
 /**
  * Confirmation text sent to the customer right after a meeting is booked (editable before sending).
  *
- *   Hello <customer name>
+ *   Hello <name> JI
  *
- *   This is to confirm our Discovery Call scheduled for
+ *   This is to confirm our Clarity Call scheduled for <service>
  *
- *   Date : Today
- *   Time : 5:30 PM
+ *   Date : Today - Thu, 8 Oct 2026
+ *   Time : 2:00 PM
  *   Meeting Link : <link>
  *
  *   Kindly acknowledge by replying \u201cConfirmed\u201d
  */
-export function buildMeetingConfirmationMessage({ leadName, meeting, now } = {}) {
-  const { date, time } = formatMeetingWhen(meeting?.scheduledAt, now);
+export function buildMeetingConfirmationMessage({ leadName, serviceName, meeting, now } = {}) {
+  const { date, relative, time } = formatMeetingWhen(meeting?.scheduledAt, now);
   const link = String(meeting?.meetLink || meeting?.meet_link || "").trim();
+  const service = serviceForMeetingMessage({ serviceName, meeting, leadName });
+  const dateText = relative && date ? `${relative} - ${date}` : (date || relative);
+  const greeting = nameWithJi(leadName);
   return [
-    leadName ? `Hello ${String(leadName).trim()}` : "Hello",
+    greeting ? `Hello ${greeting}` : "Hello",
     "",
-    "This is to confirm our Discovery Call scheduled for",
+    `This is to confirm our Clarity Call scheduled for${service ? ` ${service}` : ""}`,
     "",
-    `Date : ${date}`,
+    `Date : ${dateText}`,
     `Time : ${time || meeting?.time || ""}`,
     `Meeting Link : ${link}`,
     "",
