@@ -1004,7 +1004,7 @@ export default function EmployeeLeads() {
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="inline-flex items-center justify-center gap-1.5 h-10 px-4 rounded-full bg-rose-700 text-white text-xs font-bold hover:bg-rose-800 shadow-sm shrink-0 transition"
+            className="hidden sm:inline-flex items-center justify-center gap-1.5 h-10 px-4 rounded-full bg-rose-700 text-white text-xs font-bold hover:bg-rose-800 shadow-sm shrink-0 transition"
           >
             <Plus className="w-3.5 h-3.5" />
             Add Lead

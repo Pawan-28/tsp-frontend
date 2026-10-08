@@ -32,4 +32,12 @@ const desktop = code.slice(desktopStart);
 assert.match(desktop, /getColumnCount\(stage\.id, columnLeads\)/);
 assert.match(code, /onClick=\{\(\) => scrollToStage\(stage\.id\)\}\s+title=\{callHint \|\| undefined\}/, "the chip row still jumps to a stage");
 
+// mobile: the in-page red "+ Add Lead" button is hidden (the floating + quick-add already creates leads); desktop keeps it
+const addBtn = src.slice(src.lastIndexOf("<button", src.indexOf("Add Lead</button>") > 0 ? src.indexOf("Add Lead</button>") : src.indexOf("            Add Lead")), src.indexOf("Add Lead", src.indexOf("setModalOpen(true)")) + 8);
+assert.match(addBtn, /className="hidden sm:inline-flex[^"]*bg-rose-700/, "Add Lead button is hidden below the sm breakpoint");
+assert.ok(!/className="inline-flex[^"]*bg-rose-700[^"]*"\s*>\s*<Plus className="w-3\.5 h-3\.5" \/>\s*Add Lead/.test(src), "no always-visible Add Lead button");
+const layout = fs.readFileSync(path.resolve(here, "../employee/layouts/EmployeeLayout.jsx"), "utf8");
+assert.match(layout, /label: "Add Lead", to: "\/employee\/leads\?action=add"/, "the floating quick-add still offers Add Lead");
+assert.match(src, /searchParams\.get\("action"\) === "add"/, "...and it opens this page's Add Lead form");
+
 console.log("boardHeaderClean: no cards-on-board note, no 'N leads' line, no mobile stage button - OK");
