@@ -3,7 +3,7 @@ import {
   Phone, MessageCircle, Mail, Sparkles, Clock,
   Users, RefreshCw, Shuffle, ChevronDown, ChevronUp, Zap,
   CheckCircle, Circle, ShieldCheck, Play, Pause, Volume2, ArrowLeft, Calendar, RotateCcw,
-  Megaphone, Target, Video, CalendarClock,
+  Megaphone, Target, Video, CalendarClock, Eye, EyeOff,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -279,6 +279,16 @@ export default function LeadDetailPanel({
   const [tempOverride, setTempOverride] = useState(null);
   useEffect(() => { setTempOverride(null); }, [liveLead?.id]);
   const [saving, setSaving] = useState(false);
+  // Hide / See: Source, SOP and the UTM fields can be folded away (the choice is remembered on this device).
+  const [showMoreFields, setShowMoreFields] = useState(() => {
+    try { return window.localStorage.getItem("leadPanel.showMoreFields") !== "0"; } catch { return true; }
+  });
+  const toggleMoreFields = () => {
+    setShowMoreFields((v) => {
+      try { window.localStorage.setItem("leadPanel.showMoreFields", v ? "0" : "1"); } catch { /* private window / blocked storage: just not remembered */ }
+      return !v;
+    });
+  };
   const [notesList, setNotesList] = useState([]);
   const [noteLoading, setNoteLoading] = useState(false);
   const [activeViewCallMom, setActiveViewCallMom] = useState(null);
@@ -632,7 +642,7 @@ export default function LeadDetailPanel({
     "—"
   );
   const isTemperatureStatus = ["hot", "warm", "cold"].includes(liveLead.status);
-  // Gemini classified the customer as Not Interested (temperature). The stage is NOT moved by it - the rep confirms with "Mark as Not Interested".
+  // Gemini classified the customer as Not Interested (temperature). The stage is NOT moved by it - the rep sets Stage to Not Interested.
   const aiNotInterested = normalizeLeadTemperature(liveLead.temperature) === "ni" && liveLead.status !== "ni" && !tempOverride;
 
   // ACTIVITY HISTORY: every call of this lead - direction, status (Connected / Missed / Not pick / Rejected), time, duration, recording.
@@ -1073,7 +1083,7 @@ export default function LeadDetailPanel({
               {aiNotInterested && (
                 <span
                   data-testid="ai-not-interested"
-                  title="Gemini heard the customer say they are not interested. Use Mark as Not Interested to move the lead."
+                  title="Gemini heard the customer say they are not interested. Set the Stage to Not Interested to move the lead."
                   className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-bold text-violet-700"
                 >
                   Not Interested · AI
@@ -1175,35 +1185,19 @@ export default function LeadDetailPanel({
           }}
           options={CANONICAL_STAGE_LABELS}
           readOnly={readOnly}
-          footer={variant === "employee" && !readOnly ? (
-            <button
-              type="button"
-              onClick={() => {
-                if (draft.stage === "Not Interested") return;
-                patchDraft("stage")("Not Interested");
-                onStageChange?.("Not Interested");
-              }}
-              aria-pressed={draft.stage === "Not Interested"}
-              className={`mt-2 w-full px-2 py-1 rounded-md text-[10px] font-bold border border-dashed transition ${
-                draft.stage === "Not Interested"
-                  ? "bg-violet-50 text-violet-700 border-violet-300"
-                  : "bg-white border-slate-300 text-slate-500 hover:bg-violet-50/60 hover:text-violet-700 hover:border-violet-300"
-              }`}
-            >
-              {draft.stage === "Not Interested" ? "Marked Not Interested" : "Mark as Not Interested"}
-            </button>
-          ) : null}
         />
-        <DetailField
-          label="Source"
-          value={draft.source}
-          onChange={patchDraft("source")}
-          options={sourceOptions}
-          getOptionLabel={sourceOptionLabel}
-          allowCustom
-          onCustomCommit={async (text) => (await addSource(text)).key}
-          readOnly={readOnly}
-        />
+        {showMoreFields && (
+          <DetailField
+            label="Source"
+            value={draft.source}
+            onChange={patchDraft("source")}
+            options={sourceOptions}
+            getOptionLabel={sourceOptionLabel}
+            allowCustom
+            onCustomCommit={async (text) => (await addSource(text)).key}
+            readOnly={readOnly}
+          />
+        )}
         <DetailField
           label="Budget (₹)"
           value={draft.expectedRevenue}
@@ -1223,20 +1217,36 @@ export default function LeadDetailPanel({
           wide
           readOnly={readOnly}
         />
-        <DetailField
-          label="SOP"
-          value={resolvedSopLabel || "—"}
-          onChange={patchDraft("sop")}
-          readOnly={readOnly}
-        />
+        {showMoreFields && (
+          <DetailField
+            label="SOP"
+            value={resolvedSopLabel || "—"}
+            onChange={patchDraft("sop")}
+            readOnly={readOnly}
+          />
+        )}
         <DetailField label="City" value={draft.city} onChange={patchDraft("city")} readOnly={readOnly} />
         <DetailField label="Company" value={draft.company} onChange={patchDraft("company")} readOnly={readOnly} />
-        {/* UTM fields shown right here in the details grid */}
-        <DetailField label="UTM Source" value={draft.utm_source} onChange={patchDraft("utm_source")} readOnly={readOnly} />
-        <DetailField label="UTM Medium" value={draft.utm_medium} onChange={patchDraft("utm_medium")} readOnly={readOnly} />
-        <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
-        {/* <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} /> */}
-        <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
+        {/* UTM fields shown right here in the details grid (folded away by Hide) */}
+        {showMoreFields && (
+          <>
+            <DetailField label="UTM Source" value={draft.utm_source} onChange={patchDraft("utm_source")} readOnly={readOnly} />
+            <DetailField label="UTM Medium" value={draft.utm_medium} onChange={patchDraft("utm_medium")} readOnly={readOnly} />
+            <DetailField label="UTM Campaign" value={draft.utm_campaign} onChange={patchDraft("utm_campaign")} readOnly={readOnly} />
+            {/* <DetailField label="UTM Term" value={draft.utm_term} onChange={patchDraft("utm_term")} readOnly={readOnly} /> */}
+            <DetailField label="UTM Content" value={draft.utm_content} onChange={patchDraft("utm_content")} readOnly={readOnly} />
+          </>
+        )}
+        <button
+          type="button"
+          onClick={toggleMoreFields}
+          aria-expanded={showMoreFields}
+          data-testid="toggle-more-fields"
+          className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-rose-200 bg-white/70 px-3 py-2 text-[11px] font-bold text-rose-700 transition hover:bg-rose-50"
+        >
+          {showMoreFields ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          {showMoreFields ? "Hide Source, SOP & UTM" : "See Source, SOP & UTM"}
+        </button>
       </div>
 
       {isDirty && !readOnly && (
