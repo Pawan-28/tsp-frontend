@@ -936,10 +936,13 @@ export const LEAD_STATUS_LABELS = {
   attempted: "Attempted", contacted: "Contacted", booked: "Booked", proposal: "Proposal", negotiation: "Negotiation", new: "New",
 };
 
+// Blank until Gemini (after a connected call) picks one - or the rep does:
+//   Hot = will pay within 7 days, Warm = 30 days, Cold = might pay within 90 days, Not Interested = the customer said no.
 export const EMP_LEAD_TEMPERATURES = [
   { id: "hot", label: "Hot" },
   { id: "warm", label: "Warm" },
   { id: "cold", label: "Cold" },
+  { id: "ni", label: "Not Interested" },
 ];
 
 export const LEAD_STATUS_CLASS = {

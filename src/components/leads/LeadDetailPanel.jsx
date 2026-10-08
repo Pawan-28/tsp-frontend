@@ -40,12 +40,12 @@ import WhatsAppScriptPicker from "../../employee/components/WhatsAppScriptPicker
 import { cleanServiceName, matchCatalogService } from "../../lib/meetingTitle.js";
 import AutoAssignChip from "../AutoAssignChip.jsx";
 import { useAutoAssignClocks } from "../../lib/useAutoAssignClocks.js";
-import { normalizeTemperature as normalizeLeadTemperature } from "../../lib/leadSync.js";
 
 const TEMPERATURE_BTN_ACTIVE = {
   hot: "bg-rose-100 border-rose-200 text-rose-800 shadow-sm",
   warm: "bg-amber-100 border-amber-200 text-amber-800 shadow-sm",
   cold: "bg-sky-100 border-sky-200 text-sky-800 shadow-sm",
+  ni: "bg-violet-100 border-violet-200 text-violet-800 shadow-sm",
 };
 
 // Real options come from /api/services; until they load, only the empty choice is offered.
@@ -623,7 +623,7 @@ export default function LeadDetailPanel({
       if (onTemperatureChange) {
         onTemperatureChange(newTemp);
       }
-      toast.success(`Temperature updated to ${newTemp}`);
+      toast.success(`Temperature updated to ${LEAD_STATUS_LABELS[newTemp] || newTemp}`);
     } catch (err) {
       setTempOverride(previous);
       toast.error(err.message || "Failed to update temperature");
@@ -641,9 +641,18 @@ export default function LeadDetailPanel({
     employee?.name ||
     "—"
   );
-  const isTemperatureStatus = ["hot", "warm", "cold"].includes(liveLead.status);
-  // Gemini classified the customer as Not Interested (temperature). The stage is NOT moved by it - the rep sets Stage to Not Interested.
-  const aiNotInterested = normalizeLeadTemperature(liveLead.temperature) === "ni" && liveLead.status !== "ni" && !tempOverride;
+  // The lead's Hot / Warm / Cold / Not Interested - read from its TEMPERATURE (Gemini sets it after a connected call, or the rep picks
+  // one). Blank = nothing selected. A stale "warm" in `status` is never read as a temperature.
+  const storedTemperature = (() => {
+    const t = String(liveLead.temperature || "").toLowerCase();
+    if (t.includes("not interested") || t === "ni") return "ni";
+    if (t.includes("hot")) return "hot";
+    if (t.includes("cold")) return "cold";
+    if (t.includes("warm")) return "warm";
+    return !t.trim() && ["hot", "warm", "cold"].includes(liveLead.status) ? liveLead.status : "";
+  })();
+  const currentTemperature = tempOverride ?? storedTemperature;
+  const isTemperatureStatus = Boolean(currentTemperature);
 
   // ACTIVITY HISTORY: every call of this lead - direction, status (Connected / Missed / Not pick / Rejected), time, duration, recording.
   const callHistoryItems = useMemo(() => buildCallHistoryItems(leadCalls), [leadCalls]);
@@ -657,7 +666,7 @@ export default function LeadDetailPanel({
       stored,
       calls: analysed,
       lead: liveLead,
-      temperatureId: (tempOverride ?? (isTemperatureStatus ? liveLead.status : "")) || liveLead.temperature || "",
+      temperatureId: currentTemperature || liveLead.temperature || "",
       meetings: [...(meetingsUpcoming || []), ...(meetingsHistory || [])],
       followUps: followUps || [],
     });
@@ -1027,10 +1036,10 @@ export default function LeadDetailPanel({
                   className="inline-flex gap-0.5 p-0.5 rounded-lg bg-white/90 border border-rose-100 shrink-0"
                   role="group"
                   aria-label="Lead temperature"
-                  title="Blank until Gemini sets it after a connected call (Hot: pays within 7 days, Warm: 30 days, Cold: 90 days). You can also pick one."
+                  title="Blank until Gemini sets it after a connected call: Hot = pays within 7 days, Warm = 30 days, Cold = might pay within 90 days, Not Interested = the customer said no. You can also pick one."
                 >
                   {EMP_LEAD_TEMPERATURES.map(({ id, label }) => {
-                    const active = !aiNotInterested && (tempOverride ?? liveLead.status) === id;
+                    const active = currentTemperature === id;
                     return (
                       <button
                         key={id}
@@ -1041,6 +1050,11 @@ export default function LeadDetailPanel({
                           } else if (onTemperatureChange) {
                             setTempOverride(id);
                             onTemperatureChange(id);
+                          }
+                          // Not Interested is also a pipeline stage: the lead moves there (same as picking it in the Stage dropdown).
+                          if (id === "ni" && draft.stage !== "Not Interested") {
+                            patchDraft("stage")("Not Interested");
+                            onStageChange?.("Not Interested");
                           }
                         }}
                         aria-pressed={active}
@@ -1057,7 +1071,7 @@ export default function LeadDetailPanel({
                 </div>
               )}
               {readOnly && isTemperatureStatus && (
-                <LeadStatusBadge status={liveLead.status} label={LEAD_STATUS_LABELS[liveLead.status]} />
+                <LeadStatusBadge status={currentTemperature} label={LEAD_STATUS_LABELS[currentTemperature]} />
               )}
               {variant === "employee" && !readOnly && (
                 <button
@@ -1080,15 +1094,6 @@ export default function LeadDetailPanel({
               </span>
               {/* next to the Dialed counter: the exact time left (days, hours, minutes, seconds) before this lead goes to another employee */}
               {autoAssignClock && <AutoAssignChip live clock={autoAssignClock} className="!rounded-full !px-2 !py-1 !text-[10px]" />}
-              {aiNotInterested && (
-                <span
-                  data-testid="ai-not-interested"
-                  title="Gemini heard the customer say they are not interested. Set the Stage to Not Interested to move the lead."
-                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-bold text-violet-700"
-                >
-                  Not Interested · AI
-                </span>
-              )}
             </div>
           </div>
         </div>

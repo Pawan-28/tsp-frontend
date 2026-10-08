@@ -135,12 +135,12 @@ export function deriveFromCalls(calls = []) {
 
 /* ───────────── building the rows ───────────── */
 
-const TEMPERATURE_LABELS = { hot: "Hot", warm: "Warm", cold: "Cold" };
+const TEMPERATURE_LABELS = { hot: "Hot", warm: "Warm", cold: "Cold", ni: "Not Interested" };
 
 /** Hot / Warm / Cold from the id the header toggle uses (or the AI's "Warm Lead" style string); anything else is Unknown. */
 export function temperatureLabel(temperatureId) {
   const t = String(temperatureId || "").toLowerCase();
-  const id = t.includes("hot") ? "hot" : t.includes("warm") ? "warm" : t.includes("cold") ? "cold" : "";
+  const id = t.includes("not interested") || t === "ni" ? "ni" : t.includes("hot") ? "hot" : t.includes("warm") ? "warm" : t.includes("cold") ? "cold" : "";
   return TEMPERATURE_LABELS[id] || UNKNOWN;
 }
 

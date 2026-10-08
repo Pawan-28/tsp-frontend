@@ -118,7 +118,7 @@ assert.equal((adm.match(/autoAssign=\{autoAssignClockFor\(lead\)\}/g) || []).len
 const panel = read("src/components/leads/LeadDetailPanel.jsx");
 assert.match(panel, /autoAssignClock && <AutoAssignChip live clock=\{autoAssignClock\}/, "live countdown in the lead header, next to Dialed");
 assert.ok(panel.indexOf("Dialed {dialCount}") < panel.indexOf("<AutoAssignChip live"), "right after the Dialed counter");
-assert.match(panel, /const active = !aiNotInterested && \(tempOverride \?\? liveLead\.status\) === id;/);
+assert.match(panel, /const active = currentTemperature === id;/);
 const settings = read("src/pages/Settings.jsx");
 assert.match(settings, /activeTab === "autoassign" && <AutoReassignPanel \/>/);
 const ap = read("src/components/AutoReassignPanel.jsx");

@@ -1064,12 +1064,15 @@ export function EmployeeProvider({ children }) {
 
   const updateLeadTemperature = useCallback(async (leadId, nextStatus) => {
     setLeads((prev) => prev.map((l) => (String(l.id) === String(leadId) || (l._dbId != null && String(l._dbId) === String(leadId))
-      ? {
-        ...l,
-        status: nextStatus,
-        // Keep the card's temperature badge in sync with the Hot/Warm/Cold toggle.
-        ...(["hot", "warm", "cold"].includes(nextStatus) ? { temperature: nextStatus } : {}),
-      }
+      ? (nextStatus === "ni"
+        // Not Interested is a temperature too: the toggle shows it, but the card stays in its pipeline stage (the Stage dropdown moves it).
+        ? { ...l, temperature: "Not Interested" }
+        : {
+          ...l,
+          status: nextStatus,
+          // Keep the card's temperature badge in sync with the Hot/Warm/Cold toggle.
+          ...(["hot", "warm", "cold"].includes(nextStatus) ? { temperature: nextStatus } : {}),
+        })
       : l)));
 
     if (shouldPersistToApi(usingApi)) {

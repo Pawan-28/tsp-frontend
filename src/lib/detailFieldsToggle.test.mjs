@@ -13,7 +13,7 @@ assert.ok(!code.includes("Mark as Not Interested"), "the button is gone");
 assert.ok(!code.includes("Marked Not Interested"));
 assert.match(code, /options=\{CANONICAL_STAGE_LABELS\}/, "the Stage dropdown is still there");
 assert.ok(!/label="Stage"[\s\S]{0,700}footer=/.test(code), "no footer under Stage");
-assert.match(code, /Set the Stage to Not Interested to move the lead/, "the AI chip points at the dropdown");
+assert.ok(!code.includes("ai-not-interested"), "Not Interested is the 4th temperature option now (no separate chip)");
 
 // 2. the grid: exactly these six fields fold away, everything else always shows
 const gridStart = code.indexOf('<div className="grid grid-cols-2 gap-3">\n        <DetailField\n          label="Name"');
