@@ -18,14 +18,15 @@ assert.ok(!/summary tiles, which count leads/.test(code));
 assert.ok(!/\{columnLeads\.length\} leads\n/.test(code), "no visible 'N leads' line");
 assert.ok(!/<p className="text-\[9px\] text-slate-400 tabular-nums mt-0\.5/.test(code));
 
-// mobile: one plain stage-name label per row - no button, no count box
+// mobile: one stage-name label per row with its count chip - no button
 const mobileStart = code.indexOf("{/* Mobile");
 const desktopStart = code.indexOf("{/* Desktop");
 assert.ok(mobileStart > 0 && desktopStart > mobileStart);
 const mobile = code.slice(mobileStart, desktopStart);
 assert.ok(!/onClick=\{\(\) => scrollToStage\(stage\.id\)\}/.test(mobile), "no clickable stage header on mobile");
-assert.ok(!/getColumnCount/.test(mobile), "no count box on mobile");
-assert.match(mobile, /<div className="mb-2 px-0\.5">\s*<Badge tone=\{stage\.badgeTone\}>\{stage\.label\}<\/Badge>\s*<\/div>/);
+// the stage row shows its lead COUNT again (user request) - still not a button and no "N leads" line
+assert.match(mobile, /<Badge tone=\{stage\.badgeTone\}>\{stage\.label\}<\/Badge>\s*<span[^>]*data-testid="mobile-stage-count"[^>]*>\s*\{getColumnCount\(stage\.id, columnLeads\)\}/);
+assert.ok(!/ leads`|\} leads</.test(mobile), "no 'N leads' text line");
 
 // desktop keeps its stage header (name + count box); the top chip row (name + count, tap to jump) is unchanged
 const desktop = code.slice(desktopStart);

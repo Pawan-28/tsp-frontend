@@ -1056,7 +1056,7 @@ export default function EmployeeLeads() {
         <>
         <p className="text-[10px] text-slate-400 mb-2.5 px-0.5">
           <span className="sm:hidden">Each stage is a row · swipe cards horizontally · tap for details</span>
-          <span className="hidden sm:inline">Drag cards between columns · tap card for details</span>
+          {/* <span className="hidden sm:inline">Drag cards between columns · tap card for details</span> */}
         </p>
 
         {/* Mobile — one row per stage, horizontal card scroll within each row */}
@@ -1073,8 +1073,12 @@ export default function EmployeeLeads() {
                 ref={(el) => { columnRefs.current[stage.id] = el; }}
                 className="min-w-0"
               >
-                <div className="mb-2 px-0.5">
+                {/* stage name + how many leads are in it (same count as the desktop column header) */}
+                <div className="mb-2 flex items-center justify-between gap-2 px-0.5" data-testid={`mobile-stage-header-${stage.id}`}>
                   <Badge tone={stage.badgeTone}>{stage.label}</Badge>
+                  <span className="h-6 min-w-6 px-1.5 rounded-lg bg-rose-50 border border-rose-100 text-[10px] font-black text-rose-700 grid place-items-center tabular-nums shrink-0" data-testid="mobile-stage-count">
+                    {getColumnCount(stage.id, columnLeads)}
+                  </span>
                 </div>
 
                 <div
