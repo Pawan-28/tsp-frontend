@@ -1,4 +1,4 @@
-import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Clock, Mic } from "lucide-react";
+import { Phone, PhoneIncoming, PhoneOutgoing, PhoneMissed, Clock, Mic, Sparkles, ChevronRight } from "lucide-react";
 
 const TONE_CHIP = {
   success: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -14,8 +14,11 @@ function CallIcon({ item }) {
     : <PhoneOutgoing className="h-3.5 w-3.5 text-emerald-600" />;
 }
 
-/** Call-by-call history of a lead: direction, status, time, duration, and the recording of a connected call. */
-export default function CallHistoryList({ items = [], loading = false }) {
+/**
+ * Call-by-call history of a lead: direction, status, time, duration, and the recording of a connected call.
+ * `onOpenCall(call)` - a connected call gets "View AI MoM & SOP Checklist"; that view also has Generate / Re-process AI MoM.
+ */
+export default function CallHistoryList({ items = [], loading = false, onOpenCall }) {
   if (loading && items.length === 0) {
     return <p className="py-1 pl-1 text-[11px] italic text-slate-400">Loading call history…</p>;
   }
@@ -50,6 +53,20 @@ export default function CallHistoryList({ items = [], loading = false }) {
               ) : (
                 <p className="mt-1 text-[9.5px] font-semibold text-slate-400">No recording for this call</p>
               )
+            )}
+            {item.connected && onOpenCall && (
+              <button
+                type="button"
+                data-testid="call-open-mom"
+                onClick={() => onOpenCall(item.call)}
+                className="mt-1.5 flex w-full items-center justify-between gap-2 rounded-lg border-t border-rose-50 pt-1.5 text-left text-[10px] font-bold text-rose-700 hover:text-rose-900"
+              >
+                <span className="flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-rose-600" /> View AI MoM &amp; SOP Checklist
+                  {!item.hasMom && <span className="font-semibold text-slate-400">· MoM not generated yet</span>}
+                </span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-rose-400" />
+              </button>
             )}
           </li>
         ))}

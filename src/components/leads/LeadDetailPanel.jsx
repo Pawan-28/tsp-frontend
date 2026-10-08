@@ -341,6 +341,15 @@ export default function LeadDetailPanel({
         ...updatedCallData,
         checklistProgress: updatedCallData.checklist_progress || updatedCallData.checklistProgress || prev?.checklistProgress,
       }));
+      // keep the call list in step, so the new MoM also shows in the MoM card / call history after going back
+      setFetchedCalls((prev) => (Array.isArray(prev) ? prev.map((x) => (String(x.id) === String(callToProcess.id)
+        ? {
+            ...x,
+            ai_summary: updatedCallData.ai_summary ?? x.ai_summary,
+            aiSummary: updatedCallData.aiSummary ?? updatedCallData.ai_summary ?? x.aiSummary,
+            checklistProgress: updatedCallData.checklist_progress || updatedCallData.checklistProgress || x.checklistProgress,
+          }
+        : x)) : prev));
       toast.success("AI MoM generated successfully!", { id: toastId });
       refreshExtraInfo(); // the AI just folded this call into the customer's Extra Info
     } catch (err) {
@@ -1295,7 +1304,7 @@ export default function LeadDetailPanel({
         <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-rose-50 pb-2">
           <Clock className="w-3.5 h-3.5 text-rose-505" /> Activity History
         </h4>
-        <CallHistoryList items={callHistoryItems} loading={callsLoading} />
+        <CallHistoryList items={callHistoryItems} loading={callsLoading} onOpenCall={(call) => setActiveViewCallMom(call)} />
         {variant === "employee" && leadActivities.length > 0 && (
           <div>
             <p className="mb-1.5 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">Other activity</p>

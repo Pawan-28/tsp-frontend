@@ -68,12 +68,35 @@ assert.deepEqual([...html.matchAll(/data-call-id="(\d+)"/g)].map((m) => m[1]), [
 assert.equal(renderToStaticMarkup(React.createElement(List, { items: [] })), "", "nothing when there are no calls");
 assert.ok(renderToStaticMarkup(React.createElement(List, { items: [], loading: true })).includes("Loading call history"));
 
+// 4b. "View AI MoM & SOP Checklist" on every CONNECTED call (generate it from there when it does not exist yet)
+const withMom = buildCallHistoryItems([
+  { id: 10, direction: "outbound", outcome: "Connected", durationSec: 90, duration: "1:30", date: "Today", callAt: "2026-10-08T13:00:00", ai_summary: "Customer wants a podcast interview; budget 65k." },
+  { id: 11, direction: "outbound", outcome: "Connected", durationSec: 20, duration: "0:20", date: "Today", callAt: "2026-10-08T12:00:00" },
+  { id: 12, direction: "outbound", outcome: "Connected", durationSec: 20, duration: "0:20", date: "Today", callAt: "2026-10-08T11:00:00", aiSummary: "[CALL STATUS: NOT CONNECTED] no conversation took place." },
+  { id: 13, direction: "inbound", outcome: "Missed", durationSec: 0, duration: "-", date: "Today", callAt: "2026-10-08T10:00:00", ai_summary: "ignored" },
+]);
+const m = (id) => withMom.find((i) => i.id === String(id));
+assert.equal(m(10).hasMom, true, "a real AI summary = MoM exists");
+assert.equal(m(11).hasMom, false, "connected, MoM not generated yet");
+assert.equal(m(12).hasMom, false, "filler text is not a MoM");
+assert.equal(m(13).hasMom, false, "a missed call never has a MoM");
+assert.equal(m(10).call.id, 10, "the item carries its call (opens the MoM / SOP view)");
+const opened = [];
+const htmlMom = renderToStaticMarkup(React.createElement(List, { items: withMom, onOpenCall: (c) => opened.push(c.id) }));
+assert.equal((htmlMom.match(/data-testid="call-open-mom"/g) || []).length, 3, "button on the 3 connected calls only");
+assert.equal((htmlMom.match(/View AI MoM &amp; SOP Checklist/g) || []).length, 3);
+assert.equal((htmlMom.match(/MoM not generated yet/g) || []).length, 2, "calls without a MoM say so");
+const missedRow = htmlMom.split("<li ").find((chunk) => chunk.includes('data-call-id="13"'));
+assert.ok(missedRow && !missedRow.includes("call-open-mom"), "no button on the missed call");
+assert.ok(!html.includes("call-open-mom"), "without onOpenCall no button is drawn");
+
 // 5. wiring: the Activity History card shows it for every viewer, with the other activity underneath
 const panel = fs.readFileSync(path.resolve(root, "src/components/leads/LeadDetailPanel.jsx"), "utf8");
 const card = panel.indexOf('data-testid="activity-history-card"');
 assert.ok(card > 0);
 assert.ok(!/variant === "employee" && \(\s*<>\s*<div className="[^"]*"\s*data-testid="activity-history-card"/.test(panel), "not limited to the employee view");
-assert.match(panel, /<CallHistoryList items=\{callHistoryItems\} loading=\{callsLoading\} \/>/);
+assert.match(panel, /<CallHistoryList items=\{callHistoryItems\} loading=\{callsLoading\} onOpenCall=\{\(call\) => setActiveViewCallMom\(call\)\} \/>/, "opens the MoM / SOP view (Generate AI MoM lives there)");
+assert.match(panel, /setFetchedCalls\(\(prev\) =>[\s\S]*ai_summary: updatedCallData\.ai_summary/, "a generated MoM is merged back into the call list");
 assert.match(panel, /buildCallHistoryItems\(leadCalls\)/);
 assert.ok(panel.indexOf("Other activity") > card, "other activity is listed under the calls");
 assert.ok(!panel.includes("Recorded Call Logs"), "the old call-log card stays removed");

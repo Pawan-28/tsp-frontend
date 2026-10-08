@@ -1,4 +1,5 @@
 import { callStatusMeta, isOutboundCall } from "./callMetrics.js";
+import { isWasteMomText } from "./momFormat.js";
 
 /**
  * Items for the lead card's "Activity History": EVERY call of the lead, newest first -
@@ -16,12 +17,16 @@ export function buildCallHistoryItems(calls = []) {
       const duration = String(c.duration || "").trim();
       const at = c.callAt || c.startedAt || c.date;
       const ms = new Date(c.callAt || c.startedAt || 0).getTime();
+      const summary = c.aiSummary || c.ai_summary || c.notes || c.note;
       return {
         id: String(c.id ?? `call-${idx}`),
         direction: outbound ? "Outgoing" : "Incoming",
         status: meta.label,                        // Connected | Missed | Not pick | Rejected
         tone: meta.tone,                           // success | warning | danger
         connected: meta.connected,
+        // a real MoM exists only for a connected call that was analysed (filler text is not a MoM)
+        hasMom: meta.connected && !!summary && !isWasteMomText(summary),
+        call: c,                                   // the call itself - opens its MoM / SOP view
         when: String(c.date || "").trim() || (at ? String(at) : "Call"),
         // talk time only means something when the call connected
         duration: meta.connected && duration && duration !== "—" ? duration : "",
