@@ -691,11 +691,6 @@ export default function EmployeeLeads() {
     [grouped, periodCalls],
   );
 
-  const cardsOnBoard = useMemo(
-    () => Object.values(grouped).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0),
-    [grouped],
-  );
-
   // Meeting Booked cards whose meeting time has passed (and never got completed/cancelled): flagged Overdue.
   const overdueMeetingByLead = useMemo(() => buildOverdueMeetingByLead(allMeetings), [allMeetings]);
 
@@ -1078,21 +1073,9 @@ export default function EmployeeLeads() {
                 ref={(el) => { columnRefs.current[stage.id] = el; }}
                 className="min-w-0"
               >
-                <button
-                  type="button"
-                  onClick={() => scrollToStage(stage.id)}
-                  className="flex items-start justify-between gap-2 mb-2 px-0.5 text-left w-full min-h-[40px] hover:opacity-80 transition"
-                >
-                  <div className="min-w-0">
-                    <Badge tone={stage.badgeTone}>{stage.label}</Badge>
-                    <p className="text-[9px] text-slate-400 tabular-nums mt-0.5 h-[14px] leading-[14px]">
-                      {columnLeads.length} leads
-                    </p>
-                  </div>
-                  <span className="w-6 h-6 rounded-lg bg-rose-50 border border-rose-100 text-[10px] font-black text-rose-700 grid place-items-center tabular-nums shrink-0">
-                    {getColumnCount(stage.id, columnLeads)}
-                  </span>
-                </button>
+                <div className="mb-2 px-0.5">
+                  <Badge tone={stage.badgeTone}>{stage.label}</Badge>
+                </div>
 
                 <div
                   onDragEnter={() => handleDragEnter(stage.id)}
@@ -1187,9 +1170,6 @@ export default function EmployeeLeads() {
                   >
                     <div className="min-w-0">
                       <Badge tone={stage.badgeTone}>{stage.label}</Badge>
-                      <p className="text-[9px] text-slate-400 tabular-nums mt-0.5 h-[14px] leading-[14px]">
-                        {columnLeads.length} leads
-                      </p>
                     </div>
                     <span className="w-6 h-6 rounded-lg bg-rose-50 border border-rose-100 text-[10px] font-black text-rose-700 grid place-items-center tabular-nums shrink-0">
                       {getColumnCount(stage.id, columnLeads)}
@@ -1266,9 +1246,6 @@ export default function EmployeeLeads() {
             })}
           </div>
         </div>
-        <p className="text-[10px] text-slate-400 mt-2.5 px-0.5">
-          {cardsOnBoard} card{cardsOnBoard === 1 ? "" : "s"} on board · the board shows leads worked in {periodLabelLower} (calls, meetings, assignments, stage changes), so it can differ from the summary tiles, which count leads {createdLabel}.
-        </p>
         </>
         )}
       </GlassCard>
