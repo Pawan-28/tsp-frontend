@@ -99,7 +99,7 @@ export default function LeadBookMeetingModal({ open, lead, serviceName, employee
         </>
       )}
     >
-      <div className="grid grid-cols-2 gap-3 mb-3 sm:mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 sm:mb-4">
         <div>
           <FormLabel>Date</FormLabel>
           <FormInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />

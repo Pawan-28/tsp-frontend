@@ -222,7 +222,7 @@ function BookMeetingDrawer({
           </div>
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Date">
             <input type="date" className={INPUT} value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
           </Field>
