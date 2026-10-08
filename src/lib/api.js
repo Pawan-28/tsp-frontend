@@ -4,6 +4,7 @@
  */
 
 import { getAuthHeaders, getCrmHeaders } from "./crmContext.js";
+import { runAiMomJob } from "./aiMomJob.js";
 
 const CACHE_PREFIX = "crm_cache:";
 const DEFAULT_GET_TTL = 5 * 60 * 1000; // 5 minutes
@@ -516,10 +517,19 @@ export function readStaleCachedJson(path) {
   return readStaleCache(key);
 }
 
-/** Trigger backend AI processing (transcript-first, falls back to recording) for a call. */
+/**
+ * Trigger backend AI processing (transcript-first, falls back to recording) for a call.
+ * A long recording (47 min) takes minutes, far past the 20 s request limit - so the server runs it as a background job and this
+ * polls until it is done. Resolves with { success, call } exactly like the one-request answer. `options.onTick(status, seconds)` is optional.
+ */
 export async function processCallWithAi(callId, options = {}) {
   if (!callId) throw new Error("callId is required to process AI MoM");
-  return apiPost(`/api/v1/ai/process-call/${callId}`, { callId }, options);
+  const { onTick, ...requestOptions } = options;
+  return runAiMomJob({
+    start: () => apiPost(`/api/v1/ai/process-call/${callId}`, { callId, async: true }, requestOptions),
+    poll: () => apiGet(`/api/v1/ai/process-call/${callId}/status`, { ...requestOptions, skipCache: true, cacheTtl: 0 }),
+    onTick,
+  });
 }
 
 export async function fetchPrivateContacts(employeeId) {

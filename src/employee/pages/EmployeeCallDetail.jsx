@@ -336,9 +336,9 @@ export default function EmployeeCallDetail() {
       let newRating = 5;
 
       try {
-        const { apiPost } = await import("../../lib/api.js");
+        const { processCallWithAi } = await import("../../lib/api.js");
         const { getCrmHeaders } = await import("../../lib/crmContext.js");
-        const res = await apiPost(`/api/v1/ai/process-call/${call.id}`, {}, { headers: getCrmHeaders() });
+        const res = await processCallWithAi(call.id, { headers: getCrmHeaders() }); // long calls run as a background job and are polled
         // a skipped call (never connected / nothing to summarise) comes back with its OLD stored text - never reuse that
         if (res?.success && res?.call?.ai_summary && !res.call.skipped && !isWasteMomText(res.call.ai_summary)) {
           generatedMoM = res.call.ai_summary;

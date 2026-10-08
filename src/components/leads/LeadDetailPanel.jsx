@@ -330,7 +330,7 @@ export default function LeadDetailPanel({
     }
     try {
       setIsProcessingAi(true);
-      const toastId = toast.loading("Generating AI MoM…");
+      const toastId = toast.loading("Generating AI MoM… long calls can take a few minutes");
       const res = await processCallWithAi(callToProcess.id, { headers: crmHeaders });
       const updatedCallData = res?.call || res?.data || res;
       if (!updatedCallData || typeof updatedCallData !== "object") {
