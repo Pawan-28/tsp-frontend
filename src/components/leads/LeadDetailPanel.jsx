@@ -275,11 +275,9 @@ export default function LeadDetailPanel({
   useEffect(() => { setTempOverride(null); }, [liveLead?.id]);
   const [saving, setSaving] = useState(false);
   const [notesList, setNotesList] = useState([]);
-  const [newNote, setNewNote] = useState("");
   const [noteLoading, setNoteLoading] = useState(false);
   const [activeViewCallMom, setActiveViewCallMom] = useState(null);
   const [isProcessingAi, setIsProcessingAi] = useState(false);
-  const [noteSaving, setNoteSaving] = useState(false);
   const [fetchedCalls, setFetchedCalls] = useState([]);
   const [callsLoading, setCallsLoading] = useState(false);
   const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
@@ -548,9 +546,9 @@ export default function LeadDetailPanel({
 
     const callSummaries = leadCalls.map((c, idx) => {
       const createdAt = c.callAt ? new Date(c.callAt).getTime() : Date.now() - idx * 1000;
-      // Calls that never connected add nothing here - no call-log lines, no AI summary (the Recorded Call Logs card lists every call).
+      // Calls that never connected add nothing here - no call-log lines and no AI summary.
       if (isCallNotConnected(c)) return null;
-      const summaryText = c.aiSummary || c.ai_summary || c.notes || c.note || (c.connected ? `Call completed (${c.duration}). Outcome: ${c.outcome}` : null);
+      const summaryText = c.aiSummary || c.ai_summary || c.notes || c.note;
       if (!summaryText) return null;
       // A MoM exists only for a call that really connected and was analysed: filler text stored on a call with no
       // conversation (the "not connected" template, a silent recording, ...) is hidden - the stored text is not deleted.
@@ -565,6 +563,7 @@ export default function LeadDetailPanel({
         duration: c.duration,
         recordingUrl: c.recordingUrl || c.recording_url || c.audioUrl,
         body: summaryText,
+        call: c,
         createdAt,
         dateStr: c.date || "Call Log",
         isAiCallSummary: true,
@@ -575,9 +574,6 @@ export default function LeadDetailPanel({
     combined.sort((a, b) => b.createdAt - a.createdAt);
     return combined;
   }, [notesList, leadCalls]);
-
-  // Header counter: only notes written by people - not auto-logged call summaries.
-  const humanNoteCount = notesList.length;
 
   const patchDraft = (key) => (val) => setDraft((prev) => ({ ...prev, [key]: typeof val === "function" ? val(prev[key]) : val }));
 
@@ -705,28 +701,6 @@ export default function LeadDetailPanel({
       toast.error(err.message || "Failed to save lead details");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleAddNote = async (e) => {
-    if (e) e.preventDefault();
-    if (!newNote.trim()) return;
-    try {
-      setNoteSaving(true);
-      const res = await apiPost(
-        `/api/v1/leads/${liveLead.id}/notes`,
-        { body: newNote.trim() },
-        { headers: crmHeaders },
-      );
-      if (res) {
-        toast.success("Note added successfully");
-        setNewNote("");
-        fetchNotes();
-      }
-    } catch (err) {
-      toast.error(err.message || "Failed to add note");
-    } finally {
-      setNoteSaving(false);
     }
   };
 
@@ -1079,38 +1053,16 @@ export default function LeadDetailPanel({
       {/* EXTRA INFO - customer-level sales profile, directly below the header card and above the notes / call history. */}
       <ExtraInfoCard rows={extraInfo.rows} hasAnalysedCall={extraInfo.hasAnalysedCall} />
 
-      {/* Notes (written by people) + call log / AI call summaries — shown right below the lead header card. */}
-      <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3.5 shadow-sm">
-        <div className="flex items-center justify-between border-b border-rose-50 pb-2">
-          <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-            <MessageCircle className="w-3.5 h-3.5 text-rose-500" /> Notes ({humanNoteCount})
-          </label>
-        </div>
-
-        {!readOnly && (
-          <form onSubmit={handleAddNote} className="space-y-2">
-            <FormTextarea
-              rows={2}
-              placeholder="Type a note or call details..."
-              className="!rounded-xl border-rose-100/60 focus:border-rose-400 text-xs"
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              required
-            />
-            <div className="flex justify-end">
-              <BtnPrimary type="submit" className="!py-1.5 !px-3 !text-[10.5px]" disabled={noteSaving}>
-                {noteSaving ? "Saving..." : "Add Note"}
-              </BtnPrimary>
-            </div>
-          </form>
-        )}
-
-        {noteLoading ? (
-          <div className="text-center py-2 text-[11px] text-slate-450">Loading notes & summaries...</div>
-        ) : allNotesAndSummaries.length === 0 ? (
-          <p className="text-[10.5px] text-slate-400 italic pl-1">No notes or call summaries saved for this lead.</p>
-        ) : (
-          <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
+      {/* MoM of connected calls - directly under Extra Info. Only real MoMs (AI summaries of calls that connected) are listed:
+          no note input, no call-log lines, no made-up "call completed" text. Hidden while there is nothing to show. */}
+      {allNotesAndSummaries.length > 0 && (
+        <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4 space-y-3 shadow-sm" data-testid="call-mom-card">
+          <div className="flex items-center border-b border-rose-50 pb-2">
+            <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-rose-500" /> MoM
+            </h4>
+          </div>
+          <div className="space-y-2.5 max-h-[320px] overflow-y-auto pr-1 scrollbar-thin">
             {allNotesAndSummaries.map((item) => (
               <div
                 key={item.id}
@@ -1146,11 +1098,20 @@ export default function LeadDetailPanel({
                     {formatAiSummaryText(item.body)}
                   </p>
                 )}
+                {item.isAiCallSummary && item.call && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewCallMom(item.call)}
+                    className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 hover:text-rose-900"
+                  >
+                    <ChevronDown className="w-3 h-3" /> View MoM &amp; SOP checklist
+                  </button>
+                )}
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         <DetailField
@@ -1322,68 +1283,6 @@ export default function LeadDetailPanel({
 
 
 
-
-      <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4.5 space-y-3 shadow-sm">
-        <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-rose-50 pb-2">
-          <Clock className="w-3.5 h-3.5 text-rose-505" /> Recorded Call Logs & MoM
-        </h4>
-        {callsLoading ? (
-          <p className="text-[11px] text-slate-450 italic pl-1 py-1">Loading call logs…</p>
-        ) : leadCalls.length === 0 ? (
-          <p className="text-[11px] text-slate-450 italic pl-1 py-1">No call logs registered for this lead.</p>
-        ) : (
-          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1 scrollbar-thin">
-            {leadCalls.map((c) => {
-              const isIncoming = c.type === "in";
-              const isMissed = c.type === "miss";
-              const cBucket = callStatusMeta(c).bucket; // shared call definition: Not pick / Rejected are outgoing dials
-
-              return (
-                <div key={c.id} className="w-full text-left p-3 rounded-xl border border-rose-100 bg-white transition-all space-y-2">
-                  <div className="flex items-start justify-between gap-2.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
-                          isIncoming ? "bg-emerald-50 text-emerald-700" : (isMissed || cBucket === "no_pickup") ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700"
-                        }`}>
-                          {isIncoming ? "Inbound" : isMissed ? "Missed" : cBucket === "no_pickup" ? "Not pick" : cBucket === "rejected" ? "Rejected" : "Outbound"}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-semibold">{c.date}</span>
-                      </div>
-                      <p className="text-xs font-bold text-slate-800 truncate mt-1.5">{c.outcome}</p>
-                    </div>
-                    <span className="text-[10.5px] font-black text-slate-750 shrink-0 bg-white border border-rose-100 px-1.5 py-0.5 rounded tabular-nums">
-                      {c.duration}
-                    </span>
-                  </div>
-
-                  {isCallNotConnected(c) ? (
-                    <p className="text-[9.5px] text-slate-400 font-semibold pt-1.5 border-t border-rose-50">
-                      Not connected — no recording or AI summary
-                    </p>
-                  ) : isWasteMomText(c.aiSummary || c.ai_summary || c.notes || c.note) ? (
-                    <p className="text-[9.5px] text-slate-400 font-semibold pt-1.5 border-t border-rose-50">
-                      No conversation recorded — no MoM
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setActiveViewCallMom(c)}
-                      className="w-full text-left text-[9.5px] text-rose-800 hover:text-rose-600 font-bold flex items-center justify-between pt-1.5 border-t border-rose-50 cursor-pointer group"
-                    >
-                      <span className="flex items-center gap-1">
-                        <Sparkles className="w-3.5 h-3.5 text-rose-600 animate-pulse" />
-                        View AI MoM & SOP Checklist
-                      </span>
-                      <ChevronDown className="w-3.5 h-3.5 text-rose-400 group-hover:translate-x-0.5 transition-transform" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
       {variant === "employee" && (
         <>

@@ -215,14 +215,13 @@ assert.ok(nothing.includes("Nothing about this customer was discussed yet."));
 assert.ok(!/<dd[^>]*>\s*<\/dd>/.test(html + bare), "no blank values");
 fs.rmSync(tmp, { force: true });
 
-// 9. PLACEMENT: header card -> Extra Info -> notes / call history (source order of the lead panel)
+// 9. PLACEMENT: header card -> Extra Info -> MoM card (connected calls) -> the lead's detail fields (source order of the lead panel)
 const panel = fs.readFileSync(path.resolve(here, "../components/leads/LeadDetailPanel.jsx"), "utf8");
 const iHeader = panel.indexOf("Dialed {dialCount}");
 const iExtra = panel.indexOf("<ExtraInfoCard ");
-const iNotes = panel.indexOf("Notes ({humanNoteCount})");
-const iLogs = panel.indexOf("Recorded Call Logs & MoM");
-assert.ok(iHeader > 0 && iExtra > iHeader && iNotes > iExtra && iLogs > iNotes, "header -> Extra Info -> notes/call summaries -> call logs");
-assert.ok(panel.slice(iHeader, iExtra).split("<ExtraInfoCard").length === 1);
+const iMom = panel.indexOf('data-testid="call-mom-card"');
+const iFields = panel.indexOf('label="Name"');
+assert.ok(iHeader > 0 && iExtra > iHeader && iMom > iExtra && iFields > iMom, "header -> Extra Info -> MoM -> detail fields");
 assert.equal((panel.match(/<ExtraInfoCard /g) || []).length, 1, "rendered exactly once");
 
 console.log("extraInfo: rows, merge over time, CRM overrides, legacy MOM read, waste-MoM hiding, render + placement - OK");
