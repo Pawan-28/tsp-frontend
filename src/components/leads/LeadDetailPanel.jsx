@@ -38,6 +38,9 @@ import LeadBookMeetingModal from "../../employee/components/LeadBookMeetingModal
 import LeadFollowUpModal from "../../employee/components/LeadFollowUpModal.jsx";
 import WhatsAppScriptPicker from "../../employee/components/WhatsAppScriptPicker.jsx";
 import { cleanServiceName, matchCatalogService } from "../../lib/meetingTitle.js";
+import AutoAssignChip from "../AutoAssignChip.jsx";
+import { useAutoAssignClocks } from "../../lib/useAutoAssignClocks.js";
+import { normalizeTemperature as normalizeLeadTemperature } from "../../lib/leadSync.js";
 
 const TEMPERATURE_BTN_ACTIVE = {
   hot: "bg-rose-100 border-rose-200 text-rose-800 shadow-sm",
@@ -367,6 +370,9 @@ export default function LeadDetailPanel({
     () => (variant === "admin" ? getAdminCrmHeaders() : getCrmHeaders()),
     [variant],
   );
+  // 3-day stuck-lead timer of THIS lead ("2 days to auto-assign") - nothing while auto-assign is off.
+  const { clockFor: autoAssignClockFor } = useAutoAssignClocks(variant === "admin" ? "admin" : "employee", () => crmHeaders);
+  const autoAssignClock = autoAssignClockFor(liveLead);
 
   // Use the real service catalog (same source as the New Lead form) instead of
   // the small hardcoded placeholder list, so this reflects what the business
@@ -626,6 +632,8 @@ export default function LeadDetailPanel({
     "—"
   );
   const isTemperatureStatus = ["hot", "warm", "cold"].includes(liveLead.status);
+  // Gemini classified the customer as Not Interested (temperature). The stage is NOT moved by it - the rep confirms with "Mark as Not Interested".
+  const aiNotInterested = normalizeLeadTemperature(liveLead.temperature) === "ni" && liveLead.status !== "ni" && !tempOverride;
 
   // ACTIVITY HISTORY: every call of this lead - direction, status (Connected / Missed / Not pick / Rejected), time, duration, recording.
   const callHistoryItems = useMemo(() => buildCallHistoryItems(leadCalls), [leadCalls]);
@@ -1011,7 +1019,7 @@ export default function LeadDetailPanel({
                   aria-label="Lead temperature"
                 >
                   {EMP_LEAD_TEMPERATURES.map(({ id, label }) => {
-                    const active = (tempOverride ?? liveLead.status) === id;
+                    const active = !aiNotInterested && (tempOverride ?? liveLead.status) === id;
                     return (
                       <button
                         key={id}
@@ -1059,6 +1067,16 @@ export default function LeadDetailPanel({
               >
                 <Phone className="w-3 h-3" /> Dialed {dialCount}×
               </span>
+              {autoAssignClock && <AutoAssignChip clock={autoAssignClock} className="!rounded-full !px-2 !py-0.5 !text-[10px]" />}
+              {aiNotInterested && (
+                <span
+                  data-testid="ai-not-interested"
+                  title="Gemini heard the customer say they are not interested. Use Mark as Not Interested to move the lead."
+                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-bold text-violet-700"
+                >
+                  Not Interested · AI
+                </span>
+              )}
             </div>
           </div>
         </div>

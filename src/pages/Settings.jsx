@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
 import {
   Target, Scale, Percent, FileSliders,
-  AlertTriangle, RefreshCw, Users, KeyRound, Lock,
+  AlertTriangle, RefreshCw, Users, KeyRound, Lock, Timer,
 } from "lucide-react";
+import AutoReassignPanel from "../components/AutoReassignPanel.jsx";
 import { Badge } from "../components/Primitives.jsx";
 import toast from "react-hot-toast";
 import AdminProfileHeader, { DashboardScrollbarStyles } from "../components/AdminProfileHeader.jsx";
@@ -74,6 +75,7 @@ const tabs = [
   { id: "kpis",          label: "KPI Weightages",       icon: Scale },
   { id: "incentives",    label: "Incentive & Slabs",    icon: Percent },
   { id: "calculations",  label: "Performance Formulas", icon: FileSliders },
+  { id: "autoassign",    label: "Lead Auto-Assign",     icon: Timer },
   { id: "password",      label: "Change Password",      icon: KeyRound },
 ];
 
@@ -395,7 +397,7 @@ export default function Settings() {
         {/* Right Side Control Panels */}
         <SettingsPanel
           footer={
-            activeTab === "password" ? null : (
+            activeTab === "password" || activeTab === "autoassign" ? null : (
             <PanelFooter
               left={
                 <Badge tone={pendingCount > 0 ? "warning" : "muted"}>
@@ -430,7 +432,7 @@ export default function Settings() {
             )
           }
         >
-              {draftDiffersFromLoaded && activeTab !== "password" && (
+              {draftDiffersFromLoaded && activeTab !== "password" && activeTab !== "autoassign" && (
                 <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-wrap items-center gap-3">
                   <span className="text-xs text-amber-800 font-medium flex-1 min-w-0">
                     A draft saved on this device{storedDraft?.savedAt ? ` (${new Date(storedDraft.savedAt).toLocaleString("en-IN")})` : ""} differs from the published configuration.
@@ -867,6 +869,9 @@ export default function Settings() {
                   </div>
                 </div>
               )}
+
+              {/* ── LEAD AUTO-ASSIGN (3-day timer) - saves by itself ── */}
+              {activeTab === "autoassign" && <AutoReassignPanel />}
 
               {/* ── 5. CHANGE PASSWORD ── */}
               {activeTab === "password" && (

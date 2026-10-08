@@ -35,6 +35,8 @@ import {
 import { TimeOfDaySelects } from "../components/TimeOfDaySelects.jsx";
 import { apiGet } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
+import AutoAssignChip from "../../components/AutoAssignChip.jsx";
+import { useAutoAssignClocks } from "../../lib/useAutoAssignClocks.js";
 import { buildClarityCallTitle, resolveCustomerName, resolveLeadServiceName } from "../../lib/meetingTitle.js";
 
 
@@ -181,7 +183,7 @@ function PipelineBookMeetingModal({
 
 const LeadCard = memo(function LeadCard({
   lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, isNewAssigned, onMoveStage, currentStage,
-  dialCount = 0, overdueMeeting = null, onMarkHeld, onReschedule,
+  dialCount = 0, overdueMeeting = null, onMarkHeld, onReschedule, autoAssign = null,
 }) {
   const canDrag = isDraggablePipelineLead(lead);
   const stop = (fn) => (e) => {
@@ -314,6 +316,8 @@ const LeadCard = memo(function LeadCard({
             </select>
           </div>
         )}
+        {/* 3-day stuck-lead timer (only while an admin has auto-assign switched on) */}
+        {autoAssign && <div className="mb-1.5"><AutoAssignChip clock={autoAssign} /></div>}
         <div className="flex items-center justify-between gap-1 pt-2 border-t border-rose-50">
           <span className="text-xs font-black text-rose-700 tabular-nums">{lead.budget}</span>
           <span className="flex items-center gap-1.5 min-w-0">
@@ -334,6 +338,7 @@ const LeadCard = memo(function LeadCard({
 });
 
 export default function EmployeeLeads() {
+  const { clockFor: autoAssignClockFor } = useAutoAssignClocks("employee", getCrmHeaders);
   const {
     leads,
     loading: leadsLoading,
@@ -1133,6 +1138,7 @@ export default function EmployeeLeads() {
                         overdueMeeting={stage.id === "meeting_booked" ? (overdueMeetingByLead.get(String(lead.id)) || null) : null}
                         onMarkHeld={handleMarkMeetingHeld}
                         onReschedule={openMeetingReschedule}
+                        autoAssign={autoAssignClockFor(lead)}
                       />
                     ))}
                     {hiddenCount > 0 && (
@@ -1231,6 +1237,7 @@ export default function EmployeeLeads() {
                           overdueMeeting={stage.id === "meeting_booked" ? (overdueMeetingByLead.get(String(lead.id)) || null) : null}
                           onMarkHeld={handleMarkMeetingHeld}
                           onReschedule={openMeetingReschedule}
+                          autoAssign={autoAssignClockFor(lead)}
                         />
                       ))}
                       {hiddenCount > 0 && (

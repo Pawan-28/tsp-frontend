@@ -15,6 +15,8 @@ import {
 } from "../data/pipelineMock.js";
 import { apiGet, apiPatch, invalidateCache } from "../lib/api.js";
 import { getAdminCrmHeaders } from "../lib/crmContext.js";
+import AutoAssignChip from "../components/AutoAssignChip.jsx";
+import { useAutoAssignClocks } from "../lib/useAutoAssignClocks.js";
 import { useAdmin } from "../context/AdminContext.jsx";
 import { adminPipelineIdToDbStage } from "../lib/leadSync.js";
 import useIsMobile from "../lib/useIsMobile.js";
@@ -73,7 +75,7 @@ function isDraggablePipelineLead(lead) {
   return /^\d+$/.test(String(dbId));
 }
 
-const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, onMoveStage, currentStage }) {
+const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, onDragStart, onDragEnd, onMoveStage, currentStage, autoAssign = null }) {
   const canDrag = isDraggablePipelineLead(lead);
 
   const rawPhone = lead.phone || lead.phone_number || "";
@@ -190,6 +192,8 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
             )}
           </div>
         )}
+        {/* 3-day stuck-lead timer (only while auto-assign is switched on in Settings) */}
+        {autoAssign && <div className="mb-1.5"><AutoAssignChip clock={autoAssign} /></div>}
         <div className="flex items-center justify-between pt-2 border-t border-rose-50">
           <span className="text-xs font-black text-rose-700 tabular-nums">{formatPipelineValue(lead.value)}</span>
           <span className="text-[9px] font-medium text-slate-400">{lastLabel}</span>
@@ -200,6 +204,7 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
 });
 
 export default function Pipeline() {
+  const { clockFor: autoAssignClockFor } = useAutoAssignClocks("admin", getAdminCrmHeaders);
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -834,6 +839,7 @@ export default function Pipeline() {
                         onDragStart={() => setDragLeadId(lead.id)}
                         onDragEnd={() => setDragLeadId(null)}
                         onMoveStage={moveLeadToStage}
+                        autoAssign={autoAssignClockFor(lead)}
                       />
                     ))}
                     {hiddenCount > 0 && (
@@ -917,6 +923,7 @@ export default function Pipeline() {
                           onDragStart={() => setDragLeadId(lead.id)}
                           onDragEnd={() => setDragLeadId(null)}
                           onMoveStage={moveLeadToStage}
+                          autoAssign={autoAssignClockFor(lead)}
                         />
                       ))}
                       {hiddenCount > 0 && (
