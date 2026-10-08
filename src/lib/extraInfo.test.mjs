@@ -204,7 +204,12 @@ assert.ok(html.indexOf("Business / Job") < html.indexOf("Interests / Hobbies") &
 assert.ok(html.includes('data-testid="extra-info-card"'));
 assert.ok(!html.includes("No details yet"));
 // a SMALL box: values are clamped to 2 lines, the grid is 2 columns, tiles use small type
-assert.equal((html.match(/line-clamp-2/g) || []).length, 10, "every value is clamped to two lines");
+assert.equal((html.match(/line-clamp/g) || []).length, 0, "values are shown in full - no two-line cut with '...'");
+const longReq = "The client requested details on the broadcast channels and display options, asked how distribution works across regional platforms, and wants the pricing sheet shared before Friday so the partners can review it together";
+const longRows = buildExtraInfoRows({ stored: BE.mergeExtraInfo(null, { requirement: longReq, nextAction: longReq }, { callId: 1, at: T1 }), lead });
+assert.equal(longRows.rows.find((r) => r.key === "requirement").value, longReq, "a long value is not cut at 160 characters");
+const longHtml = renderToStaticMarkup(React.createElement(Card, { rows: longRows.rows, hasAnalysedCall: true }));
+assert.ok(longHtml.includes(longReq) && !longHtml.includes("…"), "the whole text is rendered, no ellipsis");
 assert.ok(html.includes("sm:grid-cols-2") && html.includes("text-[11px]") && html.includes("p-2.5"));
 // a customer with nothing from calls yet
 const bare = renderToStaticMarkup(React.createElement(Card, { rows: empty.rows, hasAnalysedCall: false }));

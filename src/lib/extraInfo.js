@@ -46,7 +46,7 @@ export function isEmptyValue(v) {
   return EMPTY_PATTERNS.some((re) => re.test(s));
 }
 
-const MAX_LEN = 160;
+const MAX_LEN = 500; // generous: a value is only cut when it is absurdly long
 const clean = (v) => String(v).replace(/\s+/g, " ").replace(/^[\s•\-*]+/, "").replace(/[\s.;,]+$/, "").trim().slice(0, MAX_LEN);
 const usable = (v) => {
   if (v == null || typeof v === "object") return null;

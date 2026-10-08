@@ -80,7 +80,7 @@ export default function ExtraInfoCard({ rows = [], hasAnalysedCall = false }) {
                   <Icon className="h-2.5 w-2.5 shrink-0 text-rose-400" />
                   <span className="truncate">{r.label}</span>
                 </dt>
-                <dd className="mt-0.5 line-clamp-2 break-words text-[11px] font-bold leading-snug text-slate-800">{r.value}</dd>
+                <dd className="mt-0.5 break-words text-[11px] font-bold leading-snug text-slate-800">{r.value}</dd>
               </div>
             );
           })}

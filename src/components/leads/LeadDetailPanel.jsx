@@ -27,6 +27,8 @@ import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
 import { getMomSections, getMomPlainText, stripGeminiCharges, isWasteMomText } from "../../lib/momFormat.js";
 import ExtraInfoCard from "./ExtraInfoCard.jsx";
 import MomText from "./MomText.jsx";
+import CallHistoryList from "./CallHistoryList.jsx";
+import { buildCallHistoryItems } from "../../lib/callHistoryList.js";
 import { buildExtraInfoRows } from "../../lib/extraInfo.js";
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import MomSections, { GeminiChargesBar } from "./MomSections.jsx";
@@ -615,6 +617,9 @@ export default function LeadDetailPanel({
     "—"
   );
   const isTemperatureStatus = ["hot", "warm", "cold"].includes(liveLead.status);
+
+  // ACTIVITY HISTORY: every call of this lead - direction, status (Connected / Missed / Not pick / Rejected), time, duration, recording.
+  const callHistoryItems = useMemo(() => buildCallHistoryItems(leadCalls), [leadCalls]);
 
   // EXTRA INFO rows: stored AI profile -> older MOMs -> live CRM data. Calls are newest first; only calls that really connected
   // and carry a real MoM can contribute (not-connected filler never does).
@@ -1284,16 +1289,17 @@ export default function LeadDetailPanel({
 
 
 
-      {variant === "employee" && (
-        <>
-          <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4.5 space-y-3 shadow-sm">
-            <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-rose-50 pb-2">
-              <Clock className="w-3.5 h-3.5 text-rose-505" /> Activity History
-            </h4>
-            {leadActivities.length === 0 ? (
-              <p className="text-[11px] text-slate-450 italic pl-1 py-1">No activities logged yet.</p>
-            ) : (
-              <div className="space-y-2.5 max-h-[160px] overflow-y-auto pr-1 scrollbar-thin">
+      {/* ACTIVITY HISTORY - every call of this lead (which call, when, how long; Missed / Not pick / Rejected; the recording of a
+          connected call), then any other logged activity. */}
+      <div className="rounded-2xl border border-rose-100 bg-[#fffbfb] p-4.5 space-y-3 shadow-sm" data-testid="activity-history-card">
+        <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-rose-50 pb-2">
+          <Clock className="w-3.5 h-3.5 text-rose-505" /> Activity History
+        </h4>
+        <CallHistoryList items={callHistoryItems} loading={callsLoading} />
+        {variant === "employee" && leadActivities.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">Other activity</p>
+            <div className="space-y-2.5 max-h-[160px] overflow-y-auto pr-1 scrollbar-thin">
                 {leadActivities.map((a, idx) => (
                   <div key={idx} className="flex gap-2.5 py-2.5 border-b border-rose-50 last:border-0 items-start">
                     <div className="w-2 h-2 rounded-full bg-rose-400 mt-1.5 shrink-0" />
@@ -1305,11 +1311,13 @@ export default function LeadDetailPanel({
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
+            </div>
           </div>
-        </>
-      )}
+        )}
+        {!callsLoading && callHistoryItems.length === 0 && (variant !== "employee" || leadActivities.length === 0) && (
+          <p className="text-[11px] text-slate-450 italic pl-1 py-1">No calls or activity yet.</p>
+        )}
+      </div>
 
       {variant === "employee" && followUpOpen && (
         <LeadFollowUpModal

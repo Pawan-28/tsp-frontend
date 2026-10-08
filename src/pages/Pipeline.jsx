@@ -769,7 +769,7 @@ export default function Pipeline() {
       <GlassCard className={`p-3 sm:p-4 overflow-hidden transition-opacity ${isBoardStale ? "opacity-70" : ""}`}>
         <p className="text-[10px] text-slate-400 mb-2.5 px-0.5">
           <span className="sm:hidden">Each stage is a row · swipe cards horizontally · tap for details</span>
-          <span className="hidden sm:inline">Drag cards between columns · tap card for details</span>
+          {/* <span className="hidden sm:inline">Drag cards between columns · tap card for details</span> */}
         </p>
 
         {/* Mobile — one row per stage, horizontal card scroll within each row */}
