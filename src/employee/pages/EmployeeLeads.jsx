@@ -1051,13 +1051,7 @@ export default function EmployeeLeads() {
             );
           })}
         </div>
-        <p
-          className="text-[10px] text-slate-400 px-0.5"
-          title={`Calls and distinct leads are counted from this period's calls (one lead can have several calls). Total = Conversation (${CALL_CONVERSATION_LABEL}, answered, any direction) + Short call (answered outgoing ${CALL_SHORT_LABEL}) + Incoming short (answered incoming ${CALL_SHORT_LABEL}) + Not pick (outgoing, not answered) + Rejected (counted separately here; a lead whose outgoing call the customer rejected is still placed in the Not Pick COLUMN) + Missed incoming (incoming, not answered). Connected = Conversation + Short + Incoming short. Column card counts are stage-based, so they can be higher: a lead keeps its stage after an earlier call.`}
-        >
-          {periodLabel} · Callyzer synced · {callMetrics.totalCalls} calls = {syncedConversationCalls} conversations {CALL_CONVERSATION_LABEL} ({formatCallsAndLeads(syncedConversationCalls, callMetrics.conversationLeads)}) + {syncedShortCalls} short {CALL_SHORT_LABEL} ({formatCallsAndLeads(syncedShortCalls, callMetrics.shortCallLeads)}) + {callMetrics.incomingShort} incoming short {CALL_SHORT_LABEL} ({formatCallsAndLeads(callMetrics.incomingShort, callMetrics.incomingShortLeads)}) + {syncedNotPickupCalls} not pick ({formatCallsAndLeads(syncedNotPickupCalls, callMetrics.notPickupLeads)}) + {callMetrics.rejected} rejected ({formatCallsAndLeads(callMetrics.rejected, callMetrics.rejectedLeads)}) + {callMetrics.missed} missed incoming ({formatCallsAndLeads(callMetrics.missed, callMetrics.missedLeads)}) · <span title={MEETING_METRIC_INFO.scheduledInPeriod}>{periodMeetings.length} meetings scheduled in period</span>
-          {(boardSyncing) ? " · syncing in background…" : ""}
-        </p>
+        {boardSyncing ? <p className="text-[10px] text-slate-400 px-0.5">Syncing in background…</p> : null}
       </GlassCard>
 
       <GlassCard className={`p-3 sm:p-4 overflow-hidden transition-opacity ${isBoardStale ? "opacity-70" : ""}`}>

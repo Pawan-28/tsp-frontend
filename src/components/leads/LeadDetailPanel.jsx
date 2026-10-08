@@ -548,38 +548,13 @@ export default function LeadDetailPanel({
 
     const callSummaries = leadCalls.map((c, idx) => {
       const createdAt = c.callAt ? new Date(c.callAt).getTime() : Date.now() - idx * 1000;
-      // Calls that never connected get a compact one-line call-log entry, never an AI summary block
-      // (older stored "not connected" AI text is hidden here, not deleted).
-      if (isCallNotConnected(c)) {
-        const notConnectedLabel = callStatusMeta(c).label; // Not pick / Rejected / Missed (shared call definition)
-        return {
-          id: `call-log-${c.id}`,
-          authorType: "call-log",
-          authorName: `${notConnectedLabel} call`,
-          body: `${notConnectedLabel} call · ${c.date || "Call log"} · Not connected`,
-          createdAt,
-          dateStr: c.date || "Call Log",
-          isAiCallSummary: false,
-          isCallLogEntry: true,
-        };
-      }
+      // Calls that never connected add nothing here - no call-log lines, no AI summary (the Recorded Call Logs card lists every call).
+      if (isCallNotConnected(c)) return null;
       const summaryText = c.aiSummary || c.ai_summary || c.notes || c.note || (c.connected ? `Call completed (${c.duration}). Outcome: ${c.outcome}` : null);
       if (!summaryText) return null;
-      // A MoM exists only for a call that really connected and was analysed. Filler text stored on a call that had no
-      // conversation (the "not connected" template, a silent recording, ...) is hidden here - the stored text is not deleted.
-      if (isWasteMomText(summaryText)) {
-        const label = callStatusMeta(c).label;
-        return {
-          id: `call-log-${c.id}`,
-          authorType: "call-log",
-          authorName: `${label} call`,
-          body: `${label} call \u00b7 ${c.date || "Call log"} \u00b7 No conversation recorded`,
-          createdAt,
-          dateStr: c.date || "Call Log",
-          isAiCallSummary: false,
-          isCallLogEntry: true,
-        };
-      }
+      // A MoM exists only for a call that really connected and was analysed: filler text stored on a call with no
+      // conversation (the "not connected" template, a silent recording, ...) is hidden - the stored text is not deleted.
+      if (isWasteMomText(summaryText)) return null;
 
       const callNum = leadCalls.length - idx;
       return {
@@ -601,7 +576,7 @@ export default function LeadDetailPanel({
     return combined;
   }, [notesList, leadCalls]);
 
-  // Header counter: only notes written by people — not auto-logged call summaries / not-connected entries.
+  // Header counter: only notes written by people - not auto-logged call summaries.
   const humanNoteCount = notesList.length;
 
   const patchDraft = (key) => (val) => setDraft((prev) => ({ ...prev, [key]: typeof val === "function" ? val(prev[key]) : val }));
@@ -1137,15 +1112,6 @@ export default function LeadDetailPanel({
         ) : (
           <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
             {allNotesAndSummaries.map((item) => (
-              item.isCallLogEntry ? (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-1.5 text-[10.5px] font-semibold text-slate-500"
-                >
-                  <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                  <span className="truncate">{item.body}</span>
-                </div>
-              ) : (
               <div
                 key={item.id}
                 className={`rounded-xl p-3 space-y-1.5 text-xs transition-all ${
@@ -1181,7 +1147,6 @@ export default function LeadDetailPanel({
                   </p>
                 )}
               </div>
-              )
             ))}
           </div>
         )}
