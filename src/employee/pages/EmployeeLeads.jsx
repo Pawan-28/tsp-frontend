@@ -277,7 +277,7 @@ const LeadCard = memo(function LeadCard({
                 onClick={stop(() => onMarkHeld?.(overdueMeeting, lead))}
                 className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold px-2 py-1 transition"
               >
-                <CheckCircle2 className="w-3 h-3" /> Mark held
+                <CheckCircle2 className="w-3 h-3" /> Not Show-Up
               </button>
               <button
                 type="button"

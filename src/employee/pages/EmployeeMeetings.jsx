@@ -477,7 +477,7 @@ function ScheduleItem({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
               <>
                 {onMarkHeld && (
                   <BtnPrimary className="!py-1 !px-2.5 !text-[10px] !rounded-lg" onClick={() => onMarkHeld(meeting)}>
-                    <CheckCircle2 className="w-3 h-3" /> Mark held
+                    <CheckCircle2 className="w-3 h-3" /> Not Show-Up
                   </BtnPrimary>
                 )}
                 {onReschedule && (
@@ -637,7 +637,7 @@ function UpcomingCard({ meeting, onJoin, onCopyLink, onShare, onDelete, onResche
           <>
             {onMarkHeld && (
               <BtnPrimary className="!py-1.5 !px-3 !text-[11px] !rounded-xl" onClick={() => onMarkHeld(meeting)}>
-                <CheckCircle2 className="w-3.5 h-3.5" /> Mark held
+                <CheckCircle2 className="w-3.5 h-3.5" /> Not Show-Up
               </BtnPrimary>
             )}
             {onReschedule && (
@@ -1218,7 +1218,7 @@ export default function EmployeeMeetings() {
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <p>
             <span className="font-bold">{overdueMeetings.length} meeting{overdueMeetings.length === 1 ? " is" : "s are"} overdue</span>
-            {" "}— the time has passed but {overdueMeetings.length === 1 ? "it is" : "they are"} still booked. Open Upcoming and choose <span className="font-semibold">Mark held</span> or <span className="font-semibold">Reschedule</span>.
+            {" "}— the time has passed but {overdueMeetings.length === 1 ? "it is" : "they are"} still booked. Open Upcoming and choose <span className="font-semibold">Not Show-Up</span> or <span className="font-semibold">Reschedule</span>.
           </p>
         </div>
       )}
