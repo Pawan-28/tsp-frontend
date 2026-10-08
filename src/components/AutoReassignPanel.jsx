@@ -70,11 +70,12 @@ export default function AutoReassignPanel() {
             <Badge tone={cfg?.enabled ? "success" : "muted"}>{cfg == null ? "Loading…" : cfg.enabled ? `ON since ${since}` : "OFF"}</Badge>
           </div>
           <ul className="text-[11.5px] leading-relaxed text-slate-600 list-disc pl-4 space-y-1">
-            <li>Every lead shows a countdown for its employee: "{days} days / 2 days / 1 day to auto-assign".</li>
-            <li>The timer starts when the lead enters its stage (Lead, Not Pick, Short Call, Conversation). More calls that leave it in the same stage do not restart it; moving it forward does.</li>
-            <li>When it runs out, the lead goes to the least-loaded other employee. Its stage, calls, notes and meetings stay as they are; the move is saved in the assignment history and both employees are notified.</li>
-            <li>Meeting Booked and later stages, Not Interested leads, and leads the AI marked Not Interested have no timer.</li>
-            <li>The new employee gets a fresh {days}-day window. At most 50 leads are moved per run (every 30 minutes).</li>
+            <li>Every lead shows a live countdown (days, hours, minutes, seconds) next to the Dialed counter, and "{days} days / 2 days / 1 day to auto-assign" on its card.</li>
+            <li>Only leads that have not been talked to properly: <b>Lead, Not Pick and Short Call</b>. Conversation (answered above 2 min) and later stages have no timer.</li>
+            <li>The {days} days are <b>working days</b>: the timer stops on Sunday, so a Sunday in between gives the lead one extra day. Nothing is moved on a Sunday.</li>
+            <li>The timer starts when the lead enters its stage. More calls that leave it in the same stage do not restart it; moving it forward does.</li>
+            <li>When it runs out, the lead goes to another employee <b>of the same service group</b> (Services &rarr; Distribution employees). A service with no group goes to the least-loaded other employee. Calls, MoM, Extra Info, notes and meetings stay with the lead, so the new owner sees what was discussed.</li>
+            <li>The new employee gets a fresh {days}-day window; both employees are notified and the move is saved in the assignment history. At most 50 leads are moved per run (every 30 minutes).</li>
           </ul>
 
           {cfg && !cfg.enabled && !confirming && (

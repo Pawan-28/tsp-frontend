@@ -1017,6 +1017,7 @@ export default function LeadDetailPanel({
                   className="inline-flex gap-0.5 p-0.5 rounded-lg bg-white/90 border border-rose-100 shrink-0"
                   role="group"
                   aria-label="Lead temperature"
+                  title="Blank until Gemini sets it after a connected call (Hot: pays within 7 days, Warm: 30 days, Cold: 90 days). You can also pick one."
                 >
                   {EMP_LEAD_TEMPERATURES.map(({ id, label }) => {
                     const active = !aiNotInterested && (tempOverride ?? liveLead.status) === id;
@@ -1067,7 +1068,8 @@ export default function LeadDetailPanel({
               >
                 <Phone className="w-3 h-3" /> Dialed {dialCount}×
               </span>
-              {autoAssignClock && <AutoAssignChip clock={autoAssignClock} className="!rounded-full !px-2 !py-0.5 !text-[10px]" />}
+              {/* next to the Dialed counter: the exact time left (days, hours, minutes, seconds) before this lead goes to another employee */}
+              {autoAssignClock && <AutoAssignChip live clock={autoAssignClock} className="!rounded-full !px-2 !py-1 !text-[10px]" />}
               {aiNotInterested && (
                 <span
                   data-testid="ai-not-interested"

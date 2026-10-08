@@ -29,7 +29,7 @@ const DEFAULT_SERVICES = [
 
 export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Lead" }) {
     const [activeTab, setActiveTab] = useState("basic");
-    const [warmth, setWarmth] = useState("Cold Lead");
+    const [warmth, setWarmth] = useState(""); // blank: Gemini sets Hot / Warm / Cold after the first connected call
     const [stage, setStage] = useState(defaultStage);
     const [prob, setProb] = useState(50);
     const [dealVal, setDealVal] = useState("");
@@ -532,7 +532,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
                   </div>
                 </FormField>
   
-                <FormField label="Lead Warmth" fullWidth>
+                <FormField label="Lead Warmth (optional - Gemini sets it after the first connected call)" fullWidth>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
                     {warmthOptions.map(w => {
                       const active = warmth === w.value;
@@ -540,7 +540,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
                         <button
                           key={w.value}
                           type="button"
-                          onClick={() => setWarmth(w.value)}
+                          onClick={() => setWarmth(warmth === w.value ? "" : w.value)}
                           style={{
                             padding: "8px 18px",
                             borderRadius: 99,

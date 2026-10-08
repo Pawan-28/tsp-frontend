@@ -965,7 +965,7 @@ export function EmployeeProvider({ children }) {
           id,
           name,
           company: form.company || "—",
-          status: form.status || "warm",
+          status: form.status || "new", // no temperature until Gemini / a person sets one
           stage: form.stage || "Lead",
           source: form.source || "Website",
           budget: form.budget || "—",
@@ -1195,8 +1195,11 @@ export function EmployeeProvider({ children }) {
         const payload = {};
         if (updates.name !== undefined) payload.leadName = updates.name;
         if (updates.status !== undefined) {
-          payload.temperature = temperatureToApi(updates.status);
-          payload.status = workflowStatusFromTemperature(updates.status);
+          const label = temperatureToApi(updates.status);
+          if (label) { // a blank / unknown status sends nothing (it used to become "Cold Lead")
+            payload.temperature = label;
+            payload.status = workflowStatusFromTemperature(updates.status);
+          }
         }
         if (updates.phone !== undefined) payload.phone = updates.phone;
         if (updates.email !== undefined) payload.email = updates.email;

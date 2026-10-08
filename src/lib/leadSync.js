@@ -46,6 +46,7 @@ const AVATAR_COLORS = ["#2563eb", "#10b981", "#f59e0b", "#7c3aed", "#dc2626", "#
 
 export function normalizeTemperature(raw) {
   const s = String(raw || "").toLowerCase();
+  if (!s.trim()) return ""; // blank stays blank - Gemini (or a person) sets it
   if (s.includes("hot")) return "hot";
   if (s.includes("cold")) return "cold";
   if (s === "notpick" || s.includes("not pick")) return "notpick";
@@ -63,7 +64,7 @@ export function temperatureToApi(status) {
     converted: "Payment Complete",
     ni: "Not Interested",
   };
-  return map[status] || "Cold Lead";
+  return map[status] || ""; // unknown / blank: no temperature is invented ("Cold Lead" used to be the fallback)
 }
 
 export function workflowStatusFromTemperature(status) {
@@ -154,7 +155,8 @@ function normalizeEmployeeLeadStatus(lead) {
   if (raw === "ni" || raw.includes("not interested")) return "ni";
   if (raw === "new") return "new";
   if (WORKFLOW_STATUS.has(raw)) return raw;
-  return normalizeTemperature(lead.temperature || lead.status);
+  // the lead's TEMPERATURE is the only source of Hot / Warm / Cold (a stale status never is); blank = no temperature yet
+  return normalizeTemperature(lead.temperature) || "new";
 }
 
 export function apiLeadToEmployee(rawLead, avatarColors = AVATAR_COLORS) {
@@ -568,7 +570,10 @@ export function normalizeLeadForDetailPanel(lead) {
   const temp = String(lead.temperature || "").toLowerCase();
   // The lead's `temperature` is the source of truth for Hot/Warm/Cold (a stale `status` of "warm"
   // must never override a temperature the user just changed).
-  let status = lead.status || "warm";
+  // Hot / Warm / Cold is BLANK until Gemini (after a connected call) or a person sets it: a lead without a temperature is "new",
+  // and a stale "warm" copy in `status` is never read as a temperature.
+  let status = lead.status || "new";
+  if (!temp.trim() && ["hot", "warm", "cold"].includes(String(status).toLowerCase())) status = "new";
   if (temp.includes("hot")) status = "hot";
   else if (temp.includes("cold")) status = "cold";
   else if (temp.includes("warm")) status = "warm";

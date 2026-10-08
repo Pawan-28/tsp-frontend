@@ -406,7 +406,7 @@ export default function EmployeeCallDetail() {
   useEffect(() => {
     if (!isEditOpen || !call) return;
     setEditName(lead?.name || call.name || "");
-    setEditStatus(lead?.status || "warm");
+    setEditStatus(LEAD_STATUS_OPTIONS.some((o) => o.value === lead?.status) ? lead.status : ""); // blank when no temperature is set
     setEditStage(stageToSelectValue(lead?.pipelineStage || lead?.stage));
     setEditBudget(budgetToEditDisplay(lead));
     setEditService(lead?.service || lead?.requirements || "—");
@@ -547,7 +547,7 @@ export default function EmployeeCallDetail() {
 
   const createLeadFromCall = async ({
     name,
-    status = "warm",
+    status = "", // blank: Gemini sets the temperature after a connected call
     pipelineStage = "Conversation",
     expectedRevenue = 0,
     service = "",
@@ -565,8 +565,7 @@ export default function EmployeeCallDetail() {
     const leadRes = await apiPost("/api/v1/leads", {
       leadName: name.trim(),
       phone: call.phone || "",
-      temperature: temperatureToApi(status),
-      status: workflowStatusFromTemperature(status),
+      ...(temperatureToApi(status) ? { temperature: temperatureToApi(status), status: workflowStatusFromTemperature(status) } : {}),
       pipelineStage,
       companyName: call.company && call.company !== "—" ? call.company : "",
       expectedRevenue,
@@ -673,7 +672,6 @@ export default function EmployeeCallDetail() {
       } else {
         const leadId = await createLeadFromCall({
           name: call.name || editName || "Unknown Lead",
-          status: "warm",
           pipelineStage,
         });
         await editLeadDetails(leadId, { pipelineStage });
@@ -694,7 +692,6 @@ export default function EmployeeCallDetail() {
 
     const leadId = await createLeadFromCall({
       name: (call.name || "Unknown Lead").trim(),
-      status: "warm",
       pipelineStage: "Conversation",
     });
     return leadId;
