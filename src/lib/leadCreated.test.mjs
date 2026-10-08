@@ -27,7 +27,10 @@ const owner = panel.indexOf('label="Owner/Assignee"');
 const created = panel.indexOf('label="Lead Created"');
 const service = panel.indexOf('label="Service"');
 assert.ok(owner > 0 && created > owner && created < service, "Owner/Assignee, then Lead Created, then Service");
-assert.match(panel, /<DetailField label="Lead Created" value=\{formatLeadCreated\(liveLead\.createdAt \|\| liveLead\.created_at\)\} readOnly \/>/);
+assert.match(panel, /<DetailField label="Lead Created" value=\{formatLeadCreated\(fetchedCreatedAt \|\| liveLead\.createdAt \|\| liveLead\.created_at\)\} readOnly \/>/);
+// the created time is read from the backend (GET /api/v1/leads/:id), not only from the lead already in memory
+assert.match(panel, /setFetchedCreatedAt\(data\?\.createdAt \?\? data\?\.created_at \?\? null\)/);
+assert.match(panel, /setFetchedCreatedAt\(null\);\s+refreshExtraInfo\(\);/);
 assert.equal((panel.match(/label="Lead Created"/g) || []).length, 1);
 
 console.log("leadCreated: Lead Created date + time (IST) on the lead card - OK");

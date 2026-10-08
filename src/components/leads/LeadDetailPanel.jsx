@@ -286,6 +286,8 @@ export default function LeadDetailPanel({
   // Extra Info: customer-level profile (leads.source_meta.extraInfo) + the CRM data that owns meeting / follow-up.
   const { meetingsUpcoming, meetingsHistory, followUps } = useEmployee();
   const [fetchedExtraInfo, setFetchedExtraInfo] = useState(null);
+  // The lead's created time from the backend (the lead object on a board / call card can lack it).
+  const [fetchedCreatedAt, setFetchedCreatedAt] = useState(null);
   // Source dropdown = ONLY the sources on the admin Sources page; "+ Add new…" creates one there too.
   const { sources: leadSources, addSource } = useLeadSources(() => (variant === "admin" ? getAdminCrmHeaders() : getCrmHeaders()));
   // Catalog entries ({ name, serviceId, priceNum }) — used to resolve the lead's stored service.
@@ -305,6 +307,7 @@ export default function LeadDetailPanel({
     try {
       const res = await apiGet(`/api/v1/leads/${id}`, { headers: crmHeaders, cacheTtl: 0 });
       const data = res?.data && typeof res.data === "object" ? res.data : res;
+      setFetchedCreatedAt(data?.createdAt ?? data?.created_at ?? null);
       let meta = data?.sourceMeta ?? data?.source_meta;
       if (typeof meta === "string") { try { meta = JSON.parse(meta); } catch { meta = null; } }
       setFetchedExtraInfo(meta && typeof meta === "object" && meta.extraInfo ? meta.extraInfo : null);
@@ -315,6 +318,7 @@ export default function LeadDetailPanel({
 
   useEffect(() => {
     setFetchedExtraInfo(null);
+    setFetchedCreatedAt(null);
     refreshExtraInfo();
   }, [liveLead?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1249,7 +1253,7 @@ export default function LeadDetailPanel({
         />
         <DetailField label="Last Contact" value={liveLead.last} readOnly />
         <DetailField label="Owner/Assignee" value={currentAssignee} readOnly />
-        <DetailField label="Lead Created" value={formatLeadCreated(liveLead.createdAt || liveLead.created_at)} readOnly />
+        <DetailField label="Lead Created" value={formatLeadCreated(fetchedCreatedAt || liveLead.createdAt || liveLead.created_at)} readOnly />
         <DetailField
           label="Service"
           value={draft.service || "—"}
