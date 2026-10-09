@@ -91,16 +91,31 @@ export function formatMeetingWhen(scheduledAt, now = new Date()) {
 }
 
 /**
- * The service the meeting is about. Order: the service passed in -> the meeting's own service -> read back out of the meeting title
- * ("<Customer> <Service> - Clarity Call"). "" when none is known.
+ * The service the meeting is about - it must be the one the MEETING was booked for, i.e. the one in its title
+ * ("<Customer> <Service> - Clarity Call"), so the message and the meeting always say the same thing. The lead's own stored service
+ * can differ (a service picked while booking, or a code sent with another name) - it only fills in when the title has no service.
+ * Order: the service read out of the meeting title -> the service passed in -> the meeting's own service. "" when none is known.
  */
 export function serviceForMeetingMessage({ serviceName, meeting, leadName } = {}) {
-  const direct = cleanServiceName(serviceName) || cleanServiceName(meeting?.leadService) || cleanServiceName(meeting?.service);
-  if (direct && !/^SRV-\d+$/i.test(direct)) return direct;
-  let title = String(meeting?.title || "").replace(/\s*[-\u2013\u2014]\s*Clarity Call\s*$/i, "").trim();
+  const candidates = [serviceName, meeting?.leadService, meeting?.service]
+    .map(cleanServiceName)
+    .filter((c) => c && !/^SRV-\d+$/i.test(c));
   const name = String(leadName || "").trim();
-  if (name && title.toLowerCase().startsWith(name.toLowerCase())) title = title.slice(name.length).trim();
-  return title && title.toLowerCase() !== name.toLowerCase() ? title : "";
+  let title = String(meeting?.title || "").replace(/\s*[-\u2013\u2014]\s*Clarity Call\s*$/i, "").trim();
+  if (title) {
+    // a known service that the title ends with agrees with the title - use it as written
+    const agreeing = candidates.find((c) => title.toLowerCase().endsWith(c.toLowerCase()));
+    if (agreeing) return agreeing;
+    // otherwise the title decides (the customer's name is the part in front of the service)
+    const hasNamePrefix = name && title.toLowerCase().startsWith(name.toLowerCase());
+    if (hasNamePrefix) {
+      const fromTitle = title.slice(name.length).trim();
+      if (fromTitle) return fromTitle;
+    } else if (!candidates.length && title.toLowerCase() !== name.toLowerCase()) {
+      return title;
+    }
+  }
+  return candidates[0] || "";
 }
 
 /** "Ravi" -> "Ravi JI"; a name that already ends in "ji" is left as it is. */

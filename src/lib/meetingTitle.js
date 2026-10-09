@@ -34,17 +34,22 @@ export function matchCatalogService(candidates, catalog) {
     .map((c) => String(c ?? "").trim())
     .filter(Boolean);
 
+  // 1) exact NAME first. The name is what the customer actually chose (the form / ad they filled); a service CODE sent next to it can
+  //    be wrong (n8n sent serviceId SRV-010 = "Book Launch With Chetan Bhagat" with the name "Podcast Interview On News Channel"),
+  //    and the catalog even has duplicate codes - so a code must never beat a name that is in the catalog.
   for (const raw of values) {
-    const lower = raw.toLowerCase();
-    // 1) service code / id (SRV-010)
-    const byId = list.find((s) => s.serviceId && String(s.serviceId).toLowerCase() === lower);
-    if (byId) return byId;
-    // 2) exact name after cleaning
+    if (/^SRV-\d+$/i.test(raw)) continue; // a bare code is an id, not a name (the catalog even holds a junk service NAMED "SRV-001")
     const cleaned = cleanServiceName(raw).toLowerCase();
     if (cleaned) {
       const byName = list.find((s) => s.name.toLowerCase() === cleaned);
       if (byName) return byName;
     }
+  }
+  // 2) service code / id (SRV-010) - when no name resolves
+  for (const raw of values) {
+    const lower = raw.toLowerCase();
+    const byId = list.find((s) => s.serviceId && String(s.serviceId).toLowerCase() === lower);
+    if (byId) return byId;
   }
   // 3) catalog name appears inside the raw text (longest name first so
   //    "Book Launch With Celebrities" wins over "Book Launch")
