@@ -49,13 +49,25 @@ export function autoAssignCountdownLabel(clock, now = Date.now()) {
   return s.paused ? `Paused on Sunday · ${left} left` : `${left} to auto-assign`;
 }
 
-/** "normal" (2+ days) | "urgent" (last day) | "paused" (Sunday) | "due" (window over). null = no clock. */
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * The colour of the timer, by the time that is left (working time):
+ *   "normal"   more than 24 hours left (3 days ... 24 h)  -> GREEN
+ *   "urgent"   24 hours or less                           -> YELLOW
+ *   "critical" 3 hours or less                            -> RED
+ *   "due"      the window is over                         -> RED
+ *   "paused"   it is Sunday - the clock stands still      -> BLUE
+ * null = the lead has no clock.
+ */
 export function autoAssignTone(clock, now = Date.now()) {
   const s = clockState(clock, now);
   if (!s) return null;
   if (s.due) return "due";
   if (s.paused) return "paused";
-  return s.daysLeft <= 1 ? "urgent" : "normal";
+  if (s.msLeft <= 3 * HOUR_MS) return "critical";
+  if (s.msLeft <= DAY_MS) return "urgent";
+  return "normal";
 }
 
 /** Longer text for a tooltip: when exactly the lead will be handed to another employee. */
