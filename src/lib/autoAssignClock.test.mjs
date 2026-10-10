@@ -7,7 +7,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { DAY_MS, clockState, formatCountdown, autoAssignLabel, autoAssignCountdownLabel, autoAssignTone, autoAssignTitle } from "./autoAssignClock.js";
+import { DAY_MS, clockState, formatCountdown, formatHoursMinutes, autoAssignLabel, autoAssignCountdownLabel, autoAssignTone, autoAssignTitle } from "./autoAssignClock.js";
 import { addWorkingMs, isSunday } from "./workingTime.js";
 
 const require = createRequire(import.meta.url);
@@ -31,15 +31,27 @@ assert.equal(autoAssignLabel(at(0), NOW), "Auto-assigning soon");
 assert.equal(autoAssignLabel(at(-2), NOW), "Auto-assigning soon");
 for (const bad of [null, {}, { deadlineAt: "garbage" }]) assert.equal(autoAssignLabel(bad, NOW), null);
 
-// 2. the countdown: exact time left with hours, minutes AND seconds
-assert.equal(formatCountdown(2 * DAY_MS + 5 * H + 12 * 60000 + 33000), "2d 05h 12m 33s");
-assert.equal(formatCountdown(5 * H + 2 * 60000 + 3000), "5h 02m 03s");
-assert.equal(formatCountdown(12 * 60000 + 33000), "12m 33s");
-assert.equal(formatCountdown(7000), "0m 07s");
-assert.equal(formatCountdown(-5000), "0m 00s", "never negative");
-assert.equal(autoAssignCountdownLabel(at(2, 5), NOW), "2d 05h 00m 00s to auto-assign");
-assert.equal(autoAssignCountdownLabel(at(2, 5), NOW + 3000), "2d 04h 59m 57s to auto-assign", "ticks down second by second");
+// 2. the countdown: HOURS and MINUTES (no days, no seconds), counting down from 72 hours
+assert.equal(formatHoursMinutes(3 * DAY_MS), "72h 00m", "a fresh lead starts at 72 hours");
+assert.equal(formatHoursMinutes(2 * DAY_MS + 15 * H + 20 * 60000 + 19000), "63h 20m", "seconds are dropped, days become hours");
+assert.equal(formatHoursMinutes(24 * H), "24h 00m");
+assert.equal(formatHoursMinutes(23 * H + 59 * 60000), "23h 59m");
+assert.equal(formatHoursMinutes(5 * H + 2 * 60000 + 3000), "5h 02m");
+assert.equal(formatHoursMinutes(3 * H), "3h 00m");
+assert.equal(formatHoursMinutes(59 * 60000 + 30000), "59m", "under an hour: minutes only");
+assert.equal(formatHoursMinutes(7000), "0m");
+assert.equal(formatHoursMinutes(-5000), "0m", "never negative");
+assert.ok(!/\dd |\ds\b/.test(autoAssignCountdownLabel(at(2, 15.34), NOW)), "no days / seconds anywhere");
+assert.equal(autoAssignCountdownLabel(at(3), NOW), "72h 00m to auto-assign");
+assert.equal(autoAssignCountdownLabel(at(2, 15 + 20 / 60), NOW), "63h 20m to auto-assign");
+assert.equal(autoAssignCountdownLabel(at(1), NOW), "24h 00m to auto-assign");
+assert.equal(autoAssignCountdownLabel(at(0, 2.75), NOW), "2h 45m to auto-assign");
+assert.equal(autoAssignCountdownLabel(at(0, 0.5), NOW), "30m to auto-assign");
+assert.equal(autoAssignCountdownLabel(at(3), NOW + 60000), "71h 59m to auto-assign", "ticks down by the minute");
+assert.equal(autoAssignCountdownLabel(at(3), NOW + 3 * H), "69h 00m to auto-assign");
 assert.equal(autoAssignCountdownLabel(at(-1), NOW), "Auto-assigning soon");
+// the old second-by-second text is still available as a helper, but is no longer shown
+assert.equal(formatCountdown(2 * DAY_MS + 5 * H + 12 * 60000 + 33000), "2d 05h 12m 33s");
 
 // 3. the colour follows the time left: GREEN above 24 h, YELLOW 24 h or less, RED 3 h or less
 assert.equal(autoAssignTone(at(3), NOW), "normal", "3 days: green");
@@ -68,7 +80,7 @@ assert.equal(clockState(deadline, sunMorning).paused, true);
 assert.equal(clockState(deadline, sunMorning).msLeft, clockState(deadline, sunNight).msLeft, "frozen all Sunday");
 assert.equal(clockState(deadline, sunMorning).msLeft, 60 * H);
 assert.equal(autoAssignLabel(deadline, sunMorning), "Paused on Sunday · 3 days left");
-assert.equal(autoAssignCountdownLabel(deadline, sunNight), "Paused on Sunday · 2d 12h 00m 00s left");
+assert.equal(autoAssignCountdownLabel(deadline, sunNight), "Paused on Sunday · 60h 00m left");
 assert.equal(autoAssignTone(deadline, sunMorning), "paused");
 const monMorning = ist("2026-10-05T00:30:00");
 assert.equal(clockState(deadline, monMorning).paused, false);
@@ -111,7 +123,8 @@ const render = (props) => renderToStaticMarkup(React.createElement(Chip, props))
 // the card chip and the header chip are the same live countdown (days, hours, minutes, seconds)
 const html = render({ clock: future(2 * DAY_MS + 3600e3) });
 assert.ok(html.includes('data-testid="auto-assign-chip"'));
-assert.match(html, /\d+d \d\dh \d\dm \d\ds to auto-assign|Paused on Sunday/, "a card shows the running timer, not only whole days");
+assert.match(html, /\d+h \d\dm to auto-assign|\d+m to auto-assign|Paused on Sunday/, "a card shows hours and minutes");
+assert.ok(!/\d+d \d|\d+s to/.test(html), "no days or seconds");
 assert.ok(html.includes("tabular-nums"));
 assert.match(render({ clock: future(2 * DAY_MS + 3600e3), live: false }), /\d+ days? to auto-assign|Paused on Sunday/, "live={false} keeps the short words");
 if (!isSunday(nowMs)) {
@@ -150,4 +163,4 @@ assert.match(ap, /same service group/);
 assert.ok(!/Lead, Not Pick, Short Call, Conversation/.test(ap), "Conversation is no longer timed");
 assert.match(read("src/lib/useNowTick.js"), /ONE interval per period is shared/);
 
-console.log("autoAssignClock: live d/h/m/s countdown on cards and header, green/yellow/red, Sunday pause, parity with the server - OK");
+console.log("autoAssignClock: 72h -> hours+minutes countdown on cards and header, green/yellow/red, Sunday pause, parity with the server - OK");

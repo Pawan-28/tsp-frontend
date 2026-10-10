@@ -13,13 +13,14 @@ const TONE = {
 };
 
 /**
- * The time left before the lead is handed to another employee, counting down live: "2d 15h 20m 19s to auto-assign".
- * Used on the cards and in the lead header alike (one shared 1-second ticker drives every chip). `live={false}` gives the short
- * words ("2 days to auto-assign") refreshed once a minute. Sundays do not count: on a Sunday it shows "Paused on Sunday".
+ * The time left before the lead is handed to another employee, in hours and minutes, counting down from 72 hours:
+ * "63h 20m to auto-assign" (no days, no seconds). Used on the cards and in the lead header alike; one shared ticker keeps every chip
+ * current. `live={false}` gives the short words ("3 days to auto-assign"). Sundays do not count: on a Sunday it shows
+ * "Paused on Sunday" and the time stands still.
  * Nothing is drawn when the lead has no clock.
  */
 export default function AutoAssignChip({ clock, live = true, className = "" }) {
-  const now = useNowTick(live ? 1000 : 60_000);
+  const now = useNowTick(15_000); // minutes are shown: refresh a few times a minute
   const label = live ? autoAssignCountdownLabel(clock, now) : autoAssignLabel(clock, now);
   if (!label) return null;
   const tone = autoAssignTone(clock, now);
@@ -29,7 +30,7 @@ export default function AutoAssignChip({ clock, live = true, className = "" }) {
       data-testid="auto-assign-chip"
       data-tone={tone}
       title={autoAssignTitle(clock, now)}
-      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9.5px] font-bold leading-none ${live ? "tabular-nums" : ""} ${TONE[tone]} ${className}`}
+      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9.5px] font-bold leading-none tabular-nums ${TONE[tone]} ${className}`}
     >
       <Icon className="h-2.5 w-2.5 shrink-0" />
       <span className="truncate">{label}</span>

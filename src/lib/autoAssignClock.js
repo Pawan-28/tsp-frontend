@@ -31,6 +31,17 @@ export function formatCountdown(ms) {
   return `${m}m ${two(s)}s`;
 }
 
+/**
+ * The time left in HOURS and MINUTES (no days, no seconds), counting down from 72 hours: 72h 00m ... 24h 00m ... 2h 59m ... 45m.
+ * (Rounded DOWN to the minute.)
+ */
+export function formatHoursMinutes(ms) {
+  const totalMin = Math.max(0, Math.floor(ms / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = String(totalMin % 60).padStart(2, "0");
+  return h > 0 ? `${h}h ${m}m` : `${totalMin}m`;
+}
+
 /** Short words for a card: "3 days to auto-assign" / "1 day ..." / "Paused on Sunday · 2 days left" / "Auto-assigning soon". */
 export function autoAssignLabel(clock, now = Date.now()) {
   const s = clockState(clock, now);
@@ -40,12 +51,12 @@ export function autoAssignLabel(clock, now = Date.now()) {
   return s.paused ? `Paused on Sunday · ${left} left` : `${left} to auto-assign`;
 }
 
-/** Full words for the lead header: the exact time left, with seconds. */
+/** The time left in hours and minutes - the same on a card and in the lead header: "63h 20m to auto-assign". */
 export function autoAssignCountdownLabel(clock, now = Date.now()) {
   const s = clockState(clock, now);
   if (!s) return null;
   if (s.due) return "Auto-assigning soon";
-  const left = formatCountdown(s.msLeft);
+  const left = formatHoursMinutes(s.msLeft);
   return s.paused ? `Paused on Sunday · ${left} left` : `${left} to auto-assign`;
 }
 

@@ -88,7 +88,7 @@ expectCol(add(lead(P(28)), [call(0, P(28), { outcome: "Not Connected", sec: 5 })
 expectCol(add(lead(P(14), { stage: "Not Pick", pipelineStage: "Not Pick", status: "Not Pick" }), [call(0, P(14), { sec: 300 })], { period: true }), "conversation_2min", "stored Not Pick but the person was later answered 5 min -> Conversation");
 expectCol(add(lead(P(15), { stage: "Contacted", pipelineStage: "Contacted", status: "Contacted" }), [call(0, P(15), NO_ANSWER)], { period: true }), "conversation_2min", "stored Contacted (= Conversation by decision) is KEPT even though history is only Not Pick");
 expectCol(add(lead(P(16), { stage: "Meeting Booked", pipelineStage: "Meeting Booked", status: "Booked" }), [call(0, P(16), NO_ANSWER)], { period: true }), "meeting_booked", "stored Meeting Booked is never pulled back by call history");
-expectCol(add(lead(P(17), { stage: "Lead", pipelineStage: "Lead", stageOverride: true }), [call(0, P(17), { sec: 600 })], { period: true }), "lead", "manually placed in Lead (stageOverride) stays where the rep put it");
+expectCol(add(lead(P(17), { stage: "Lead", pipelineStage: "Lead", stageOverride: true }), [call(0, P(17), { sec: 600 })], { period: true }), "conversation_2min", "manually placed in Lead (stageOverride) + an answered 10 min call -> Conversation (a hand-placed early stage can never sit BELOW a 2 min+ call)");
 
 // ===== NEW leads with period calls =====
 expectCol(add(lead(P(18)), [call(0, P(18), { sec: 20, daysAgo: 0 })], { period: true }), "short_call", "new lead, one 20 s answered call today");
@@ -104,6 +104,20 @@ history[P(21)] = historyOf([1, 2, 3].map(() => call(0, P(21), NO_ANSWER))); // 3
 const dupShortA = lead(P(22)); const dupShortB = lead(P(22), { updatedAt: iso(0) });
 leads.push(dupShortA, dupShortB);
 history[P(22)] = historyOf([call(0, P(22), { sec: 45 })]);
+
+// ===== a stage placed BY HAND is kept - but it can never sit BELOW an answered call above 2 min =====
+const manual = (phone, stage, extra = {}) => lead(phone, { stage, pipelineStage: stage, status: stage, stageOverride: true, ...extra });
+expectCol(add(manual(P(31), "Short Call"), [call(0, P(31), { sec: 240 })]), "conversation_2min", "HAND-placed Short Call + answered 4 min -> Conversation");
+expectCol(add(manual(P(32), "Not Pick"), [call(0, P(32), { sec: 300, emp: 99, daysAgo: 70 })]), "conversation_2min", "HAND-placed Not Pick + a 5 min call by ANOTHER employee long ago -> Conversation");
+expectCol(add(manual(P(33), "Lead"), [call(0, P(33), { dir: "inbound", sec: 180 })]), "conversation_2min", "HAND-placed Lead + an answered 3 min INCOMING call -> Conversation");
+expectCol(add(manual(P(34), "Short Call"), [call(0, P(34), { sec: 45 })]), "short_call", "HAND-placed Short Call + only a 45 s call -> stays Short Call");
+expectCol(add(manual(P(35), "Not Pick"), [call(0, P(35), { sec: 45 })]), "not_pick", "HAND-placed Not Pick + only a 45 s call -> stays (only a 2 min+ call overrides)");
+expectCol(add(manual(P(36), "Short Call")), "short_call", "HAND-placed Short Call, no call history at all -> stays");
+expectCol(add(manual(P(37), "Short Call"), [call(0, P(37), { sec: 120 })]), "short_call", "HAND-placed Short Call + a call of exactly 120 s (that is Short, not Conversation) -> stays");
+expectCol(add(manual(P(38), "Short Call"), [call(0, P(38), { sec: 121 })]), "conversation_2min", "HAND-placed Short Call + 121 s -> Conversation");
+for (const [n, stage, col] of [[41, "Meeting Booked", "meeting_booked"], [42, "Meeting Done", "meeting_done"], [43, "Proposal Sent", "proposal_sent"], [44, "Not Interested", "not_interested"], [45, "Advance Paid", "advance_paid"], [46, "Payment Complete", "payment_complete"]]) {
+  expectCol(add(manual(P(n), stage), [call(0, P(n), { sec: 600 })]), col, `HAND-placed ${stage} + a 10 min call -> stays ${stage}`);
+}
 
 const board = groupKanbanSyncedWithCallyzer(leads, periodCalls, [], {
   period: "month", visibleLeads: leads, scopeCallsByAssignee: true, includeUncontactedAssignments: true, employeeId: EMP,
@@ -147,6 +161,15 @@ const boardNoHist = groupKanbanSyncedWithCallyzer(leads, periodCalls, [], {
 });
 const inLeadNoHist = boardNoHist.lead.some((c) => c.phone === P(10));
 assert.equal(inLeadNoHist, true, "without history the other-employee dial stays in Lead (old behaviour) - proves the history is what fixes it");
+
+// resolveLeadKanbanColumn (used for scroll / move logic) agrees for hand-placed leads as well
+{
+  const hist = { [P(31)]: historyOf([call(0, P(31), { sec: 240 })]), [P(34)]: historyOf([call(0, P(34), { sec: 45 })]) };
+  assert.equal(resolveLeadKanbanColumn(manual(P(31), "Short Call"), [], { callHistory: hist }), "conversation_2min");
+  assert.equal(resolveLeadKanbanColumn(manual(P(34), "Short Call"), [], { callHistory: hist }), "short_call");
+  assert.equal(resolveLeadKanbanColumn(manual(P(31), "Meeting Booked"), [], { callHistory: hist }), "meeting_booked");
+  assert.equal(resolveLeadKanbanColumn(manual(P(31), "Short Call"), [], {}), "short_call", "without a call history nothing changes");
+}
 
 // pure helpers
 assert.equal(columnFromCallHistory(null), "lead");

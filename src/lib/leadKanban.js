@@ -356,7 +356,7 @@ export function resolveLeadKanbanColumn(lead, calls = [], options = {}) {
   if (lead._fromCall && lead._callCol) return lead._callCol;
 
   const dbStageId = mapStageToId(lead.pipelineStage || lead.stage, lead.status);
-  if (lead.stageOverride) return dbStageId;
+  if (lead.stageOverride) return manualBelowConversation(lead, dbStageId, options.callHistory) ? "conversation_2min" : dbStageId;
   if (dbStageId && dbStageId !== "lead") {
     // call-driven stages can be upgraded by the real call history; everything further along is kept as stored
     const isCallStage = dbStageId in EARLY_COLUMN_RANK;
@@ -510,6 +510,16 @@ export function historyAwareColumn(lead, storedColumn, callHistory) {
   if (!callHistory) return null;
   const fromHistory = columnFromCallHistory(callHistory[callHistoryKey(lead)]);
   return furthestEarlyColumn(storedColumn || "lead", fromHistory);
+}
+
+/**
+ * A stage placed BY HAND is kept - with one exception: a person who ever had an ANSWERED call above 2 minutes (any employee, any
+ * direction, any date) is in Conversation, so a hand-placed Lead / Not Pick / Short Call can never sit BELOW that. Hand-placed Meeting
+ * Booked, Meeting Done, Proposal, Objection, paid and Not Interested stay exactly where they are.
+ */
+function manualBelowConversation(lead, stageId, callHistory) {
+  if (!callHistory || !(stageId in EARLY_COLUMN_RANK) || stageId === "conversation_2min") return false;
+  return columnFromCallHistory(callHistory[callHistoryKey(lead)]) === "conversation_2min";
 }
 
 /**
@@ -826,7 +836,8 @@ export function groupKanbanSyncedWithCallyzer(
     if (!showLead(lead)) continue;
     const dbStageId = mapStageToId(lead.pipelineStage || lead.stage, lead.status);
     if (lead.stageOverride) {
-      pushLead(dbStageId, lead); // a human placed it: it stays
+      // a human placed it: it stays - except below Conversation when the person had an answered call above 2 min
+      pushLead(manualBelowConversation(lead, dbStageId, callHistory) ? "conversation_2min" : dbStageId, lead);
     } else if (dbStageId && dbStageId !== "lead") {
       // Stored Not Pick / Short Call / Conversation can be stale (e.g. stored "Not Pick" but the person was later
       // answered for 5 min): take the further of stored stage and call history. Later stages are kept as stored.
