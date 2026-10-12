@@ -98,11 +98,24 @@ function readWorkspaceSnapshot(employeeId) {
     const raw = window.localStorage.getItem(`${WORKSPACE_SNAPSHOT_PREFIX}${employeeId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || Date.now() - (parsed.ts || 0) > WORKSPACE_SNAPSHOT_MAX_AGE_MS) return null;
+    if (!parsed || Date.now() - (parsed.ts || 0) > WORKSPACE_SNAPSHOT_MAX_AGE_MS) {
+      // an expired snapshot is deleted, not just ignored (it holds customer names and phone numbers)
+      try { window.localStorage.removeItem(`${WORKSPACE_SNAPSHOT_PREFIX}${employeeId}`); } catch { /* ignore */ }
+      return null;
+    }
     return parsed;
   } catch {
     return null;
   }
+}
+
+// Recordings, transcripts, notes and MoM text are sensitive and are re-fetched from the server anyway: never kept in the browser snapshot.
+const SNAPSHOT_STRIP_KEYS = ["recordingUrl", "recording_url", "recording", "transcript", "notes", "note", "aiSummary", "ai_summary", "mom", "momText", "summary"];
+function slimCallForSnapshot(call) {
+  if (!call || typeof call !== "object") return call;
+  const out = { ...call };
+  for (const key of SNAPSHOT_STRIP_KEYS) delete out[key];
+  return out;
 }
 
 function persistWorkspaceSnapshot(employeeId, { calls: callList, leads: leadList }) {
@@ -111,7 +124,7 @@ function persistWorkspaceSnapshot(employeeId, { calls: callList, leads: leadList
     window.localStorage.setItem(
       `${WORKSPACE_SNAPSHOT_PREFIX}${employeeId}`,
       JSON.stringify({
-        calls: Array.isArray(callList) ? callList.slice(0, 200) : [],
+        calls: Array.isArray(callList) ? callList.slice(0, 200).map(slimCallForSnapshot) : [],
         leads: Array.isArray(leadList) ? leadList.slice(0, 5000) : [],
         ts: Date.now(),
       }),

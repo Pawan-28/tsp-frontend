@@ -101,6 +101,39 @@ export function getMomPlainText(call) {
  * marker, or the made-up "Gemini processed" template an older Call Detail page used to save. A MoM exists only for a call that
  * really connected and was analysed - these are never shown as a MoM (the stored text is left alone, only hidden).
  */
+/**
+ * When the AI could not make a MoM, the server stores a marker + the real reason on the call ("[TRANSCRIPT UNAVAILABLE] ...
+ * Reason: recording download failed (HTTP 403)"). That text is hidden from the MoM view, so the user only saw "not generated" and
+ * a success toast. This turns it into a plain message to show instead. Returns null when the text is a real MoM (or empty).
+ */
+export function momFailure(text) {
+  const body = stripGeminiCharges(text).trimStart();
+  if (!body) return null;
+  if (/^\[NO SPEECH DETECTED\]/i.test(body)) {
+    return "The recording has no intelligible speech, so there is nothing to summarise.";
+  }
+  if (/^\[AI UNAVAILABLE\]/i.test(body)) {
+    return body.replace(/^\[AI UNAVAILABLE\]\s*/i, "").split("\n")[0].trim() || "The AI service is not available on the server.";
+  }
+  if (/^\[AI SUMMARY PENDING\]/i.test(body)) {
+    const why = (/Reason:\s*([^\n]+)/i.exec(body) || [])[1]?.trim();
+    return why
+      ? `The call was transcribed but the AI summary step failed (${why}). Try again in a moment.`
+      : "The call was transcribed but the AI summary step failed. Try again in a moment.";
+  }
+  if (/^\[TRANSCRIPT UNAVAILABLE\]/i.test(body)) {
+    const reason = (/Reason:\s*([^\n]+)/i.exec(body) || [])[1]?.trim() || "";
+    if (/download failed \(HTTP (401|403|404|410)\)/i.test(reason)) {
+      return `The recording link no longer works (${reason.replace(/^recording download failed /i, "")}). Callyzer may have expired or removed it, so the AI cannot hear the call.`;
+    }
+    if (/download failed/i.test(reason)) return `The recording could not be downloaded (${reason}). Try again later.`;
+    if (/empty/i.test(reason)) return "The recording file is empty, so the AI cannot hear the call.";
+    if (/quota|429|rate/i.test(reason)) return "The AI is over its usage limit right now. Try again later.";
+    return reason ? `The AI could not transcribe the recording: ${reason}` : "The AI could not transcribe the recording.";
+  }
+  return null;
+}
+
 export function isWasteMomText(text) {
   const body = stripGeminiCharges(text).trimStart();
   if (!body) return false;

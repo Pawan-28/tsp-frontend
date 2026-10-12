@@ -29,7 +29,7 @@ const EMPLOYEE_TITLES = {
   "/employee/calls": "Call Reporting",
   "/employee/call-detail": "Call Detail",
   "/employee/call-assistant": "Call Assistant",
-  "/employee/leads": "Pipeline",
+  "/employee/leads": "Leads",
   "/employee/pipeline": "Pipeline",
   "/employee/sales-process": "Sales Process",
   "/employee/assets": "Assets",

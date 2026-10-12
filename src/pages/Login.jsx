@@ -3,14 +3,9 @@ import { Lock, User, Eye, EyeOff, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext.jsx";
 import TSPublicationDoodleLogo from "../components/TSPublicationDoodleLogo.jsx";
+import { resolvePostLoginPath } from "../lib/postLoginPath.js";
 
 const LOGIN_TOAST_ID = "login-feedback";
-
-function resolvePostLoginPath(authUser) {
-  if (Boolean(authUser?.mustChangePassword)) return "/change-password";
-  if (authUser?.role === "employee") return "/employee/pipeline";
-  return "/";
-}
 
 function AuthShell({ children, title, subtitle }) {
   return (
@@ -93,7 +88,7 @@ export default function Login() {
     setBusy(true);
     try {
       const authUser = await login(loginId.trim(), password);
-      const nextPath = resolvePostLoginPath(authUser);
+      const nextPath = resolvePostLoginPath(authUser, window.location.search);
       toast.success(`Welcome back, ${authUser.name || authUser.loginId}!`, { id: LOGIN_TOAST_ID });
       window.location.replace(nextPath);
     } catch (err) {

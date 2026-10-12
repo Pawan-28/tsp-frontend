@@ -53,6 +53,23 @@ export function getStoredAuthUser() {
   }
 }
 
+// Everything this app keeps in the browser for one person: leads, calls, MoMs, workspace snapshots, drafts, caches, profile ...
+const USER_DATA_PREFIXES = ["crm_", "crm-", "emp_", "admin_", "ts_", "tsp_"];
+// Harmless browser-level state that must survive a logout (it protects against reload loops, it is not user data).
+const KEEP_KEYS = new Set(["crm_chunk_reload_at"]);
+
+function clearStorageByPrefix(storage) {
+  try {
+    for (let i = storage.length - 1; i >= 0; i -= 1) {
+      const key = storage.key(i);
+      if (key && !KEEP_KEYS.has(key) && USER_DATA_PREFIXES.some((p) => key.startsWith(p))) storage.removeItem(key);
+    }
+  } catch {
+    // storage blocked: nothing to clear
+  }
+}
+
+/** Logout: the token AND every cached copy of the previous person's data (a shared computer must not show it to the next user). */
 export function clearAuthStorage() {
   if (typeof window === "undefined") return;
   try {
@@ -61,6 +78,8 @@ export function clearAuthStorage() {
   } catch {
     // ignore
   }
+  try { clearStorageByPrefix(window.localStorage); } catch { /* ignore */ }
+  try { clearStorageByPrefix(window.sessionStorage); } catch { /* ignore */ }
 }
 
 export function getAuthHeaders() {

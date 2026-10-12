@@ -19,7 +19,7 @@ import { LOCAL_SOPS, LEAD_STATUS_LABELS, EMP_KANBAN_STAGES, getEmpStageMeta, map
 import { temperatureToApi, workflowStatusFromTemperature, apiLeadToEmployee, unwrapApiList } from "../../lib/leadSync.js";
 import { formatCallDisplayDate, formatCallDurationLabel } from "../../lib/callDisplay.js";
 import { callStatusMeta, isOutboundCall, normalizeCallOutcome } from "../../lib/callMetrics.js";
-import { isWasteMomText, stripGeminiCharges } from "../../lib/momFormat.js";
+import { isWasteMomText, stripGeminiCharges, momFailure } from "../../lib/momFormat.js";
 import MomText from "../../components/leads/MomText.jsx";
 import { GeminiChargesBar } from "../../components/leads/MomSections.jsx";
 import { formatIndianPhone } from "../../lib/indianFormat.js";
@@ -334,13 +334,15 @@ export default function EmployeeCallDetail() {
     try {
       let generatedMoM = null;
       let newRating = 5;
+      let failureReason = null;
 
       try {
         const { processCallWithAi } = await import("../../lib/api.js");
         const { getCrmHeaders } = await import("../../lib/crmContext.js");
         const res = await processCallWithAi(call.id, { headers: getCrmHeaders() }); // long calls run as a background job and are polled
         // a skipped call (never connected / nothing to summarise) comes back with its OLD stored text - never reuse that
-        if (res?.success && res?.call?.ai_summary && !res.call.skipped && !isWasteMomText(res.call.ai_summary)) {
+        failureReason = res?.call && !res.call.skipped ? momFailure(res.call.ai_summary) : null;
+        if (res?.success && res?.call?.ai_summary && !res.call.skipped && !isWasteMomText(res.call.ai_summary) && !failureReason) {
           generatedMoM = res.call.ai_summary;
           newRating = res.call.rating || 5;
         }
@@ -362,7 +364,7 @@ export default function EmployeeCallDetail() {
         return;
       }
       if (!generatedMoM) {
-        toast.error("The AI could not generate a MoM for this call yet (no recording / transcript). Try again after the recording syncs.");
+        toast.error(failureReason || "The AI could not generate a MoM for this call yet (no recording / transcript). Try again after the recording syncs.", { duration: 8000 });
         return;
       }
 

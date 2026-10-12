@@ -1,6 +1,7 @@
 import { formatINR } from "./indianFormat.js";
 import { kraPeriodLabel } from "./kraPeriod.js";
 import { computeRemunerationBreakdown, DEFAULT_INCENTIVE_SETTINGS } from "./incentiveCalculator.js";
+import { validateIncentiveConfig } from "./incentiveSettings.js";
 
 function csvCell(value) {
   const str = value == null ? "" : String(value);
@@ -49,6 +50,7 @@ export function buildEmployeeIncentiveReport({
     targetBonusAmount: incentiveSettings.targetBonusAmount,
     incentiveSlabs: incentiveSettings.incentiveSlabs,
     useManualCashRate: Boolean(remunerationDraft?.incRate),
+    configInvalid: !validateIncentiveConfig(incentiveSettings).valid, // invalid settings = nothing is paid / reported
   });
 
   return {

@@ -135,6 +135,7 @@ const LeadCard = memo(function LeadCard({ lead, lastLabel, onOpen, isDragging, o
               <button
                 type="button"
                 title={`Call ${displayName}`}
+                aria-label={`Call ${displayName}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   const url = formatTelUrl(rawPhone);
@@ -313,6 +314,8 @@ export default function Pipeline() {
     dropDepthRef.current = 0;
     setDropStageId(null);
     setDragLeadId(null);
+    // While the board is still refreshing for a new period it shows the OLD period's cards: dropping one now would move a lead on stale data.
+    if (isBoardStale) return;
     const id = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/lead-id");
     if (id) moveLeadToStage(id, stageId);
   };
@@ -655,7 +658,7 @@ export default function Pipeline() {
             iconBg="bg-slate-50"
             iconColor="text-slate-500"
             change="Closed lost"
-            sub=""
+            sub="Created in this period"
           />
         </div>
 
@@ -666,6 +669,7 @@ export default function Pipeline() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              aria-label="Filter leads by name, phone or company"
               placeholder="Filter by name, phone, or company..."
               className="w-full h-10 pl-9 pr-8 rounded-xl border border-rose-100 bg-white text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100 transition"
             />
@@ -675,6 +679,7 @@ export default function Pipeline() {
                 onClick={() => setSearch("")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center text-xs font-bold transition"
                 title="Clear search"
+                aria-label="Clear search"
               >
                 ×
               </button>
@@ -765,6 +770,7 @@ export default function Pipeline() {
               {periodLabel} · {kanbanLeads.length} cards on board
               {olderCount > 0 ? ` (${olderCount} older: manually staged leads stay on every period)` : ""}
               {" "}· Callyzer synced · {syncedShortCalls} short calls {CALL_SHORT_LABEL} ({grouped.short_call?.length || 0} leads) · {syncedConversationCalls} calls {CALL_CONVERSATION_LABEL} ({grouped.conversation_2min?.length || 0} leads) · {syncedNotPickupCalls} not pick ({grouped.not_pick?.length || 0} leads) · {periodMeetings.length} meetings
+              <span className="block sm:inline"> · call numbers = this period; lead numbers use each person&apos;s full call history</span>
             </>
           )}
           {(callsSyncing) ? " · syncing in background…" : ""}

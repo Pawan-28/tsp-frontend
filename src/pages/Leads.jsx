@@ -14,6 +14,7 @@ import LeadDetailDrawer from "../components/leads/LeadDetailDrawer.jsx";
 import { GlassCard, StatCard, Badge, Drawer, SectionHeader } from "../components/Primitives.jsx";
 import { apiGet, apiPost, apiPut, apiPatch, readCachedJson, invalidateCache } from "../lib/api.js";
 import { getAdminCrmHeaders } from "../lib/crmContext.js";
+import { roleLabel } from "../lib/roleLabel.js";
 import { apiLeadToAdmin, apiEmployeeToAdmin, filterAssignableEmployees, fetchLeadsForAssignPage, unwrapApiData } from "../lib/leadSync.js";
 import {
   getAssignmentState, assignLead, bulkAssign,
@@ -31,6 +32,8 @@ import { PIPELINE_STAGE_DEFINITIONS, mapStageToId, getStageMetaById } from "../l
 import { matchCatalogService } from "../lib/meetingTitle.js";
 import { isHotLead } from "../data/pipelineMock.js";
 import { SkeletonBlock, StatValueSkeleton } from "../components/Skeleton.jsx";
+import AutoAssignChip from "../components/AutoAssignChip.jsx";
+import { useAutoAssignClocks } from "../lib/useAutoAssignClocks.js";
 
 const SOURCE_LABELS = {
   meta_ads: { label: "Meta Ads", tone: "info", color: "#2563eb" },
@@ -100,7 +103,7 @@ function EmployeeCard({ emp, stats, status, paused, onTogglePause, onDrop, dragO
           </div>
           <div className="min-w-0">
             <p className="text-xs font-bold text-slate-900 truncate">{emp.name}</p>
-            <p className="text-[9px] text-slate-500 truncate">{emp.role || emp.department || "Sales"}</p>
+            <p className="text-[9px] text-slate-500 truncate">{roleLabel(emp.role || emp.department, "Sales")}</p>
           </div>
         </div>
         <button
@@ -257,6 +260,22 @@ const showToast = (message, type = "success") => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // The server's own auto-assign switch and today's count. The "Auto ON" / "Assigned today" values used to come only from this
+  // browser's localStorage, so they could disagree with what the server really does.
+  const [serverAssign, setServerAssign] = useState(null);
+  const { clockFor: autoAssignClockFor } = useAutoAssignClocks("admin", getAdminCrmHeaders); // the 3-day stuck-lead countdown (F-58)
+  useEffect(() => {
+    let cancelled = false;
+    apiGet("/api/v1/assignment/config", { headers: getAdminCrmHeaders(), skipCache: true, cacheTtl: 0 })
+      .then((res) => {
+        const cfg = unwrapApiData(res);
+        if (cancelled || !cfg || typeof cfg !== "object") return;
+        setServerAssign({ autoAssign: Boolean(cfg.autoAssign), today: Number(cfg.todayStats?.total || 0) });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -724,7 +743,7 @@ const showToast = (message, type = "success") => {
               <p className="text-[10px] text-slate-500 truncate">
                 {rosterLoading
                   ? "Loading distribution settings…"
-                  : `${modeLabels[assignState.distribution.mode]} · ${assignState.distribution.autoAssign ? "Auto ON" : "Auto OFF"}`}
+                  : `${modeLabels[assignState.distribution.mode]} · ${serverAssign ? `Server auto-assign ${serverAssign.autoAssign ? "ON" : "OFF"}` : (assignState.distribution.autoAssign ? "Auto ON" : "Auto OFF")}`}
               </p>
             </div>
           </div>
@@ -741,6 +760,7 @@ const showToast = (message, type = "success") => {
             <button
               type="button"
               onClick={() => setAssignState(setAutoAssign(assignState, !assignState.distribution.autoAssign))}
+              title="This switch only changes this browser's view. The server's own auto-assign state is shown above."
               className={`${PERIOD_PILL_BTN} ${PERIOD_PILL_INACTIVE}`}
             >
               {assignState.distribution.autoAssign ? "Disable Auto" : "Enable Auto"}
@@ -836,7 +856,7 @@ const showToast = (message, type = "success") => {
           <div className="grid grid-cols-2 gap-2 mt-3">
             <div className="rounded-lg bg-rose-50/80 px-2 py-2 text-center">
               <p className="text-[9px] font-bold text-slate-500 uppercase">Assigned Today</p>
-              <p className="text-lg font-black text-rose-700 leading-tight">{rosterLoading ? <SkeletonBlock className="h-5 w-8" /> : (assignState.todayStats?.total || 0)}</p>
+              <p className="text-lg font-black text-rose-700 leading-tight">{rosterLoading ? <SkeletonBlock className="h-5 w-8" /> : (serverAssign ? serverAssign.today : (assignState.todayStats?.total || 0))}</p>
             </div>
             <div className="rounded-lg bg-emerald-50/80 px-2 py-2 text-center">
               <p className="text-[9px] font-bold text-slate-500 uppercase">Active Reps</p>
@@ -882,7 +902,7 @@ const showToast = (message, type = "success") => {
             <div className="flex gap-2 shrink-0 ml-auto">
               <div className="rounded-lg bg-rose-50/80 px-3 py-2 text-center min-w-[96px]">
                 <p className="text-[9px] font-bold text-slate-500 uppercase whitespace-nowrap">Assigned Today</p>
-                <p className="text-xl font-black text-rose-700 leading-tight">{rosterLoading ? <SkeletonBlock className="h-6 w-8" /> : (assignState.todayStats?.total || 0)}</p>
+                <p className="text-xl font-black text-rose-700 leading-tight">{rosterLoading ? <SkeletonBlock className="h-6 w-8" /> : (serverAssign ? serverAssign.today : (assignState.todayStats?.total || 0))}</p>
               </div>
               <div className="rounded-lg bg-emerald-50/80 px-3 py-2 text-center min-w-[96px]">
                 <p className="text-[9px] font-bold text-slate-500 uppercase whitespace-nowrap">Active Reps</p>
@@ -1042,6 +1062,7 @@ const showToast = (message, type = "success") => {
                           <button type="button" onClick={() => setDetailLead(lead)} className="text-left flex-1 min-w-0">
                             <p className="text-xs font-bold text-slate-900 truncate leading-tight">{lead.lead_name || "—"}</p>
                             <p className="text-[10px] text-slate-500 truncate tabular-nums">{getLeadPhone(lead)}</p>
+                            {autoAssignClockFor(lead) && <span className="mt-1 block"><AutoAssignChip clock={autoAssignClockFor(lead)} /></span>}
                           </button>
                           {!employeeView && <GripVertical size={14} className="text-rose-300 shrink-0" />}
                         </div>
@@ -1096,6 +1117,7 @@ const showToast = (message, type = "success") => {
                         <td className="p-2">
                           <button type="button" onClick={() => setDetailLead(lead)} className="text-left">
                             <p className="text-xs font-bold text-slate-900">{lead.lead_name || "—"}</p>
+                            {autoAssignClockFor(lead) && <span className="mt-1 block"><AutoAssignChip clock={autoAssignClockFor(lead)} /></span>}
                           </button>
                         </td>
                         <td className="p-2">

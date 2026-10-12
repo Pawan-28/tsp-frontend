@@ -89,6 +89,7 @@ export function computeRemunerationBreakdown(draft, options = {}) {
     targetBonusAmount = 2500,
     incentiveSlabs = DEFAULT_SLABS,
     useManualCashRate = false,
+    configInvalid = false, // the saved baseline / slabs are invalid (e.g. baseline above Bronze): nothing is paid until it is fixed
   } = options;
 
   const merged = { ...(employee || {}), ...(draft || {}) };
@@ -103,6 +104,34 @@ export function computeRemunerationBreakdown(draft, options = {}) {
       : computeWeightedKraScore(merged, metricRows);
 
   const baselineRate = resolveBaselineRate(baseIncentiveRate);
+
+  // An invalid incentive configuration used to be only a warning while the money was still calculated (Rs 133 for a rep).
+  // Now the payout is ON HOLD: every incentive part is 0 and the result says so.
+  if (configInvalid) {
+    return {
+      baseSalary,
+      cashCollected,
+      performanceScore,
+      kraScore: performanceScore,
+      performanceIncentive: 0,
+      cashCommission: 0,
+      calculatedIncentive: 0,
+      incentiveCore: 0,
+      manualIncentiveOverride: false,
+      kraIncentive: 0,
+      commission: 0,
+      bonus: 0,
+      autoTargetBonus: 0,
+      manualBonus,
+      penalty,
+      incentiveTotal: 0,
+      totalMoney: Math.round(baseSalary),
+      slabRate: 0,
+      baselineRate,
+      held: true,
+    };
+  }
+
   const slabRate = resolveIncentiveSlabRate(cashCollected, incentiveSlabs, baselineRate);
   const cashRate = useManualCashRate && draft?.incRate != null
     ? safeNum(draft.incRate)

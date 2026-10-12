@@ -24,6 +24,7 @@ import { buildPeriodQueryParams, periodLabel as periodLabelFor } from "../lib/pe
 import { useAdmin } from "../context/AdminContext.jsx";
 import { apiGet, readCachedJson, readStaleCachedJson } from "../lib/api.js";
 import { getStageLabelById } from "../lib/pipelineStages.js";
+import { roleLabel } from "../lib/roleLabel.js";
 import { formatActivityDate, formatAbsoluteDateTime } from "../lib/formatActivityDate.js";
 import { PercentDisk } from "../components/PercentRing.jsx";
 import { formatINR } from "../lib/indianFormat.js";
@@ -862,7 +863,7 @@ function LeaderBoard({ employees, rule = LEADERBOARD_RULE_FALLBACK, periodLabel 
                       <h4 className="text-xs font-bold text-slate-900 truncate leading-tight">
                         {emp.name}
                       </h4>
-                      <p className="text-[9px] text-slate-400 font-medium truncate">Sales Representative</p>
+                      <p className="text-[9px] text-slate-400 font-medium truncate">{roleLabel(emp.role || emp.designation || emp.department, "Sales Representative")}</p>
                     </div>
                   </div>
 
@@ -887,7 +888,7 @@ function LeaderBoard({ employees, rule = LEADERBOARD_RULE_FALLBACK, periodLabel 
                     <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 p-1.5 flex flex-col" title="All logged calls in the period (inbound + outbound)">
                       <div className="flex items-center gap-1 text-slate-500 mb-0.5">
                         <PhoneCall className="w-2.5 h-2.5 text-blue-500" />
-                        <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500 truncate">Total Calls</span>
+                        <span className="text-[8px] font-bold uppercase tracking-wider text-slate-500 truncate">Logged Calls</span>
                       </div>
                       <span className="text-xs font-black text-slate-900 tabular-nums">{totalCalls}</span>
                     </div>
@@ -1334,7 +1335,7 @@ function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChan
       />
 
       <div className="overflow-x-auto scrollbar-hide -mx-0.5 sm:-mx-1 px-0.5 sm:px-1">
-        <div className="min-w-[460px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-2">
+        <div className="min-w-[320px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-2">
           <div className="flex items-center">
             <div className="w-9 sm:w-12 flex-shrink-0" />
             <div className="flex-1 relative h-3.5 sm:h-4 text-slate-500 text-[7px] sm:text-[8px] md:text-[9px] font-semibold tracking-wider uppercase">
@@ -1424,7 +1425,7 @@ function LeadPipeline({ pipelineStats, filterKey, selectedService, onServiceChan
 // ─── AI Cost (Gemini: call transcript + MoM summary) ─────────────────────────
 const inr2 = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-function AiCostPanel({ data, loading, filterKey }) {
+function AiCostPanel({ data, loading, error = false, filterKey }) {
   const isMobile = useIsMobile();
   const sel = data?.selected || { inr: 0, usd: 0, transcriptInr: 0, momInr: 0, calls: 0 };
   const periodName = { today: "Today", week: "This week", month: "This month", custom: "Selected range" }[filterKey] || "This period";
@@ -1447,8 +1448,15 @@ function AiCostPanel({ data, loading, filterKey }) {
       <div className="flex items-end justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{periodName}</p>
-          <p className="text-2xl sm:text-3xl font-display font-extrabold text-slate-900 leading-tight">{loading ? "…" : inr2(sel.inr)}</p>
-          <p className="text-[11px] text-slate-500">${Number(sel.usd || 0).toFixed(4)} · {sel.calls} call{sel.calls === 1 ? "" : "s"} · avg {inr2(avg)}/call</p>
+          {error && !loading ? (
+            // a failed request used to show "₹0.00", which reads as "no AI spend"
+            <p role="alert" className="text-sm font-bold text-rose-600 leading-tight py-1">Couldn&apos;t load AI spend. Refresh to try again.</p>
+          ) : (
+            <>
+              <p className="text-2xl sm:text-3xl font-display font-extrabold text-slate-900 leading-tight">{loading ? "…" : inr2(sel.inr)}</p>
+              <p className="text-[11px] text-slate-500">${Number(sel.usd || 0).toFixed(4)} · {sel.calls} call{sel.calls === 1 ? "" : "s"} · avg {inr2(avg)}/call</p>
+            </>
+          )}
         </div>
         <div className="text-right text-[11px] shrink-0">
           <p className="text-slate-500">Transcript <span className="font-bold text-slate-800">{inr2(sel.transcriptInr)}</span></p>
@@ -2180,7 +2188,7 @@ function RevenueTrajectory({ data = [], kpis = [], periodLabel = "" }) {
       <SectionHead
         icon={BarChart3}
         title="Revenue Trajectory"
-        sub={`Tiles: ${periodLabel || "selected period"} (same as KPI row) · Chart: monthly history, last 6 months`}
+        sub={`Tiles: ${periodLabel || "selected period"} (same as KPI row) · Chart: monthly history, months with data in the last 6`}
         action={
           <div className="inline-flex p-0.5 sm:p-1 rounded-lg bg-slate-100 border border-slate-200">
             {["monthly", "cumulative"].map((mode) => (
@@ -2334,6 +2342,7 @@ export default function Dashboard() {
   const [serviceLoading, setServiceLoading] = useState(false);
   const [aiCost, setAiCost] = useState(null);
   const [aiCostLoading, setAiCostLoading] = useState(true);
+  const [aiCostError, setAiCostError] = useState(false);
   const [liveActivity, setLiveActivity] = useState(() => hydrateActivityCache() || []);
 
   const filterKey = preset === "custom" ? "custom" : preset;
@@ -2395,10 +2404,11 @@ export default function Dashboard() {
     if (!periodReady) return undefined;
     let cancelled = false;
     setAiCostLoading(true);
+    setAiCostError(false);
     const params = buildPeriodQueryParams({ preset, bounds });
     apiGet(`/api/dashboard/ai-cost?${params.toString()}`, { cacheTtl: 30_000 })
-      .then((data) => { if (!cancelled && data?.success) setAiCost(data); })
-      .catch(() => { if (!cancelled) setAiCost(null); })
+      .then((data) => { if (cancelled) return; if (data?.success) setAiCost(data); else { setAiCost(null); setAiCostError(true); } })
+      .catch(() => { if (!cancelled) { setAiCost(null); setAiCostError(true); } })
       .finally(() => { if (!cancelled) setAiCostLoading(false); });
     return () => { cancelled = true; };
   }, [preset, periodReady, bounds?.start, bounds?.end]);
@@ -2510,7 +2520,7 @@ export default function Dashboard() {
         </div>
 
         <div className="flex flex-col gap-3 sm:gap-4 min-w-0 w-full">
-          <AiCostPanel data={aiCost} loading={aiCostLoading} filterKey={filterKey} />
+          <AiCostPanel data={aiCost} loading={aiCostLoading} error={aiCostError} filterKey={filterKey} />
           <AIInsightsPanel
             insights={aiInsights}
             loading={insightsLoading}

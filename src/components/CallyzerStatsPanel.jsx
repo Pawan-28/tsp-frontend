@@ -206,7 +206,7 @@ export default function CallyzerStatsPanel({
       <GlassCard className="p-4 border-amber-200 bg-amber-50/50">
         <p className="text-xs font-bold text-amber-900">Callyzer</p>
         <p className="text-sm text-amber-800 mt-1">
-          {message || "No Callyzer stats yet. Set the employee Callyser ID (e.g. 91-9462265230) in Team settings."}
+          {message || "No Callyzer stats yet. Set the employee Callyzer ID (e.g. 91-9462265230) in Team settings."}
         </p>
       </GlassCard>
     );
@@ -293,7 +293,7 @@ export function CallyzerTeamTable({ stats, loading, onSelectEmployee }) {
   if (!stats?.length) {
     return (
       <p className="text-sm text-slate-500 py-4">
-        No Callyzer team stats. Map each employee&apos;s Callyser ID in Team (phone from Callyzer, e.g. 91-9462265230).
+        No Callyzer team stats. Map each employee&apos;s Callyzer ID in Team (phone from Callyzer, e.g. 91-9462265230).
       </p>
     );
   }

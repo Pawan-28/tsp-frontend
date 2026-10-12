@@ -34,7 +34,7 @@ const PAGE_META = {
   "/employee/calls": { title: "Call Reporting", sub: "Analytics · Team Performance · Lead Activity" },
   "/employee/call-detail": { title: "Call Detail", sub: "Recording · Transcript · Summary" },
   "/employee/call-assistant": { title: "Call Assistant", sub: "Live call workspace" },
-  "/employee/leads": { title: "Pipeline", sub: "Real-time overview of your sales pipeline" },
+  "/employee/leads": { title: "Leads", sub: "Your leads by pipeline stage" }, // the sidebar calls this page "Leads"
   "/employee/pipeline": { title: "Pipeline", sub: "Real-time overview of your sales pipeline" },
   "/employee/sales-process": { title: "Sales Process", sub: "SOP · Cross-Selling · Scripts · Checklist" },
   "/employee/assets": { title: "Assets", sub: "Brochures · Templates · Training" },
@@ -370,7 +370,13 @@ export default function EmployeeTopbar({ onMenu }) {
               >
                 <Bell className="w-4 h-4 text-[#DC143C]" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-600 border-2 border-white" aria-hidden="true" />
+                  <span
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 border-2 border-white text-[10px] font-bold leading-[14px] text-white text-center tabular-nums"
+                    aria-hidden="true"
+                    data-testid="notif-count"
+                  >
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
                 )}
               </button>
               {notifOpen && (

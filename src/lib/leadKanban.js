@@ -261,6 +261,10 @@ export function isUncontactedNewLead(lead, periodCalls = [], options = {}) {
     sinceAssignment: options.sinceAssignment ?? false,
   };
   if (leadHasOutboundCalls(lead, periodCalls, contactOpts)) return false;
+  // The stored stage already says the lead was called (Not Pick / Short Call / Conversation) even when that call is not in the loaded
+  // period - it is not "waiting for a first call" (it used to be counted as a new lead in the follow-up numbers).
+  const storedStage = mapStageToId(lead.pipelineStage || lead.stage || lead.pipeline_stage, lead.status);
+  if (storedStage === "not_pick" || storedStage === "short_call" || storedStage === "conversation_2min") return false;
   return isEmployeeNewAssignedLead(lead);
 }
 

@@ -174,6 +174,7 @@ export function usePipelineSync({
   const [loading, setLoading] = useState(!cached);
   const [syncing, setSyncing] = useState(false);
   const reqIdRef = useRef(0);
+  const syncInFlightRef = useRef(0); // background syncs still running (a newer load must not leave the badge stuck)
 
   const loadMaster = useCallback(async ({ sync = false, silent = false, skipCache = sync } = {}) => {
     if (!enabled) {
@@ -187,7 +188,10 @@ export function usePipelineSync({
 
     const hit = masterCache.get(cacheKey);
     if (!silent && !hit) setLoading(true);
-    if (sync) setSyncing(true);
+    if (sync) {
+      syncInFlightRef.current += 1;
+      setSyncing(true);
+    }
 
     const reqId = ++reqIdRef.current;
     const syncFlag = sync ? 1 : 0;
@@ -221,9 +225,11 @@ export function usePipelineSync({
       if (reqId !== reqIdRef.current) return;
       if (!hit) setMasterState({ key: cacheKey, board: emptyBoard() });
     } finally {
-      if (reqId === reqIdRef.current) {
-        setLoading(false);
-        if (sync) setSyncing(false);
+      if (reqId === reqIdRef.current) setLoading(false);
+      // Used to reset only when this request was still the newest: a newer load left "Syncing in background…" on forever.
+      if (sync) {
+        syncInFlightRef.current = Math.max(0, syncInFlightRef.current - 1);
+        if (syncInFlightRef.current === 0) setSyncing(false);
       }
     }
   }, [enabled, scope, employeeId, sk, cacheKey, fetchPeriodQuery, mapLeads]);

@@ -612,6 +612,10 @@ export default function Settings() {
                       >
                         <div className="flex items-center gap-3">
                           <button
+                            type="button"
+                            role="switch"
+                            aria-checked={Boolean(item.enabled)}
+                            aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.label}`}
                             onClick={() => handleKpiToggle(item.id)}
                             className={`w-9 h-5 rounded-full transition relative shrink-0 ${item.enabled ? "bg-[#be123c]" : "bg-slate-200"}`}
                           >
@@ -630,6 +634,7 @@ export default function Settings() {
                             max="100"
                             disabled={!item.enabled}
                             value={item.enabled ? item.weight : 0}
+                            aria-label={`${item.label} weight (percent)`}
                             onChange={(e) => handleWeightChange(item.id, e.target.value)}
                             className="w-36 h-1.5 rounded-lg bg-slate-100 accent-[#be123c]"
                           />
@@ -638,6 +643,7 @@ export default function Settings() {
                               type="number"
                               disabled={!item.enabled}
                               value={item.enabled ? item.weight : 0}
+                              aria-label={`${item.label} weight (percent)`}
                               onChange={(e) => handleWeightChange(item.id, e.target.value)}
                               className="w-16 px-2 py-1 border border-slate-200 rounded-xl bg-slate-50 text-slate-800 text-xs font-bold text-center outline-none focus:border-rose-400"
                             />
@@ -721,6 +727,9 @@ export default function Settings() {
                       </div>
                     )}
 
+                    <p className="text-[10px] text-slate-500">
+                      Each tier starts exactly where the previous one ends: a collection of exactly the boundary amount earns the higher tier&apos;s rate.
+                    </p>
                     <div className="space-y-3">
                       {incentiveSlabs.map((slab, slabIndex) => {
                         const slabErrs = incentiveValidation.slabErrors[slab.id ?? slab.tier ?? slabIndex] || [];

@@ -9,7 +9,7 @@ import { GlassCard, StatCard, Badge, Drawer } from "../../components/Primitives.
 import { useEmployee } from "../../context/EmployeeContext.jsx";
 import { EMP_SOP_CHECKLIST, getEmpAppToday, isTaskAssignedToEmployee, formatTaskDeadlineTime, findEmpTeamMember } from "../../data/employeeMock.js";
 import { shouldPersistToApi } from "../../lib/api.js";
-import { computeTaskCounts } from "../../lib/followUpCounts.js";
+import { computeTaskCounts, classifyFollowUps } from "../../lib/followUpCounts.js";
 import { SEGMENT_WRAP, SEGMENT_BTN, SEGMENT_BTN_ACTIVE, SEGMENT_BTN_INACTIVE } from "../../lib/segmentPills.js";
 import {
   EmpEmptyState, BtnPrimary, BtnSecondary, AvatarCircle,
@@ -239,7 +239,7 @@ function AddTaskDrawer({ open, newTask, setNewTask, dateFilter, setDateFilter, o
 
 
 export default function EmployeeTasks() {
-  const { tasks, createTask, updateTaskStatus, removeTask, syncTaskWithFollowUp, employee, usingApi, loading, refreshTasks, teamEmployees, refreshTeamEmployees } = useEmployee();
+  const { tasks, followUps, createTask, updateTaskStatus, removeTask, syncTaskWithFollowUp, employee, usingApi, loading, refreshTasks, teamEmployees, refreshTeamEmployees } = useEmployee();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [tab, setTab] = useState("upcoming");
@@ -322,6 +322,14 @@ export default function EmployeeTasks() {
     () => computeTaskCounts({ tasks, employeeName: employee?.name }),
     [tasks, employee?.name],
   );
+
+  // E-10: this page lists TASK rows only. Scheduled follow-ups live on the Follow-Up page (and only show here when a task was
+  // created for them), so say how many are waiting instead of hiding them.
+  const followUpSummary = useMemo(() => {
+    const sets = classifyFollowUps({ followUps: Array.isArray(followUps) ? followUps : [] });
+    return { overdue: sets.overdue.length, today: sets.today.length, upcoming: sets.upcoming.length };
+  }, [followUps]);
+  const followUpTotal = followUpSummary.overdue + followUpSummary.today + followUpSummary.upcoming;
 
   const grouped = useMemo(() => {
     let entries = Object.entries(tasks || {})
@@ -577,6 +585,22 @@ export default function EmployeeTasks() {
           </p>
         </div>
       </GlassCard>
+
+      {tab !== "checklist" && followUpTotal > 0 && (
+        <button
+          type="button"
+          data-testid="followups-summary"
+          onClick={() => navigate("/employee/follow-ups")}
+          className="w-full text-left rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] sm:text-xs text-amber-900 hover:bg-amber-50 transition"
+        >
+          <span className="font-bold">{followUpTotal} scheduled follow-up{followUpTotal === 1 ? "" : "s"}</span>
+          {" "}waiting
+          {followUpSummary.overdue > 0 ? ` · ${followUpSummary.overdue} overdue` : ""}
+          {followUpSummary.today > 0 ? ` · ${followUpSummary.today} due today` : ""}
+          {followUpSummary.upcoming > 0 ? ` · ${followUpSummary.upcoming} upcoming` : ""}
+          {" "}— these are not task rows. <span className="underline font-semibold">Open Follow-Up</span>
+        </button>
+      )}
 
       {tab === "checklist" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 items-start">

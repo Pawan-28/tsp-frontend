@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, Component } from "react";
 import { useDismissable } from "../../hooks/useDismissable.js";
-import { Outlet, useOutletContext, useNavigate } from "react-router-dom";
+import { Outlet, useOutletContext, useNavigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import { Plus, Phone, Calendar, CheckSquare, MessageSquare } from "lucide-react";
 import { EmployeeProvider } from "../../context/EmployeeContext.jsx";
 import EmployeeSidebar from "../components/EmployeeSidebar.jsx";
 import EmployeeTopbar from "../components/EmployeeTopbar.jsx";
 import EmployeeMobileNav from "../components/EmployeeMobileNav.jsx";
+import { reloadOnceForChunkError } from "../../lib/chunkReload.js";
 class EmployeeRouteErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -17,15 +18,35 @@ class EmployeeRouteErrorBoundary extends Component {
     return { error };
   }
 
+  componentDidCatch(error) {
+    console.error("[EmployeeRoute] page error:", error);
+    // A tab opened before a new version was uploaded asks for files that no longer exist: reload once, automatically.
+    reloadOnceForChunkError(error);
+  }
+
+  componentDidUpdate(prevProps) {
+    // Moving to another page clears the error - it used to stay on "This page couldn't load" until a full refresh.
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) this.setState({ error: null });
+  }
+
   render() {
     if (this.state.error) {
+      const reason = String(this.state.error?.message || this.state.error || "").slice(0, 180);
       return (
-        <div className="page-shell min-w-0 p-6 text-center max-w-md mx-auto">
+        <div className="page-shell min-w-0 p-6 text-center max-w-md mx-auto" data-testid="route-error">
           <h1 className="text-lg font-bold text-slate-800">This page couldn&apos;t load</h1>
           <p className="text-sm text-slate-500 mt-2">
-            Something went wrong loading this workspace. Try refreshing or return to your dashboard.
+            Something went wrong loading this workspace. Try again, or open another page from the menu.
           </p>
+          {reason ? <p className="mt-2 break-words text-[10px] text-slate-400" data-testid="route-error-reason">{reason}</p> : null}
           <div className="mt-4 flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => this.setState({ error: null })}
+              className="px-4 py-2 rounded-xl border border-rose-200 bg-white text-sm font-bold text-rose-700"
+            >
+              Try again
+            </button>
             <button
               type="button"
               onClick={() => window.location.reload()}
@@ -49,6 +70,7 @@ class EmployeeRouteErrorBoundary extends Component {
 }
 
 export default function EmployeeLayout() {
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
@@ -92,7 +114,7 @@ export default function EmployeeLayout() {
           <EmployeeTopbar onMenu={() => setSidebarOpen(true)} />
 
           <main className="flex-1 bg-white text-slate-900 p-3 sm:p-4 md:p-6 lg:p-8 xl:px-10 pb-[calc(9.5rem+env(safe-area-inset-bottom,0px))] lg:pb-8 page-shell overflow-x-clip relative">
-            <EmployeeRouteErrorBoundary>
+            <EmployeeRouteErrorBoundary resetKey={location.pathname}>
               <Outlet context={{ toast: (msg, type = "success") => (type === "error" ? toast.error(msg) : toast.success(msg)) }} />
             </EmployeeRouteErrorBoundary>
           </main>

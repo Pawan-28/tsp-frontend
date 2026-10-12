@@ -17,6 +17,10 @@ import {
 const cn = (...classes) => classes.filter(Boolean).join(" ");
 
 import { StatCard } from "../components/Primitives.jsx";
+import { formatAbsoluteDate } from "../lib/formatActivityDate.js";
+
+// SOP dates are stored as ISO text ("2026-08-06"); show them like the rest of the app ("6 Aug 2026").
+const sopDate = (value, fallback = "—") => (value ? formatAbsoluteDate(value) : fallback);
 import { useAdmin } from "../context/AdminContext.jsx";
 
 /* ─── Tone helpers (kept from original) ─── */
@@ -372,11 +376,11 @@ function KPICard({ c }) {
 /* ─── Activity Timeline ─── */
 function ActivityTimeline({ sop }) {
   const events = [
-    { icon: GitBranch, color: "text-sky-800", bg: "bg-sky-500/15", label: `Version ${sop.version} published`, time: sop.updated },
+    { icon: GitBranch, color: "text-sky-800", bg: "bg-sky-500/15", label: `Version ${sop.version} published`, time: sopDate(sop.updated) },
     { icon: UserCheck, color: "text-green-800", bg: "bg-green-500/15", label: `${sop.acknowledgedCount} employees acknowledged`, time: "Last week" },
     { icon: Eye, color: "text-purple-800", bg: "bg-purple-500/15", label: `${sop.readCount} total reads`, time: "This month" },
-    { icon: Edit2, color: "text-amber-800", bg: "bg-amber-500/15", label: "SOP reviewed and updated", time: sop.updated },
-    { icon: CheckCircle2, color: "text-green-800", bg: "bg-green-500/15", label: "Manager approval received", time: sop.created },
+    { icon: Edit2, color: "text-amber-800", bg: "bg-amber-500/15", label: "SOP reviewed and updated", time: sopDate(sop.updated) },
+    { icon: CheckCircle2, color: "text-green-800", bg: "bg-green-500/15", label: "Manager approval received", time: sopDate(sop.created) },
   ];
   return (
     <div className="space-y-2">
@@ -646,7 +650,7 @@ function SOPDetailDrawer({ sop, onClose, onEdit, onDelete, onDuplicate, onArchiv
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-bold text-rose-900">{sop.creator || "Admin"}</div>
-              <div className="text-[11px] text-slate-600 font-medium">{sop.department || "Operations"} · Created {sop.created || "Recently"}</div>
+              <div className="text-[11px] text-slate-600 font-medium">{sop.department || "Operations"} · Created {sopDate(sop.created, "Recently")}</div>
             </div>
             <div className="text-right shrink-0">
               <div className="text-[10px] text-slate-500 font-medium">Estimated Time</div>
@@ -1424,7 +1428,7 @@ function SOPForm({ initialData, onSave, onClose, isEdit = false }) {
         </div>
         
         <p className="text-[10px] text-rose-950/80 leading-relaxed font-medium">
- Enter an SOP **Title** below and click "Generate from Title", or upload a **PDF procedure document** to automatically structure and fill the description, scripts, questions, steps, and frameworks.
+          Enter an SOP <strong>Title</strong> below and click "Generate from Title", or upload a <strong>PDF procedure document</strong> to automatically structure and fill the description, scripts, questions, steps, and frameworks.
         </p>
 
         {/* Loading overlay inside card */}
@@ -1682,7 +1686,14 @@ function SOPForm({ initialData, onSave, onClose, isEdit = false }) {
           <input value={form.department} onChange={e => set("department", e.target.value)} className="sop-input" placeholder="e.g. Revenue Ops" />
         </Field>
         <Field label="Estimated Time">
-          <input value={form.estimatedTime} onChange={e => set("estimatedTime", e.target.value)} className="sop-input" placeholder="e.g. 45 min" />
+          <input
+            value={form.estimatedTime}
+            onChange={e => set("estimatedTime", e.target.value)}
+            // a bare number means minutes ("45" -> "45 min"); anything else (e.g. "2 hrs") is kept as typed
+            onBlur={e => { const v = e.target.value.trim(); if (/^\d+$/.test(v)) set("estimatedTime", `${v} min`); }}
+            className="sop-input"
+            placeholder="e.g. 45 min"
+          />
         </Field>
       </div>
 
@@ -1850,7 +1861,18 @@ function AdminSopCard({
 
   return (
     <article
+      role="button"
+      tabIndex={0}
+      aria-label={`Open SOP ${sop.title}`}
       onClick={() => onOpen(sop)}
+      onKeyDown={(e) => {
+        // keyboard users: Enter / Space open the card (ignore keys pressed on a button inside the card)
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(sop);
+        }
+      }}
       className="h-[156px] sm:h-[162px] flex flex-col justify-between rounded-xl sm:rounded-2xl border border-slate-200/80 bg-white overflow-hidden hover:border-rose-300 hover:shadow-[0_8px_24px_rgba(225,29,72,0.08)] transition-all group min-w-0 cursor-pointer relative"
     >
       <div className="flex items-start gap-2.5 sm:gap-3 p-3 sm:p-3.5 pb-1 min-w-0 flex-1">
@@ -1916,7 +1938,7 @@ function AdminSopCard({
           <Badge tone="info" className="hidden lg:inline-flex">{sop.version}</Badge>
         </div>
         <span className="text-[9px] sm:text-[10px] font-semibold text-slate-500 shrink-0 tabular-nums">
-          {sop.updated || sop.created}
+          {sopDate(sop.updated || sop.created)}
         </span>
       </div>
     </article>
@@ -2321,10 +2343,9 @@ export default function SOP() {
     }
   };
 
+  // Opening a SOP no longer adds 1 to "reads": the number was only client state (never saved, and it counted the admin's own clicks).
   const handleOpenDetail = (sop) => {
-    const updated = { ...sop, readCount: (sop.readCount || 0) + 1 };
-    setSops(prev => prev.map(s => s.id === sop.id ? updated : s));
-    setDetailSop(updated);
+    setDetailSop(sop);
   };
 
   return (
@@ -2380,7 +2401,7 @@ export default function SOP() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-gray-800 truncate">{s.title}</div>
-            <div className="text-[10px] text-gray-500 mt-0.5 truncate">{s.category} · {s.creator} · {s.updated || s.created}</div>
+            <div className="text-[10px] text-gray-500 mt-0.5 truncate">{s.category} · {s.creator} · {sopDate(s.updated || s.created)}</div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <Badge tone={statusTone(s.status)}>{s.status}</Badge>

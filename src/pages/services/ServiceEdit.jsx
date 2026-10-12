@@ -12,6 +12,7 @@ import {
 import { apiGet, apiPost } from "../../lib/api.js";
 import { getAdminCrmHeaders } from "../../lib/crmContext.js";
 import { apiEmployeeToAdmin, unwrapApiData } from "../../lib/leadSync.js";
+import { roleLabel } from "../../lib/roleLabel.js";
 
 const ICON_MAP = {
   bot: Bot,
@@ -467,7 +468,7 @@ export default function ServiceEdit() {
                             />
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-bold text-slate-900 truncate">{emp.name}</p>
-                              <p className="text-[10px] text-slate-400 truncate">{emp.department || emp.role || "Sales"}</p>
+                              <p className="text-[10px] text-slate-400 truncate">{roleLabel(emp.department || emp.role, "Sales")}</p>
                             </div>
                           </label>
                         );

@@ -501,7 +501,7 @@ function SalesPipelineStatus({ service, employee, periodPreset, periodBounds }) 
   if (!stats || !statsLoaded) return (
     <SectionCard title="Sales Pipeline Status" subtitle="Temperature segmented conversion progression and deal flow" bodyClassName="lg:p-4 lg:pt-3">
       <div className="flex-1 overflow-x-auto scrollbar-hide -mx-1 sm:-mx-2 px-1 sm:px-2 pb-1 sm:pb-2">
-        <div className="min-w-[460px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-3 md:space-y-4 lg:space-y-2">
+        <div className="min-w-[320px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-3 md:space-y-4 lg:space-y-2">
           <div className="flex items-center">
             <div className="w-9 sm:w-12 md:w-14 lg:w-11 flex-shrink-0" />
             <div className="flex-1 relative h-4 sm:h-5 md:h-6 lg:h-4 text-gray-400 text-[7px] sm:text-[9px] md:text-[10px] lg:text-[9px] font-bold tracking-wider uppercase">
@@ -592,7 +592,7 @@ function SalesPipelineStatus({ service, employee, periodPreset, periodBounds }) 
   return (
     <SectionCard title="Sales Pipeline Status" subtitle="Temperature segmented conversion progression and deal flow" bodyClassName="lg:p-4 lg:pt-3">
       <div className="flex-1 overflow-x-auto scrollbar-hide -mx-1 sm:-mx-2 px-1 sm:px-2 pb-1 sm:pb-2 lg:pb-1">
-        <div className="min-w-[460px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-3 md:space-y-4 lg:space-y-2">
+        <div className="min-w-[320px] sm:min-w-[560px] md:min-w-[640px] space-y-1.5 sm:space-y-3 md:space-y-4 lg:space-y-2">
           <div className="flex items-center">
             <div className="w-9 sm:w-12 md:w-14 lg:w-11 flex-shrink-0" />
             <div className="flex-1 relative h-4 sm:h-5 md:h-6 lg:h-4 text-gray-500 text-[7px] sm:text-[9px] md:text-[10px] lg:text-[9px] font-bold tracking-wider uppercase">
@@ -704,21 +704,21 @@ function CircleRing({ value, rgb, size = 88 }) {
   );
 }
 
-function IMMetrics({ metrics }) {
+function IMMetrics({ metrics, loading = false }) {
   const isMobile = useIsMobile();
   const ringSize = isMobile ? 56 : 88;
   const displayMetrics = metrics || [];
 
   if (!displayMetrics.length) {
     return (
-      <SectionCard title="IMP Metrics" subtitle={isMobile ? "Messaging funnel" : "Instant messaging funnel performance"} className="flex flex-col min-w-0 w-full">
-        <p className="text-xs text-slate-400 text-center py-8">No metrics data yet.</p>
+      <SectionCard title="Messaging Metrics" subtitle={isMobile ? "Messaging funnel" : "Instant messaging funnel performance"} className="flex flex-col min-w-0 w-full">
+        <p className="text-xs text-slate-400 text-center py-8">{loading ? "Loading metrics…" : "No metrics data yet."}</p>
       </SectionCard>
     );
   }
 
   return (
-    <SectionCard title="IMP Metrics" subtitle={isMobile ? "Messaging funnel" : "Instant messaging funnel performance"} className="flex flex-col min-w-0 w-full">
+    <SectionCard title="Messaging Metrics" subtitle={isMobile ? "Messaging funnel" : "Instant messaging funnel performance"} className="flex flex-col min-w-0 w-full">
       <div className="grid grid-cols-3 gap-1.5 sm:gap-4 w-full min-w-0">
         {displayMetrics.map((m, i) => (
           <motion.div
@@ -765,7 +765,7 @@ function RevenueOpportunitySection({ oppData = {}, loading = false, selectedServ
   const [drawerLoading, setDrawerLoading] = useState(false);
 
   const CATEGORY_KEY = {
-    "Not Contacted Leads": "not_contacted",
+    "Not Picked Leads": "not_contacted",
     "Meeting Not Scheduled": "no_meeting",
     "Stuck In Pipeline": "stuck_pipeline",
   };
@@ -792,7 +792,7 @@ function RevenueOpportunitySection({ oppData = {}, loading = false, selectedServ
   };
 
   const dynamicCards = [
-    { label: "Not Contacted Leads", sublabel: "Not Pick", count: oppData.notContacted ?? 0, rgb: "245,158,11" },
+    { label: "Not Picked Leads", sublabel: "Not Pick", count: oppData.notContacted ?? 0, rgb: "245,158,11" },
     { label: "Meeting Not Scheduled", sublabel: "Conversation", count: oppData.noMeeting ?? 0, rgb: "124,58,237" },
     { label: "Stuck In Pipeline", sublabel: "Booked · Done · Proposal · Objection", count: oppData.stuckPipeline ?? 0, rgb: "239,68,68" },
   ];
@@ -1208,7 +1208,7 @@ export default function Sales() {
           : (kpiData.length ? kpiData : []).map((k, i) => <PremiumKPICard key={k.label} k={k} index={i} />)}
       </div>
 
-      {/* ── 2. Revenue Opportunity + IMP Metrics (left) + AI Insights (right) ── */}
+      {/* ── 2. Revenue Opportunity + Messaging Metrics (left) + AI Insights (right) ── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-6 items-start min-w-0">
         <div className="xl:col-span-2 flex flex-col gap-3 sm:gap-6 min-w-0">
           <RevenueOpportunitySection
@@ -1219,7 +1219,7 @@ export default function Sales() {
             periodPreset={periodPreset}
             periodBounds={periodBounds}
           />
-          <IMMetrics metrics={metricsData} />
+          <IMMetrics metrics={metricsData} loading={kpiLoading && !(metricsData || []).length} />
         </div>
 
         <SalesAIInsights showToast={showToast} employee={selectedEmployee} service={selectedService} preset={periodPreset} bounds={periodBounds} />

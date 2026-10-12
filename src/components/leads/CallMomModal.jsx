@@ -8,7 +8,7 @@ import { BtnPrimary, BtnGhost, FormTextarea } from "../../employee/components/Em
 import { LOCAL_SOPS } from "../../data/employeeMock.js";
 import { processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders } from "../../lib/crmContext.js";
-import { getMomSections, getMomPlainText } from "../../lib/momFormat.js";
+import { getMomSections, getMomPlainText, momFailure } from "../../lib/momFormat.js";
 import MomSections from "./MomSections.jsx";
 import toast from "react-hot-toast";
 
@@ -100,7 +100,9 @@ export default function CallMomModal({ open, onClose, call, lead }) {
         throw new Error("AI processing returned no data");
       }
       setMomCall((prev) => ({ ...prev, ...updated }));
-      toast.success("AI MoM & Call Summary generated!");
+      const failed = momFailure(updated.ai_summary || updated.aiSummary);
+      if (failed) toast.error(failed, { duration: 8000 });
+      else toast.success("AI MoM & Call Summary generated!");
     } catch (err) {
       toast.error(err?.message || "Failed to generate AI MoM.");
     } finally {

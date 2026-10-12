@@ -1,5 +1,5 @@
 import { callStatusMeta, isOutboundCall } from "./callMetrics.js";
-import { isWasteMomText } from "./momFormat.js";
+import { isWasteMomText, momFailure } from "./momFormat.js";
 
 /**
  * Items for the lead card's "Activity History": EVERY call of the lead, newest first -
@@ -25,7 +25,9 @@ export function buildCallHistoryItems(calls = []) {
         tone: meta.tone,                           // success | warning | danger
         connected: meta.connected,
         // a real MoM exists only for a connected call that was analysed (filler text is not a MoM)
-        hasMom: meta.connected && !!summary && !isWasteMomText(summary),
+        hasMom: meta.connected && !!summary && !isWasteMomText(summary) && !momFailure(summary),
+        // the real reason the AI could not make one (shown instead of a bare "not generated yet")
+        momFailure: meta.connected ? momFailure(summary) : null,
         call: c,                                   // the call itself - opens its MoM / SOP view
         when: String(c.date || "").trim() || (at ? String(at) : "Call"),
         // talk time only means something when the call connected

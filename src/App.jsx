@@ -1,4 +1,4 @@
-import { lazy, Suspense, Component } from "react";
+import { Suspense, Component } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { EMP_TOAST_OPTIONS } from "./employee/utils/empToast.jsx";
@@ -8,36 +8,37 @@ import PageLoader from "./components/PageLoader.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
 import { AuthProvider } from "./context/AuthContext.jsx";
 import { useRouteDocumentTitle } from "./lib/pageTitle.js";
+import { lazyWithRetry, reloadOnceForChunkError } from "./lib/chunkReload.js";
 
-const Login = lazy(() => import("./pages/Login.jsx"));
-const ChangePassword = lazy(() => import("./pages/ChangePassword.jsx"));
-const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
-const SOP = lazy(() => import("./pages/SOP.jsx"));
-const Sales = lazy(() => import("./pages/Sales.jsx"));
-const Team = lazy(() => import("./pages/Team.jsx"));
-const Reports = lazy(() => import("./pages/Reports.jsx"));
-const Incentives = lazy(() => import("./pages/Incentives.jsx"));
-const Settings = lazy(() => import("./pages/Settings.jsx"));
-const Admin = lazy(() => import("./pages/Admin.jsx"));
-const Leads = lazy(() => import("./pages/Leads.jsx"));
-const Forms = lazy(() => import("./pages/Sources.jsx"));
-const Services = lazy(() => import("./pages/Services.jsx"));
-const Pipeline = lazy(() => import("./pages/Pipeline.jsx"));
+const Login = lazyWithRetry(() => import("./pages/Login.jsx"));
+const ChangePassword = lazyWithRetry(() => import("./pages/ChangePassword.jsx"));
+const Dashboard = lazyWithRetry(() => import("./pages/Dashboard.jsx"));
+const SOP = lazyWithRetry(() => import("./pages/SOP.jsx"));
+const Sales = lazyWithRetry(() => import("./pages/Sales.jsx"));
+const Team = lazyWithRetry(() => import("./pages/Team.jsx"));
+const Reports = lazyWithRetry(() => import("./pages/Reports.jsx"));
+const Incentives = lazyWithRetry(() => import("./pages/Incentives.jsx"));
+const Settings = lazyWithRetry(() => import("./pages/Settings.jsx"));
+const Admin = lazyWithRetry(() => import("./pages/Admin.jsx"));
+const Leads = lazyWithRetry(() => import("./pages/Leads.jsx"));
+const Forms = lazyWithRetry(() => import("./pages/Sources.jsx"));
+const Services = lazyWithRetry(() => import("./pages/Services.jsx"));
+const Pipeline = lazyWithRetry(() => import("./pages/Pipeline.jsx"));
 
-const EmployeeDashboard = lazy(() => import("./employee/pages/EmployeeDashboard.jsx"));
-const EmployeeTasks = lazy(() => import("./employee/pages/EmployeeTasks.jsx"));
-const EmployeeFollowUps = lazy(() => import("./employee/pages/EmployeeFollowUps.jsx"));
-const EmployeeCalls = lazy(() => import("./employee/pages/EmployeeCalls.jsx"));
-const EmployeeCallDetail = lazy(() => import("./employee/pages/EmployeeCallDetail.jsx"));
-const EmployeeLeads = lazy(() => import("./employee/pages/EmployeeLeads.jsx"));
-const EmployeeSalesProcess = lazy(() => import("./employee/pages/EmployeeSalesProcess.jsx"));
-const EmployeeSopDetail = lazy(() => import("./employee/pages/EmployeeSopDetail.jsx"));
-const EmployeeCallAssistant = lazy(() => import("./employee/pages/EmployeeCallAssistant.jsx"));
-const EmployeeAssets = lazy(() => import("./employee/pages/EmployeeAssets.jsx"));
-const EmployeeMeetings = lazy(() => import("./employee/pages/EmployeeMeetings.jsx"));
-const EmployeeWhatsAppScripts = lazy(() => import("./employee/pages/EmployeeWhatsAppScripts.jsx"));
-const EmployeeProfile = lazy(() => import("./employee/pages/EmployeeProfile.jsx"));
-const EmployeePipeline = lazy(() => import("./employee/pages/EmployeePipeline.jsx"));
+const EmployeeDashboard = lazyWithRetry(() => import("./employee/pages/EmployeeDashboard.jsx"));
+const EmployeeTasks = lazyWithRetry(() => import("./employee/pages/EmployeeTasks.jsx"));
+const EmployeeFollowUps = lazyWithRetry(() => import("./employee/pages/EmployeeFollowUps.jsx"));
+const EmployeeCalls = lazyWithRetry(() => import("./employee/pages/EmployeeCalls.jsx"));
+const EmployeeCallDetail = lazyWithRetry(() => import("./employee/pages/EmployeeCallDetail.jsx"));
+const EmployeeLeads = lazyWithRetry(() => import("./employee/pages/EmployeeLeads.jsx"));
+const EmployeeSalesProcess = lazyWithRetry(() => import("./employee/pages/EmployeeSalesProcess.jsx"));
+const EmployeeSopDetail = lazyWithRetry(() => import("./employee/pages/EmployeeSopDetail.jsx"));
+const EmployeeCallAssistant = lazyWithRetry(() => import("./employee/pages/EmployeeCallAssistant.jsx"));
+const EmployeeAssets = lazyWithRetry(() => import("./employee/pages/EmployeeAssets.jsx"));
+const EmployeeMeetings = lazyWithRetry(() => import("./employee/pages/EmployeeMeetings.jsx"));
+const EmployeeWhatsAppScripts = lazyWithRetry(() => import("./employee/pages/EmployeeWhatsAppScripts.jsx"));
+const EmployeeProfile = lazyWithRetry(() => import("./employee/pages/EmployeeProfile.jsx"));
+const EmployeePipeline = lazyWithRetry(() => import("./employee/pages/EmployeePipeline.jsx"));
 
 class CallAssistantErrorBoundary extends Component {
   constructor(props) {
@@ -47,6 +48,11 @@ class CallAssistantErrorBoundary extends Component {
 
   static getDerivedStateFromError(error) {
     return { error };
+  }
+
+  componentDidCatch(error) {
+    console.error("[CallAssistant] page error:", error);
+    reloadOnceForChunkError(error); // a stale tab after a new version: reload once, automatically
   }
 
   render() {

@@ -43,6 +43,7 @@ export function SidebarHeader({ children, isExpanded, onClose, onToggleCollapse,
       <button
         type="button"
         onClick={onClose}
+        aria-label="Close menu"
         className="lg:hidden p-2 rounded-xl hover:bg-slate-800/80 text-slate-400 hover:text-slate-200 shrink-0 border border-transparent hover:border-slate-700/60 transition"
       >
         <X className="w-5 h-5" />
@@ -53,6 +54,7 @@ export function SidebarHeader({ children, isExpanded, onClose, onToggleCollapse,
           onClick={onToggleCollapse}
           className="hidden lg:flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800/40 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition shrink-0"
           title={collapsed ? "Pin sidebar open" : "Collapse sidebar"}
+          aria-label={collapsed ? "Pin sidebar open" : "Collapse sidebar"}
         >
           {collapsed ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
         </button>

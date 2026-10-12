@@ -9,6 +9,7 @@ import { GlassCard, StatCard, Badge } from "../../components/Primitives.jsx";
 import { formatServiceMoney, formatServicePriceLabel, serviceBadgeTone, isPlaceholderDescription } from "../../data/servicesMock.js";
 import { apiGet, apiDelete, apiPost, apiPut } from "../../lib/api.js";
 import { extractLeadService, cleanServiceName, leadBelongsToService } from "../../lib/servicesRegistry.js";
+import { roleLabel } from "../../lib/roleLabel.js";
 
 const DEFAULT_EMPLOYEES = [
   { id: "1", name: "Amit Kumar", role: "Sales Manager" },
@@ -411,7 +412,7 @@ export default function ServiceDetail() {
       <div className="grid grid-cols-2 gap-2.5">
         <StatCard label="Total Leads" value={service.leads >= 1000 ? `${(service.leads / 1000).toFixed(1)}k` : String(service.leads)} icon={Users} iconBg="bg-rose-50" iconColor="text-rose-600" hover={false} />
         <StatCard label="Converted" value={String(service.converted)} icon={CheckCircle2} iconBg="bg-emerald-50" iconColor="text-emerald-600" hover={false} />
-        <StatCard label="Pipeline Value" value={formatServiceMoney(service.pipelineValue ?? service.revenue)} icon={DollarSign} iconBg="bg-sky-50" iconColor="text-sky-600" hover={false} />
+        <StatCard label="Pipeline Value (all time)" value={formatServiceMoney(service.pipelineValue ?? service.revenue)} icon={DollarSign} iconBg="bg-sky-50" iconColor="text-sky-600" hover={false} />
         <StatCard label="Conv. Rate" value={`${service.convRate}%`} icon={TrendingUp} iconBg="bg-amber-50" iconColor="text-amber-600" hover={false} />
       </div>
 
@@ -500,7 +501,7 @@ export default function ServiceDetail() {
                 >
                   <UserCheck className={`w-3.5 h-3.5 ${isSelected ? "text-white" : "text-slate-400"}`} />
                   <span>{emp.name}</span>
-                  {emp.role && <span className="text-[9px] opacity-75 font-normal">({emp.role})</span>}
+                  {emp.role && <span className="text-[9px] opacity-75 font-normal">({roleLabel(emp.role)})</span>}
                 </button>
               );
             })}

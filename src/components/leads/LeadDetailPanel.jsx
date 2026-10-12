@@ -24,7 +24,7 @@ import { formatCallDisplayDate, formatCallDuration, isCallConnected } from "../.
 import { formatTelUrl, formatWhatsAppPhone } from "../../lib/phoneUtils.js";
 import { apiGet, apiPost, processCallWithAi } from "../../lib/api.js";
 import { getCrmHeaders, getAdminCrmHeaders } from "../../lib/crmContext.js";
-import { getMomSections, getMomPlainText, stripGeminiCharges, isWasteMomText } from "../../lib/momFormat.js";
+import { getMomSections, getMomPlainText, stripGeminiCharges, isWasteMomText, momFailure } from "../../lib/momFormat.js";
 import ExtraInfoCard from "./ExtraInfoCard.jsx";
 import MomText from "./MomText.jsx";
 import CallHistoryList from "./CallHistoryList.jsx";
@@ -363,8 +363,13 @@ export default function LeadDetailPanel({
             checklistProgress: updatedCallData.checklist_progress || updatedCallData.checklistProgress || x.checklistProgress,
           }
         : x)) : prev));
-      toast.success("AI MoM generated successfully!", { id: toastId });
-      refreshExtraInfo(); // the AI just folded this call into the customer's Extra Info
+      const failed = momFailure(updatedCallData.ai_summary || updatedCallData.aiSummary);
+      if (failed) {
+        toast.error(failed, { id: toastId, duration: 8000 }); // the AI ran but could not make a MoM: say why instead of "generated successfully"
+      } else {
+        toast.success("AI MoM generated successfully!", { id: toastId });
+        refreshExtraInfo(); // the AI just folded this call into the customer's Extra Info
+      }
     } catch (err) {
       toast.error(err.message || "Failed to generate AI MoM.");
     } finally {

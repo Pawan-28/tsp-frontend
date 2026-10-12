@@ -412,6 +412,8 @@ function buildRemunerationOptions({
     targetBonusAmount: incentiveSettings.targetBonusAmount,
     incentiveSlabs: incentiveSettings.incentiveSlabs,
     useManualCashRate,
+    // invalid baseline / slabs in Settings = payout on hold (see computeRemunerationBreakdown)
+    configInvalid: !validateIncentiveConfig(incentiveSettings).valid,
   };
 }
 
@@ -793,6 +795,11 @@ export default function Incentives() {
     ),
     [ownedLeads, kraPeriod, kraMonthOption],
   );
+  // Leads of THIS tab that sit outside the selected period (it used to count every owned lead, whatever its tab).
+  const outsidePeriodTabCount = useMemo(() => {
+    const inPeriod = new Set(periodLeads);
+    return ownedLeads.filter((lead) => !inPeriod.has(lead) && classifyIncentiveLeadTab(lead) === leadTab).length;
+  }, [ownedLeads, periodLeads, leadTab]);
   const periodStats = useMemo(() => {
     const leadKra = computeLeadKraForPeriod(ownedLeads, kraPeriod, { month: kraMonthOption });
     return {
@@ -990,6 +997,10 @@ export default function Incentives() {
 
   const handleRunCalculation = () => {
     if (!calcDraft) return;
+    if (payoutHeld) {
+      toast.error("Incentive settings are invalid - payouts are on hold. Fix Settings > Incentive & Slabs first.");
+      return;
+    }
     if (totalKraWeight !== 100) {
       toast.error("Incentive metric weights must total 100%");
       return;
@@ -1042,7 +1053,9 @@ export default function Incentives() {
   const weightSourceLabel = weightSource.fromSettings
     ? `Settings${weightSource.version ? ` (${weightSource.version})` : ""}`
     : "built-in defaults (nothing saved in Settings yet)";
-  const settingsIssue = validateIncentiveConfig(incentiveSettings).messages[0] || null;
+  const configCheck = validateIncentiveConfig(incentiveSettings);
+  const settingsIssue = configCheck.messages[0] || null;
+  const payoutHeld = !configCheck.valid; // an invalid baseline / slab setup pays nothing until it is fixed
 
   const updateDraft = (field, val) => {
     if (field === "manualIncentive") {
@@ -1106,6 +1119,10 @@ export default function Incentives() {
 
   const handleDownloadReport = (format = "csv") => {
     if (!selected) return;
+    if (payoutHeld) {
+      toast.error("Incentive settings are invalid - payouts are on hold, so no report is produced. Fix Settings > Incentive & Slabs first.");
+      return;
+    }
     downloadEmployeeIncentiveReport(buildReportPayload(), format);
     toast.success(
       format === "csv"
@@ -1262,7 +1279,9 @@ export default function Incentives() {
               </p>
             )}
             {settingsIssue && (
-              <p className="text-amber-700 font-semibold">Settings issue: {settingsIssue}</p>
+              <p role="alert" data-testid="payout-hold-banner" className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 font-bold text-rose-700">
+                Payouts are ON HOLD - the incentive settings are invalid: {settingsIssue}. Fix them in Settings, Incentive &amp; Slabs.
+              </p>
             )}
           </div>
 
@@ -1278,7 +1297,7 @@ export default function Incentives() {
                 <div>
                   <p className="text-[9px] font-bold text-slate-400 uppercase">Incentive</p>
                   <p className="text-sm font-black text-rose-700 tabular-nums">
-                    {formatCash(calcResult?.incentiveAmount ?? remunerationPreview.incentiveTotal)}
+                    {payoutHeld ? "On hold" : formatCash(calcResult?.incentiveAmount ?? remunerationPreview.incentiveTotal)}
                   </p>
                 </div>
               )}
@@ -1387,7 +1406,7 @@ export default function Incentives() {
               <div className="min-h-[80px] rounded-lg border border-dashed border-rose-200 bg-white/60 flex items-center justify-center px-3 text-center">
                 <p className="text-[10px] text-slate-400">
                   No {leadTab.toLowerCase()} leads for {selected.name} in {periodLabel}
-                  {ownedLeads.length > periodLeads.length ? ` (${ownedLeads.length - periodLeads.length} more outside this period)` : ""}
+                  {outsidePeriodTabCount > 0 ? ` (${outsidePeriodTabCount} more ${leadTab.toLowerCase()} outside this period)` : ""}
                 </p>
               </div>
             ) : (

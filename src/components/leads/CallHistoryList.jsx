@@ -63,7 +63,11 @@ export default function CallHistoryList({ items = [], loading = false, onOpenCal
               >
                 <span className="flex items-center gap-1">
                   <Sparkles className="h-3 w-3 text-rose-600" /> View AI MoM &amp; SOP Checklist
-                  {!item.hasMom && <span className="font-semibold text-slate-400">· MoM not generated yet</span>}
+                  {!item.hasMom && (
+                    <span className="font-semibold text-slate-400" title={item.momFailure || undefined}>
+                      · {item.momFailure ? "MoM failed - open to see why" : "MoM not generated yet"}
+                    </span>
+                  )}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-rose-400" />
               </button>

@@ -5,6 +5,7 @@
 
 import { getAuthHeaders, getCrmHeaders } from "./crmContext.js";
 import { runAiMomJob } from "./aiMomJob.js";
+import { isSessionExpiredResponse, handleSessionExpired } from "./sessionExpired.js";
 
 const CACHE_PREFIX = "crm_cache:";
 const DEFAULT_GET_TTL = 5 * 60 * 1000; // 5 minutes
@@ -438,6 +439,7 @@ export async function apiJson(path, options = {}) {
       const stale = staleGetFallback(key);
       if (stale != null) return stale;
     }
+    if (isSessionExpiredResponse(response.status, data)) handleSessionExpired(); // logged out / expired: back to the login page
     const message = formatApiError(data, response.statusText || "Request failed");
     const err = new Error(message);
     err.status = response.status;

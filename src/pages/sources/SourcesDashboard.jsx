@@ -169,6 +169,10 @@ export default function SourcesDashboard() {
         <StatCard label="Total Earnings" value={formatSourceRevenue(summary.totalEarnings)} icon={IndianRupee} iconBg="bg-sky-50" iconColor="text-sky-600" hover={false} />
         <StatCard label="Top Source" value={summary.topSource} icon={Star} iconBg="bg-amber-50" iconColor="text-amber-600" hover={false} />
       </div>
+      <p className="text-[10px] text-slate-500 -mt-2 px-0.5">
+        Counts marketing-channel leads only (Meta, Google, Website and similar). Callyzer, manual and unknown-source leads are not included, so these totals are smaller than the Leads page.
+        Earnings = expected revenue of leads already converted.
+      </p>
 
       <GlassCard className="p-4">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -213,6 +217,7 @@ export default function SourcesDashboard() {
                   onClick={() => handleDeleteSource(group)}
                   disabled={deletingKey === group.key}
                   title="Remove this source from the dashboard"
+                  aria-label={`Remove source ${group.label} from the dashboard`}
                   className="shrink-0 w-7 h-7 rounded-md grid place-items-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition disabled:opacity-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Maximize2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { apiGet, apiPost, apiDelete, invalidateCache } from "../lib/api.js";
@@ -1207,7 +1207,7 @@ function MemberForm({ fields, errors, set, blur }) {
 
         <div style={grid2}>
           <div>
-            <label style={labelStyle}>Callyser ID</label>
+            <label style={labelStyle}>Callyzer ID</label>
             <input
               style={inputBase(false)}
               value={fields.callyserId}
@@ -3793,6 +3793,7 @@ function KpiSkeletonCard({ label }) {
 export default function Team() {
   const isMobile = useIsMobile();
   const location = useLocation();
+  const navigate = useNavigate();
   const [compactMembers, setCompactMembers] = useState(() =>
     typeof window !== "undefined" && window.innerWidth < 1024,
   );
@@ -3821,10 +3822,14 @@ export default function Team() {
   const membersReqRef = useRef(0);
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get("action") === "addMember") {
+    const params = new URLSearchParams(location.search);
+    if (params.get("action") === "addMember") {
       setAddOpen(true);
+      params.delete("action");
+      const rest = params.toString();
+      navigate({ pathname: location.pathname, search: rest ? `?${rest}` : "" }, { replace: true });
     }
-  }, [location.search]);
+  }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Selected period (nav date filter) shared by the KPI tiles and the member table.
   // Custom range without both dates yet => null (nothing to fetch).

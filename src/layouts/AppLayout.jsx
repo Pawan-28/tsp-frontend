@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import Sidebar from "../components/Sidebar.jsx";
 import Topbar from "../components/Topbar.jsx";
 import MobileNav from "../components/MobileNav.jsx";
-import { Plus, FileText, Users, Calculator } from "lucide-react";
+import { Plus, FileText, Users, Calculator, Briefcase } from "lucide-react";
 import { AdminProvider } from "../context/AdminContext.jsx";
 import { DateRangeProvider } from "../context/DateRangeContext.jsx";
 import { apiGet } from "../lib/api.js";
@@ -49,6 +49,7 @@ export default function AppLayout() {
   const quickActions = [
     { label: "Add Lead",            icon: Plus,       to: "/sales",     search: "?action=addLead" },
     { label: "Add SOP",             icon: FileText,   to: "/sop",       search: "?action=addSOP"  },
+    { label: "Add Service",         icon: Briefcase,  to: "/services",  search: "?action=addService" },
     { label: "Add New Team Member", icon: Users,      to: "/team",      search: "?action=addMember" },
     { label: "Calculate Incentive", icon: Calculator, to: "/incentives"                            },
   ];

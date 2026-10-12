@@ -549,7 +549,7 @@ export default function Topbar({ onMenu }) {
             icon={<Bell className="w-[18px] h-[18px] text-[#DC143C]" />}
             badge={unreadCount > 0}
             badgeCount={unreadCount}
-            dot={unreadCount === 0 && newNotifCount > 0}
+            dot={false}
           >
             <div className="w-full sm:w-80 max-w-[calc(100vw-1.5rem)]">
               <div className="flex items-center justify-between px-4 pt-4 pb-2">
@@ -566,7 +566,7 @@ export default function Topbar({ onMenu }) {
                 {notifications.length === 0 ? (
                   <p className="text-xs text-center text-[#be123c] py-6">No notifications</p>
                 ) : notifications.map((n) => {
-                  const isNew = !n.is_read || ts(n.created_at) > (notifBaseline ?? notifLastSeen);
+                  const isNew = !n.is_read; // same meaning as the badge number (used to also light up anything newer than the last visit)
                   return (
                     <div key={n.id}
                       className="p-3 rounded-xl hover:bg-[#FFF5F8] transition cursor-pointer"

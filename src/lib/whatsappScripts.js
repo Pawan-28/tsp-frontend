@@ -14,7 +14,10 @@ export const WA_SCRIPT_PLACEHOLDERS = [
 
 export function resolveWhatsAppScriptBody(template, { lead, employee } = {}) {
   if (!template) return "";
-  const leadName = lead?.name || lead?.leadName || "there";
+  const rawName = String(lead?.name || lead?.leadName || "").trim();
+  // a "name" that is really a phone number (auto-created leads) must never be greeted as "Hi 9876543210"
+  const nameIsPhone = /^[+\d\s\-().]+$/.test(rawName) && rawName.replace(/\D/g, "").length >= 7;
+  const leadName = rawName && !nameIsPhone ? rawName : "there";
   const company = lead?.company || lead?.companyName || "your company";
   const repName = employee?.name || "our team";
 

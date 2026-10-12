@@ -107,6 +107,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
         if (!formData.lead_name.trim()) errs.lead_name = "Full name is required";
         if (!formData.phone.trim()) errs.phone = "Phone number is required";
         else if (!/^\d{10}$/.test(formData.phone.trim())) errs.phone = "Phone must be exactly 10 digits";
+        else if (!/^[6-9]/.test(formData.phone.trim())) errs.phone = "Enter a valid mobile number (it starts with 6, 7, 8 or 9)";
         if (formData.email.trim() && !/^[^\s@]+@[^\s@]+\.(com|in|org|net|co|io|edu|gov|uk|au|us)$/i.test(formData.email.trim()))
           errs.email = "Enter a valid email (e.g. name@domain.com)";
         if (!formData.source) errs.source = "Lead source is required";
@@ -375,7 +376,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
                 <FormField label="Full Name" required>
                   <div style={iconFieldWrap}>
                     <Users size={14} style={iconStyle} />
-                    <input className={`al-input ${errors.lead_name ? "error" : ""}`} style={{ paddingLeft: 36 }} placeholder="e.g. Ananya Sharma" value={formData.lead_name} onChange={e => setField("lead_name", e.target.value)} />
+                    <input className={`al-input ${errors.lead_name ? "error" : ""}`} style={{ paddingLeft: 36 }} placeholder="e.g. Ananya Sharma" autoComplete="name" aria-required="true" aria-invalid={Boolean(errors.lead_name)} value={formData.lead_name} onChange={e => setField("lead_name", e.target.value)} />
                   </div>
                   <ErrMsg field="lead_name" />
                 </FormField>
@@ -385,7 +386,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
                     <select value={countryCode} onChange={e => setCountryCode(e.target.value)} style={{ background: "#fff5f5", border: "1.5px solid #fecdd3", borderRadius: 10, padding: "10px 8px", fontSize: 13, color: "#111827", outline: "none", width: "auto", flexShrink: 0, fontFamily: "inherit" }}>
                       {countryCodes.map(c => <option key={c.code} value={c.code}>{c.flag} {c.code}</option>)}
                     </select>
-                    <input className={`al-input ${errors.phone ? "error" : ""}`} placeholder="98765 43210" value={formData.phone} maxLength={10} onChange={e => setField("phone", e.target.value.replace(/\D/g, ""))} />
+                    <input className={`al-input ${errors.phone ? "error" : ""}`} placeholder="98765 43210" type="tel" inputMode="numeric" autoComplete="tel-national" aria-required="true" aria-invalid={Boolean(errors.phone)} value={formData.phone} maxLength={10} onChange={e => setField("phone", e.target.value.replace(/\D/g, ""))} />
                   </div>
                   <ErrMsg field="phone" />
                 </FormField>
@@ -393,7 +394,7 @@ export function AddLead({ onClose, showToast, pipelineStages, defaultStage = "Le
                 <FormField label="Email Address">
                   <div style={iconFieldWrap}>
                     <Mail size={14} style={iconStyle} />
-                    <input className={`al-input ${errors.email ? "error" : ""}`} style={{ paddingLeft: 36 }} placeholder="name@company.com" value={formData.email} onChange={e => setField("email", e.target.value)} />
+                    <input className={`al-input ${errors.email ? "error" : ""}`} style={{ paddingLeft: 36 }} placeholder="name@company.com" type="email" autoComplete="email" aria-invalid={Boolean(errors.email)} value={formData.email} onChange={e => setField("email", e.target.value)} />
                   </div>
                   <ErrMsg field="email" />
                 </FormField>
